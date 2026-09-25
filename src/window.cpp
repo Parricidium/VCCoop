@@ -1,7 +1,8 @@
-// Mode fenetre force et comportement en arriere-plan : deux instances doivent pouvoir tourner cote a cote
+﻿// Mode fenetre force et comportement en arriere-plan : deux instances doivent pouvoir tourner cote a cote
 // sans voler la souris ni le premier plan.
 #include "util.h"
 #include "vccoop.h"
+#include <mmsystem.h>
 
 // --- Declarations minimales de Direct3D 8 (le SDK Windows ne fournit plus d3d8.h) ---
 struct D3DPRESENT_PARAMETERS8 {
@@ -76,22 +77,46 @@ static void FitWindow(HWND hwnd, int w, int h)
     SetWindowTextA(hwnd, title);
 }
 
-// Limiteur d'images : sans lui le jeu tourne a plusieurs milliers d'images/s en fenetre.
+// Limiteur d'images : sans lui le jeu tourne a plusieurs milliers d'images/s en fenetre. Chaque image part a
+// intervalle regulier : minuterie Windows a 1 ms, Sleep tant qu'il reste plus de 3 ms, puis attente active.
+// Le limiteur du jeu (option du menu, plafond RsGlobal.maxFPS 0x9B48EC = 30) est aligne sur le notre.
 static void LimitFrameRate()
 {
     if (g_cfg.maxFps <= 0) return;
     static LARGE_INTEGER freq, next;
-    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    if (!freq.QuadPart) {
+        QueryPerformanceFrequency(&freq);
+        timeBeginPeriod(1);
+        *(int *)0x9B48EC = g_cfg.maxFps;
+    }
     LONGLONG step = freq.QuadPart / g_cfg.maxFps;
     LARGE_INTEGER now;
     QueryPerformanceCounter(&now);
-    if (next.QuadPart == 0 || now.QuadPart - next.QuadPart > step * 4) next = now;
-    while (now.QuadPart < next.QuadPart) {
-        LONGLONG ms = (next.QuadPart - now.QuadPart) * 1000 / freq.QuadPart;
-        Sleep(ms > 1 ? (DWORD)(ms - 1) : 0);
+    if (next.QuadPart == 0 || now.QuadPart - next.QuadPart > step * 4) next = now;   // gros retard : on repart
+    for (;;) {
+        LONGLONG left = next.QuadPart - now.QuadPart;
+        if (left <= 0) break;
+        if (left * 1000 > freq.QuadPart * 3) Sleep(1);   // Sleep(1) peut deborder de ~2 ms
+        else YieldProcessor();
         QueryPerformanceCounter(&now);
     }
     next.QuadPart += step;
+
+    // Statistique de regularite (journal toutes les 10 s) : ecart min / max entre deux images.
+    static LARGE_INTEGER last, since;
+    static double minMs = 1e9, maxMs = 0;
+    static int count;
+    if (last.QuadPart) {
+        double ms = (now.QuadPart - last.QuadPart) * 1000.0 / freq.QuadPart;
+        if (ms < minMs) minMs = ms;
+        if (ms > maxMs) maxMs = ms;
+        count++;
+    } else since = now;
+    last = now;
+    if ((now.QuadPart - since.QuadPart) > freq.QuadPart * 10) {
+        Log("images : %.1f/s, ecart %.1f a %.1f ms", count * (double)freq.QuadPart / (now.QuadPart - since.QuadPart), minMs, maxMs);
+        since = now; count = 0; minMs = 1e9; maxMs = 0;
+    }
 }
 
 // Windows donne le premier plan a la fenetre d'un processus qu'on vient de lancer, malgre SW_SHOWNOACTIVATE.
