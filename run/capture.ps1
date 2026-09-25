@@ -1,4 +1,4 @@
-﻿# Capture chaque fenetre gta-vc via DWM (PrintWindow/PW_RENDERFULLCONTENT) : marche fenetre masquee, ne vole jamais le focus.
+# Capture chaque fenetre gta-vc via DWM (PrintWindow/PW_RENDERFULLCONTENT) : marche fenetre masquee, ne vole jamais le focus.
 param([string]$Prefix = "win")
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -13,7 +13,7 @@ public class VcWin32 {
 "@
 [VcWin32]::SetProcessDPIAware() | Out-Null
 $i = 0
-foreach ($p in (Get-Process gta-vc -ErrorAction SilentlyContinue | Sort-Object StartTime)) {
+foreach ($p in (Get-Process gta-vc -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'D:\Games\COOPTEST\*' } | Sort-Object StartTime)) {
   $h = $p.MainWindowHandle
   $r = New-Object VcWin32+RECT
   [VcWin32]::GetWindowRect($h, [ref]$r) | Out-Null

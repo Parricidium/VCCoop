@@ -45,8 +45,12 @@ static void LoadConfig()
 
     // Ligne de commande (raccourcis Heberger / Rejoindre) : -vccoop hote | -vccoop invite <adresse>
     const char *cmd = GetCommandLineA();
+    g_cfg.testMenu = GetPrivateProfileIntA("VCCoop", "TestMenu", 0, ini);
+    GetPrivateProfileStringA("VCCoop", "TestMenuPlan", "", g_cfg.testMenuPlan, sizeof(g_cfg.testMenuPlan), ini);
+    g_cfg.netAuto = GetPrivateProfileIntA("VCCoop", "Reseau", 0, ini) != 0;
     const char *opt = strstr(cmd, "-vccoop ");
     if (opt) {
+        g_cfg.netAuto = true;
         char role[16] = "", addr[64] = "";
         sscanf(opt + 8, "%15s %63s", role, addr);
         if (_stricmp(role, "hote") == 0) g_cfg.host = true;
@@ -88,5 +92,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallFileHooks();
     InstallScriptHooks();
     InstallCombatHooks();
+    InstallMenu();
     return TRUE;
 }

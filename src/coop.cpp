@@ -344,7 +344,8 @@ void CoopFrame()
     static bool netStarted, autoStarted;
     static DWORD frames, lastLog;
     if (!netStarted) {
-        netStarted = true; g_onWorld = OnWorld; VehiclesInit(); EntitiesInit(); MirrorInit(); NetStart();
+        netStarted = true; g_onWorld = OnWorld; VehiclesInit(); EntitiesInit(); MirrorInit();
+        if (g_cfg.netAuto) CoopStartNetwork();
     }
 
     // Instances de test : lance directement une nouvelle partie depuis le menu.
@@ -366,6 +367,7 @@ void CoopFrame()
         Log("pause du menu levee apres le demarrage automatique");
     }
 
+    MenuFrame();
     AutotestFrame();
     NetPoll();
     // En coop, le menu Pause n'arrete pas le monde (sinon toute la partie des invites se fige derriere le menu

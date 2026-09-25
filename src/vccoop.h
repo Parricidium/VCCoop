@@ -15,6 +15,9 @@ struct Config {
     char address[64];   // invite : adresse de l'hote
     int port;
     bool autoStart;
+    bool netAuto;
+    int testMenu;
+    char testMenuPlan[16];   // test : "creer" / "rejoindre" depuis l'ecran COOP       // test : ecran de menu a ouvrir au demarrage       // reseau demarre d'office (ligne de commande -vccoop, ou Reseau=1) ; sinon par le menu COOP
     bool logScripts;
     bool logOpcodes;    // diagnostic : chaque opcode des scripts de mission
     char autotest[16];  // instances de test : "passer" / "marche" (pilote la manette 0)    // diagnostic : scripts actifs dans le journal     // instances de test : nouvelle partie directement
@@ -43,6 +46,13 @@ void WatchdogFrame();
 void InstallScriptHooks();
 // combat.cpp
 void InstallCombatHooks();
+
+// menu.cpp
+void InstallMenu();
+void MenuWindowCreated(HWND hwnd);
+void MenuFrame();
+void CoopStartNetwork();
+bool CoopNetworkStarted();
 
 // autotest.cpp
 void AutotestFrame();

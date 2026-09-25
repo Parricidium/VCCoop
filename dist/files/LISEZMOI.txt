@@ -22,9 +22,13 @@ INSTALLATION
 
 JOUER
 -----
-- L'hote lance "VCCoop - Heberger.cmd".
-- Les autres lancent "VCCoop - Rejoindre.cmd" et tapent l'adresse de l'hote.
-- Tout le monde fait "Commencer partie" (nouvelle partie) dans le menu.
+- Lancer le jeu normalement (gta-vc.exe). Dans le menu principal : COOP.
+- L'hote choisit "Creer une partie", puis confirme la nouvelle partie.
+- Les autres reglent "Adresse" (IP de l'hote : Entree, taper l'adresse,
+  Entree) et leur "Pseudo", puis "Rejoindre" : une fois connectes, ils
+  confirment la nouvelle partie.
+- Sans passer par COOP, le jeu reste en solo.
+- Raccourcis possibles : "VCCoop - Heberger.cmd" / "VCCoop - Rejoindre.cmd".
 - L'hote joue les missions comme en solo. Les invites sont places a cote de
   lui au debut et a la fin de chaque mission.
 - Touche G : monter comme passager dans le vehicule d'un autre joueur

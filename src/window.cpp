@@ -112,7 +112,10 @@ static HRESULT WINAPI h_Present(void *dev, const RECT *src, const RECT *dst, HWN
 {
     WatchdogFrame();
     GiveBackForeground();
-    CoopFrame();
+    // Le menu peut presenter une image depuis l'interieur de notre propre boucle (SwitchToNewScreen dessine) :
+    // pas de boucle coop imbriquee.
+    static bool inFrame;
+    if (!inFrame) { inFrame = true; CoopFrame(); inFrame = false; }
     LimitFrameRate();
     return o_Present(dev, src, dst, wnd, dirty);
 }
@@ -179,7 +182,7 @@ static HWND WINAPI h_CreateWindowExA(DWORD ex, LPCSTR cls, LPCSTR name, DWORD st
 {
     if (g_cfg.windowed) { x = g_cfg.winX; y = g_cfg.winY; }
     HWND hwnd = o_CreateWindowExA(ex, cls, name, style, x, y, w, h, parent, menu, inst, param);
-    if (!parent && !g_hwnd) g_hwnd = hwnd;
+    if (!parent && !g_hwnd) { g_hwnd = hwnd; MenuWindowCreated(hwnd); }
     return hwnd;
 }
 

@@ -22,9 +22,12 @@ INSTALL
 
 PLAY
 ----
-- The host runs "VCCoop - Heberger.cmd".
-- The others run "VCCoop - Rejoindre.cmd" and type the host's address.
-- Everyone picks "Start Game" (new game) in the menu.
+- Start the game normally (gta-vc.exe). In the main menu: COOP.
+- The host picks "Host a game", then confirms the new game.
+- The others set "Address" (the host's IP: Enter, type it, Enter) and their
+  "Nickname", then "Join": once connected, they confirm the new game.
+- Without going through COOP, the game stays single player.
+- Shortcuts are still there: "VCCoop - Heberger.cmd" / "VCCoop - Rejoindre.cmd".
 - The host plays the missions as in single player. Guests are placed next to
   the host at the start and the end of every mission.
 - G key: ride as a passenger in another player's vehicle (or get out).

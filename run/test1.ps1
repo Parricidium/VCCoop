@@ -6,7 +6,8 @@ if (-not $NoBuild) {
   $out = cmd /c "`"$root\build.cmd`"" 2>&1
   if ($LASTEXITCODE -ne 0) { $out | Select-String 'error' ; throw "echec de compilation" }
 }
-Get-Process gta-vc -ErrorAction SilentlyContinue | Stop-Process -Force
+# Seulement nos instances de test : jamais un jeu lance par JD.
+Get-Process gta-vc -ErrorAction SilentlyContinue | Where-Object { $_.Path -like 'D:\Games\COOPTEST\*' } | Stop-Process -Force
 Start-Sleep -Milliseconds 500
 Copy-Item "$root\build\dinput8.dll" $game -Force
 $p = Start-Process "$game\gta-vc.exe" -WorkingDirectory $game -PassThru
