@@ -123,6 +123,35 @@ inline void SetAimFlag(void *ped, float heading) { ((void(__thiscall *)(void *, 
 inline void ClearAimFlag(void *ped) { ((void(__thiscall *)(void *))0x50B4A0)(ped); }
 inline bool IsAimingGun(void *ped) { return (Field<uint8_t>(ped, 0x14C) & 0x80) != 0; }
 inline void SetIdle(void *ped) { ((void(__thiscall *)(void *))0x4FDFD0)(ped); }
+// CEntity::Teleport (vtable 11) : deplace et remet l'entite dans les bons secteurs du monde.
+inline void Teleport(void *e, Vec3 p) { ((void(__thiscall *)(void *, Vec3))(*(void ***)e)[11])(e, p); }
+
+// --- Animations ---
+// CAnimManager::BlendAnimation(clump, groupe, animation, vitesse de fondu) : renvoie l'association.
+inline void *BlendAnimation(void *clump, int group, int anim, float delta) { return ((void *(__cdecl *)(void *, int, int, float))0x405640)(clump, group, anim, delta); }
+// CAnimBlendAssociation : lien +4 (suivant, precedent), groupe +0xE (short), hierarchie +0x14, blendAmount +0x18,
+// blendDelta +0x1C, currentTime +0x20, speed +0x24, animId +0x2C (short), drapeaux +0x2E (ushort).
+// Les associations d'un clump : donnees du clump en (clump + *0x978798), premier lien en +0.
+inline void *FirstAssoc(void *clump)
+{
+    if (!clump) return 0;
+    void *data = *(void **)((uint8_t *)clump + *(int *)0x978798);
+    void *link = data ? *(void **)data : 0;
+    return link ? (uint8_t *)link - 4 : 0;
+}
+inline void *NextAssoc(void *assoc) { void *link = *(void **)((uint8_t *)assoc + 4); return link ? (uint8_t *)link - 4 : 0; }
+// L'animation (groupe, id) est-elle chargee ici ? (groupes : tableau *0x9B5F0C, 0x14 octets chacun ; associations
+// statiques +4 (0x3C octets), nombre +8, premier id +0xC ; hierarchie de l'animation en +0x14)
+inline bool AnimAvailable(int group, int anim)
+{
+    uint8_t *groups = *(uint8_t **)0x9B5F0C;
+    if (!groups || group < 0 || group >= *(int *)(groups - 4)) return false;
+    uint8_t *g = groups + group * 0x14;
+    uint8_t *assocs = *(uint8_t **)(g + 4);
+    int n = *(int *)(g + 8), first = *(int *)(g + 0xC);
+    if (!assocs || anim < first || anim >= first + n) return false;
+    return *(void **)(assocs + (anim - first) * 0x3C + 0x14) != 0;
+}
 
 // --- Chargement des modeles ---
 inline void RequestModel(int model, int flags) { ((void(__cdecl *)(int, int))0x40E310)(model, flags); }

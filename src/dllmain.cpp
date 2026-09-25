@@ -3,6 +3,7 @@
 #include "util.h"
 #include "vccoop.h"
 #include "conditions.h"
+#include "interp.h"
 #include <stdio.h>
 
 Config g_cfg;
@@ -100,5 +101,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallDisplay();
     InstallPopulation();
     InstallConditions();
+    InstallInterp();
     return TRUE;
 }

@@ -11,6 +11,7 @@
 #include "saveshare.h"
 #include "population.h"
 #include "conditions.h"
+#include "interp.h"
 #include <math.h>
 #include <string.h>
 
@@ -30,6 +31,10 @@ struct Puppet {
     int lastMoveState;
     uint8_t lastShots;  // dernier compteur de tirs rejoue
     char outfit[21];    // tenue avec laquelle il a ete cree
+    Track track;        // etats recus, pour l'interpolation (interp.cpp)
+    int16_t mirrored[6];   // animations d'action que nous lui avons mises (pour les retirer ensuite)
+    int mirroredCount;
+    bool inAction;         // une animation d'action recue occupe tout le corps
 };
 
 // La tenue de Tommy est le modele 0, propre a chaque instance : le Tommy d'un autre joueur utilise un
@@ -95,6 +100,7 @@ static void CreatePuppet(Puppet &pp, const MsgState &s)
     WorldAdd(ped);
     pp.ped = ped;
     pp.lastMoveState = -1;
+    pp.mirroredCount = 0;
     RegisterReference(ped, &pp.ped);
     if (g_cfg.watchPuppetField) WatchAddress((uintptr_t)ped + g_cfg.watchPuppetField);
     Log("coop : Tommy de %s cree (%p, tenue %s) en %.1f %.1f %.1f", s.name, ped, s.outfit, s.pos[0], s.pos[1], s.pos[2]);
@@ -121,6 +127,67 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     return cur != NULL;
 }
 
+// --- Animations d'action (tout sauf marcher, courir, attendre : ids 0 a 6 des groupes de marche) ---
+static bool Locomotion(int id) { return id >= 0 && id <= 6; }
+static void SetAnimTime(void *assoc, float t) { ((void(__thiscall *)(void *, float))0x401700)(assoc, t); }
+
+static void *FindAnim(void *clump, int id)
+{
+    for (void *a = FirstAssoc(clump); a; a = NextAssoc(a)) if (Field<int16_t>(a, 0x2C) == id) return a;
+    return NULL;
+}
+
+// Les 3 animations d'action les plus visibles du joueur local.
+static void CollectAnims(void *ped, AnimSlot *out)
+{
+    for (int i = 0; i < 3; i++) out[i].id = -1;
+    for (void *a = FirstAssoc(Field<void *>(ped, 0x4C)); a; a = NextAssoc(a)) {
+        int id = Field<int16_t>(a, 0x2C);
+        float blend = Field<float>(a, 0x18);
+        if (Locomotion(id) || blend < 0.05f) continue;
+        AnimSlot n = { (int16_t)id, (uint8_t)Field<int16_t>(a, 0xE), (uint8_t)(blend >= 1.0f ? 255 : blend * 255.0f),
+                       Field<float>(a, 0x20) };
+        for (int i = 0; i < 3; i++) {
+            if (out[i].id >= 0 && out[i].blend >= n.blend) continue;
+            AnimSlot t = out[i]; out[i] = n; n = t;
+            if (n.id < 0) break;
+        }
+    }
+}
+
+// Rejoue sur le Tommy distant les animations d'action recues ; vrai si l'une d'elles remplace la marche.
+static bool MirrorAnims(Puppet &pp, const MsgState &s)
+{
+    void *clump = Field<void *>(pp.ped, 0x4C);
+    bool action = false;
+    for (const AnimSlot &a : s.anims) {
+        if (a.id < 0 || Locomotion(a.id) || !AnimAvailable(a.group, a.id)) continue;
+        void *assoc = FindAnim(clump, a.id);
+        if (!assoc) {
+            assoc = BlendAnimation(clump, a.group, a.id, 8.0f);
+            if (!assoc) continue;
+            SetAnimTime(assoc, a.time);
+            bool known = false;
+            for (int i = 0; i < pp.mirroredCount; i++) known |= pp.mirrored[i] == a.id;
+            if (!known && pp.mirroredCount < 6) pp.mirrored[pp.mirroredCount++] = a.id;
+            if (g_cfg.logScripts) Log("coop : Tommy %d, animation %d (groupe %d) a %.2f s", s.id, a.id, a.group, a.time);
+        } else if (fabsf(Field<float>(assoc, 0x20) - a.time) > 0.3f) {
+            SetAnimTime(assoc, a.time);
+        }
+        if (!(Field<uint16_t>(assoc, 0x2E) & 0x10)) action = true;   // pas "partielle" : tout le corps
+    }
+    // Celles qu'il n'a plus : on les efface en douceur.
+    for (int i = 0; i < pp.mirroredCount;) {
+        bool still = false;
+        for (const AnimSlot &a : s.anims) still |= a.id == pp.mirrored[i];
+        if (still) { i++; continue; }
+        void *assoc = FindAnim(clump, pp.mirrored[i]);
+        if (assoc && Field<float>(assoc, 0x1C) >= 0.0f) Field<float>(assoc, 0x1C) = -8.0f;
+        pp.mirrored[i] = pp.mirrored[--pp.mirroredCount];
+    }
+    return action;
+}
+
 static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
 {
     const MsgState &s = np.state;
@@ -128,21 +195,9 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     Health(ped) = 100.0f;
     AreaCode(ped) = s.area;
     HoldWeapon(ped, s.weapon);
-    if (UpdatePuppetVehicle(pp, s)) return;
-    // Position : on rattrape la position recue (extrapolee avec sa vitesse) en douceur ; saut si trop loin.
-    float age = (GetTickCount() - np.lastSeen) / 1000.0f;
-    if (age > 0.25f) age = 0.25f;
-    Vec3 target = { s.pos[0] + s.speed[0] * age * 50.0f, s.pos[1] + s.speed[1] * age * 50.0f,
-                    s.pos[2] + s.speed[2] * age * 50.0f };
-    Vec3 &p = Pos(ped);
-    float dx = target.x - p.x, dy = target.y - p.y, dz = target.z - p.z;
-    if (dx * dx + dy * dy + dz * dz > 25.0f) p = target;
-    else { p.x += dx * 0.5f; p.y += dy * 0.5f; p.z += dz * 0.5f; }
-    MoveSpeed(ped) = { s.speed[0], s.speed[1], s.speed[2] };
-    SetHeadingMatrix(ped, s.heading);
-    Heading(ped) = HeadingGoal(ped) = s.heading;
-    AreaCode(ped) = s.area;
-    Health(ped) = 100.0f;
+    (void)np;
+    if (UpdatePuppetVehicle(pp, s)) { pp.mirroredCount = 0; return; }
+    // Position et cap : places apres la physique, par interpolation (PuppetsAfterProcess).
     // En vehicule mais sans copie locale (pas encore creee, ou passager) : cache en attendant.
     uint8_t &flags = Field<uint8_t>(ped, 0x52);
     if (s.inVehicle) flags &= ~0x04; else flags |= 0x04;
@@ -156,6 +211,12 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     // marche redemarrait sans cesse (on voyait l'autre joueur glisser dans une pose figee). Dans l'etat 0 ("aucun"),
     // le jeu ne fait rien : c'est l'etat recu du reseau qui pilote seul l'animation.
     PedState(ped) = 0;
+    // Coup de poing, saut, chute... : tant qu'une telle animation est en cours chez lui, on ne relance pas celle de
+    // marche (elle la ferait disparaitre).
+    if (MirrorAnims(pp, s)) { pp.inAction = true; return; }
+    // Fin de l'action : SetMoveAnim ne fait rien si l'etat de deplacement n'a pas change (memorise en +0x250) ; on
+    // l'oblige a remettre l'animation de marche ou d'attente, sinon le Tommy restait fige.
+    if (pp.inAction) { pp.inAction = false; Field<int>(ped, 0x250) = -1; }
     int before = MoveState(ped);
     SetMoveStateFn(ped, s.moveState);
     SetMoveAnim(ped);
@@ -165,13 +226,53 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     }
 }
 
+// Chaque etat recu entre dans la piste de son Tommy.
+static void OnState(const MsgState &s)
+{
+    if (s.id >= MAX_PLAYERS || s.id == g_localId) return;
+    ClockSample(s.id, s.time);
+    Snap n = {};
+    n.t = s.time;
+    for (int k = 0; k < 3; k++) { n.pos[k] = s.pos[k]; n.vel[k] = s.speed[k]; }
+    n.heading = s.heading;
+    g_puppets[s.id].track.Push(n);
+}
+
+// Apres la physique : les Tommy a pied sont places a leur position interpolee.
+void PuppetsAfterProcess()
+{
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        Puppet &pp = g_puppets[i];
+        if (!pp.ped || InVehicle(pp.ped)) continue;
+        Snap n;
+        if (!TrackSample(pp.track, i, n, true)) continue;
+        if (g_cfg.logScripts) {
+            // Regularite : pas d'une image a l'autre pendant qu'il se deplace (min / moyenne / max sur 2 s).
+            static float lastX, lastY, mn = 1e9f, mx, sum;
+            static int cnt;
+            static uint32_t since;
+            float d = sqrtf((n.pos[0] - lastX) * (n.pos[0] - lastX) + (n.pos[1] - lastY) * (n.pos[1] - lastY));
+            lastX = n.pos[0]; lastY = n.pos[1];
+            if (d > 0.01f && d < 5.0f) { if (d < mn) mn = d; if (d > mx) mx = d; sum += d; cnt++; }
+            if (GetTickCount() - since > 2000) {
+                if (cnt > 10) Log("interpolation : Tommy %d, pas par image %.3f / %.3f / %.3f m (%d images)", i, mn, sum / cnt, mx, cnt);
+                since = GetTickCount(); mn = 1e9f; mx = sum = 0; cnt = 0;
+            }
+        }
+        Pos(pp.ped) = { n.pos[0], n.pos[1], n.pos[2] };
+        MoveSpeed(pp.ped) = { n.vel[0], n.vel[1], n.vel[2] };
+        SetHeadingMatrix(pp.ped, n.heading);
+        Heading(pp.ped) = HeadingGoal(pp.ped) = n.heading;
+    }
+}
+
 static void UpdatePuppets(bool inGame)
 {
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Puppet &pp = g_puppets[i];
         const NetPlayer &np = g_players[i];
         bool want = inGame && i != g_localId && np.connected && np.state.inGame;
-        if (!want) { if (pp.ped && inGame) DestroyPuppet(pp); if (!inGame) pp.ped = NULL; continue; }
+        if (!want) { if (pp.ped && inGame) DestroyPuppet(pp); if (!inGame) pp.ped = NULL; if (!np.connected) pp.track.Clear(); continue; }
         // Changement de tenue : on le recree avec la nouvelle.
         if (pp.ped && _stricmp(pp.outfit, np.state.outfit) != 0 && !InVehicle(pp.ped)) {
             Log("coop : %s change de tenue (%s -> %s)", np.state.name, pp.outfit, np.state.outfit);
@@ -208,6 +309,8 @@ static void SendLocalState(bool inGame)
     s.type = MSG_STATE;
     s.id = (uint8_t)g_localId;
     s.seq = ++seq;
+    s.time = now;
+    for (AnimSlot &a : s.anims) a.id = -1;
     lstrcpynA(s.name, g_cfg.playerName, sizeof(s.name));
     lstrcpynA(s.outfit, ModelName(MI_PLAYER), sizeof(s.outfit));
     void *ped = inGame ? FindPlayerPed() : NULL;
@@ -227,6 +330,8 @@ static void SendLocalState(bool inGame)
         s.shots = LocalShotCount();
         s.aiming = IsAimingGun(ped) ? 1 : 0;
         s.inVehicle = InVehicle(ped) ? 1 : 0;
+        s.shared = PopulationShared() ? 1 : 0;
+        if (!s.inVehicle && !s.aiming) CollectAnims(ped, s.anims);
         if (s.inVehicle && PedVehicle(ped)) {
             s.vehicleId = NetVehicleId(PedVehicle(ped));
             int seat = SeatOf(PedVehicle(ped), ped);
@@ -355,7 +460,7 @@ void CoopFrame()
     static bool netStarted, autoStarted;
     static DWORD frames, lastLog;
     if (!netStarted) {
-        netStarted = true; g_onWorld = OnWorld; VehiclesInit(); EntitiesInit(); MirrorInit();
+        netStarted = true; g_onWorld = OnWorld; g_onState = OnState; VehiclesInit(); EntitiesInit(); MirrorInit();
         if (g_cfg.netAuto) CoopStartNetwork();
     }
 
@@ -398,6 +503,20 @@ void CoopFrame()
     if (g_cfg.host && inGame) SendWorld();
     UpdatePuppets(inGame);
 
+    if (inGame && g_cfg.logScripts) {
+        // Meme mesure que l'interpolation, sur notre propre Tommy (pour comparer avec ce que voient les autres).
+        static float lastX, lastY, mn = 1e9f, mx, sum;
+        static int cnt;
+        static uint32_t since;
+        void *me = FindPlayerPed();
+        float d = sqrtf((Pos(me).x - lastX) * (Pos(me).x - lastX) + (Pos(me).y - lastY) * (Pos(me).y - lastY));
+        lastX = Pos(me).x; lastY = Pos(me).y;
+        if (d > 0.01f && d < 5.0f) { if (d < mn) mn = d; if (d > mx) mx = d; sum += d; cnt++; }
+        if (GetTickCount() - since > 2000) {
+            if (cnt > 10) Log("deplacement local : pas par image %.3f / %.3f / %.3f m (%d images)", mn, sum / cnt, mx, cnt);
+            since = GetTickCount(); mn = 1e9f; mx = sum = 0; cnt = 0;
+        }
+    }
     frames++;
     DWORD now = GetTickCount();
     if (now - lastLog >= 10000) {
@@ -419,8 +538,23 @@ void CoopFrame()
                 FrameCounter(), UserPause(), CodePause());
             Log("  camera : fondu %.1f (en cours %d, sens %d), bandes %d", CamFade(), CamFading(), CamFadeDir(), CamWidescreen());
         }
+        if (ped && g_cfg.logScripts) {
+            char line[512];
+            int n = wsprintfA(line, "  animations :");
+            for (void *as = FirstAssoc(Field<void *>(ped, 0x4C)); as && n < 440; as = NextAssoc(as))
+                n += wsprintfA(line + n, " %d/%d/%d(%d%%)", Field<int16_t>(as, 0x2C), Field<int16_t>(as, 0xC),
+                               Field<int16_t>(as, 0xE), (int)(Field<float>(as, 0x18) * 100));
+            Log("%s", line);
+        }
         for (int i = 0; i < MAX_PLAYERS; i++)
-            if (g_puppets[i].ped)
-                Log("  Tommy %d : %.1f %.1f %.1f", i, Pos(g_puppets[i].ped).x, Pos(g_puppets[i].ped).y, Pos(g_puppets[i].ped).z);
+            if (void *pp = g_puppets[i].ped) {
+                char anims[256];
+                int n = 0;
+                anims[0] = 0;
+                for (void *as = FirstAssoc(Field<void *>(pp, 0x4C)); as && n < 200; as = NextAssoc(as))
+                    n += wsprintfA(anims + n, " %d(%d%%)", Field<int16_t>(as, 0x2C), (int)(Field<float>(as, 0x18) * 100));
+                Log("  Tommy %d : %.1f %.1f %.1f, etat %d, vehicule %d, animations%s", i, Pos(pp).x, Pos(pp).y, Pos(pp).z,
+                    PedState(pp), InVehicle(pp), anims);
+            }
     }
 }

@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 1 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 2 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -25,6 +25,9 @@ struct MsgHello { uint8_t type, version; char name[24]; };
 struct MsgWelcome { uint8_t type, id; };
 struct MsgBye { uint8_t type, id; };
 
+// Animation "d'action" d'un joueur (tout sauf marcher / courir / attendre), rejouee sur son Tommy chez les autres.
+struct AnimSlot { int16_t id; uint8_t group, blend; float time; };   // id -1 : aucune
+
 // Etat d'un joueur, envoye ~30 fois par seconde.
 struct MsgState {
     uint8_t type, id;
@@ -43,6 +46,9 @@ struct MsgState {
     uint8_t shots;       // compteur de tirs (chaque nouveau tir est rejoue en visuel chez les autres)
     uint8_t aiming;      // vise (bras leve)
     char name[24];
+    uint32_t time;       // GetTickCount de l'envoi (interpolation, interp.cpp)
+    AnimSlot anims[3];   // animations en cours hors marche (coups, sauts, chutes...), les plus visibles d'abord
+    uint8_t shared;      // invite : il voit les passants et la circulation de l'hote (population.cpp)
 };
 struct MsgWorld {
     uint8_t type;
@@ -61,6 +67,8 @@ struct MsgVehicle {
     float pos[3], right[3], fwd[3], speed[3], turn[3];
     float health, steer, gas, brake;
     uint32_t poolHandle;     // reference de pool chez le proprietaire (traduction des commandes de l'hote)
+    uint32_t time;           // GetTickCount de l'envoi
+    float wheelSpin[4];      // rotation des roues par 1/50 s (moto : avant, arriere)
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 
@@ -75,6 +83,7 @@ struct MsgPed {
     float heading, health;
     int32_t weapon;         // type d'arme en main
     char modelName[21];     // pour les personnages speciaux (Lance, Ken...)
+    uint32_t time;          // GetTickCount de l'envoi
 };
 struct MsgPedRemove { uint8_t type; uint32_t handle; };
 #pragma pack(pop)
@@ -93,6 +102,7 @@ void NetPoll();         // lit tous les paquets en attente
 void NetSendState(const MsgState &s);
 void NetSendToGuests(const void *data, int len);   // hote seulement
 extern void (*g_onWorld)(const MsgWorld &w);       // invite : appele a la reception d'un MsgWorld
+extern void (*g_onState)(const MsgState &s);       // chaque etat de joueur recu (pour son interpolation)
 extern void (*g_onVehicle)(const MsgVehicle &v);
 extern void (*g_onVehRemove)(uint32_t id);
 extern void (*g_onPed)(const MsgPed &p);
@@ -107,5 +117,8 @@ void NetSendReliableTo(int peer, const void *data, int len);   // hote : a un in
 extern void (*g_onReliable)(int from, const uint8_t *data, int len);
 extern void (*g_onJoin)(int peer);   // hote : un invite vient d'entrer
 bool NetIsHost();
-// Hote : un invite en partie est-il a moins de r metres de p (meme interieur) ?
+// Hote : un invite en partie, en population partagee, est-il a moins de r metres de p (meme interieur) ?
 bool NearAnyGuest(const float *p, uint8_t area, float r);
+// Distances de la population partagee : l'invite la rejoint a SHARE_ENTER_M de l'hote, la quitte a SHARE_LEAVE_M ;
+// l'hote lui envoie alors ses passants et sa circulation jusqu'a AMBIENT_SHARE_M autour de lui.
+enum { SHARE_ENTER_M = 120, SHARE_LEAVE_M = 170, AMBIENT_SHARE_M = 200 };

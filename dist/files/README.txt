@@ -34,8 +34,8 @@ PLAY
 
 SHARED WORLD
 ------------
-When a guest is near the host (under 60 m), they see the same pedestrians and
-traffic. Farther away (over 100 m), they get their own city around them.
+When a guest is near the host (under 120 m), they see the same pedestrians and
+traffic. Farther away (over 170 m), they get their own city around them.
 
 DISPLAY
 -------

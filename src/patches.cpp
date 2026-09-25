@@ -11,8 +11,20 @@ static bool Expect(uintptr_t addr, const char *what, const uint8_t *bytes, size_
     return false;
 }
 
+// Retour du focus (WM_SETFOCUS, 0x4A4FD0) : le jeu ouvre le menu pause (m_bStartUpFrontEndRequested, menu +0x12).
+// En coop le monde ne s'arrete pas pour autant et l'invite se retrouvait au menu apres un Alt+Tab : seulement hors
+// coop.
+static void __cdecl FocusBackMenu()
+{
+    if (!CoopNetworkStarted()) *(bool *)(0x869630 + 0x12) = true;
+}
+
 void InstallGamePatches()
 {
+    static const uint8_t focusMenu[] = { 0xC6, 0x05, 0x42, 0x96, 0x86, 0x00, 0x01 };
+    if (Expect(0x4A4FFC, "menu au retour du focus", focusMenu, sizeof(focusMenu)))
+        PatchCall(0x4A4FFC, (void *)FocusBackMenu, sizeof(focusMenu));
+
     // WinMain (0x5FFAB0) : sans le premier plan (ForegroundApp 0x6D59FC == 0) la boucle principale
     // s'endort dans WaitMessage. En coop, aucune instance ne doit se figer quand elle perd le focus :
     // on retire le "jz" qui mene a l'attente.

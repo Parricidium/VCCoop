@@ -1,8 +1,9 @@
 // Population partagee (hybride selon la distance a l'hote).
-//  - Invite a moins de 60 m de l'hote : "mode partage". Sa propre population s'arrete (densite des pietons a 0,
-//    generateurs de circulation et de voitures garees sautes) et ses passants / voitures locaux sont retires des
-//    qu'ils sont hors ecran ; il voit a la place les copies de ceux de l'hote (entities.cpp, vehicles.cpp).
-//  - Au-dela de 100 m : il retrouve sa propre population (la marge evite les bascules en boucle).
+//  - Invite a moins de SHARE_ENTER_M de l'hote : "mode partage". Sa propre population s'arrete (densite des pietons
+//    a 0, generateurs de circulation et de voitures garees sautes) et ses passants / voitures locaux sont retires,
+//    meme a l'ecran (deux mondes superposes se rentraient dedans) ; il voit a la place les copies de ceux de l'hote
+//    (entities.cpp, vehicles.cpp), que l'hote ne lui envoie que dans ce mode.
+//  - Au-dela de SHARE_LEAVE_M : il retrouve sa propre population (la marge evite les bascules en boucle).
 #include "util.h"
 #include "vccoop.h"
 #include "net.h"
@@ -15,7 +16,6 @@
 
 using namespace game;
 
-enum { SHARE_ENTER_M = 60, SHARE_LEAVE_M = 100 };
 enum { VEH_RANDOM = 1, VEH_PARKED = 3 };
 
 static bool g_shared;
@@ -81,7 +81,7 @@ static void CleanLocalPopulation()
 {
     static uint32_t last;
     uint32_t now = GetTickCount();
-    if (now - last < 500) return;
+    if (now - last < 250) return;
     last = now;
     void *me = FindPlayerPed();
     int peds = 0, cars = 0;
@@ -89,13 +89,15 @@ static void CleanLocalPopulation()
     for (int i = 0; i < pp->size; i++) {
         if (pp->flags[i] & 0x80) continue;
         void *ped = pp->objects + i * PED_POOL_ENTRY;
-        if (LocalAmbientPed(ped, me) && !OnScreen(ped)) { RemovePed(ped); peds++; }
+        if (LocalAmbientPed(ped, me)) { RemovePed(ped); peds++; }
     }
     Pool *vp = VehiclePool();
     for (int i = 0; i < vp->size; i++) {
         if (vp->flags[i] & 0x80) continue;
         void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
-        if (LocalAmbientVehicle(v, me) && !OnScreen(v)) { DeleteVehicleWithOccupants(v); cars++; }
+        // Sauf celle ou il est peut-etre en train de monter.
+        float dx = Pos(v).x - Pos(me).x, dy = Pos(v).y - Pos(me).y;
+        if (LocalAmbientVehicle(v, me) && (dx * dx + dy * dy > 36.0f || !OnScreen(v))) { DeleteVehicleWithOccupants(v); cars++; }
     }
     if ((peds || cars) && g_cfg.logScripts) Log("population : %d passants et %d vehicules locaux retires", peds, cars);
 }

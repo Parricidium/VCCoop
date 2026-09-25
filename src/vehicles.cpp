@@ -8,6 +8,7 @@
 #include "vehicles.h"
 #include "mirror.h"
 #include "seats.h"
+#include "interp.h"
 #include <math.h>
 #include <string.h>
 
@@ -25,6 +26,7 @@ struct NetVehicle {
     bool haveState;
     bool ambient;       // hote : voiture de la circulation partagee (retiree quand plus aucun invite n'est pres)
     MsgVehicle state;   // dernier etat recu (vehicules distants)
+    Track track;        // etats recus, pour l'interpolation
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
 static uint32_t g_vehCounter;
@@ -105,6 +107,11 @@ static void SendVehicle(NetVehicle &e)
     m.gas = Field<float>(v, 0x1F0);
     m.brake = Field<float>(v, 0x1F4);
     m.poolHandle = VehicleHandle(v);
+    m.time = GetTickCount();
+    // Rotation des roues (par 1/50 s) : calculee par le jeu au rendu (CAutomobile / CBike::PreRender).
+    float step = TimeStep() > 0.01f ? TimeStep() : 1.0f;
+    if (m.vclass == VCLASS_BIKE) { m.wheelSpin[0] = Field<float>(v, 0x418) / step; m.wheelSpin[1] = Field<float>(v, 0x41C) / step; }
+    else if (m.vclass != VCLASS_BOAT) for (int i = 0; i < 4; i++) m.wheelSpin[i] = Field<float>(v, 0x4F0 + i * 4) / step;
     NetSendToAll(&m, sizeof(m));
     e.lastSend = GetTickCount();
 }
@@ -141,25 +148,9 @@ static void ApplyState(NetVehicle &e)
 {
     const MsgVehicle &m = e.state;
     void *v = e.veh;
-    // Position : on rattrape l'etat recu extrapole avec la vitesse (unites du jeu : distance par 1/50 s).
-    float age = (GetTickCount() - e.lastRecv) / 1000.0f;
-    if (age > 0.3f) age = 0.3f;
-    Vec3 target = { m.pos[0] + m.speed[0] * age * 50.0f, m.pos[1] + m.speed[1] * age * 50.0f, m.pos[2] + m.speed[2] * age * 50.0f };
-    Vec3 &p = Pos(v);
-    float dx = target.x - p.x, dy = target.y - p.y, dz = target.z - p.z;
-    if (dx * dx + dy * dy + dz * dz > 100.0f) p = target;
-    else { p.x += dx * 0.3f; p.y += dy * 0.3f; p.z += dz * 0.3f; }
-    Field<Vec3>(v, 0x04) = { m.right[0], m.right[1], m.right[2] };
-    Field<Vec3>(v, 0x14) = { m.fwd[0], m.fwd[1], m.fwd[2] };
-    Field<Vec3>(v, 0x24) = { m.right[1] * m.fwd[2] - m.right[2] * m.fwd[1], m.right[2] * m.fwd[0] - m.right[0] * m.fwd[2],
-                             m.right[0] * m.fwd[1] - m.right[1] * m.fwd[0] };
-    MoveSpeed(v) = { m.speed[0], m.speed[1], m.speed[2] };
-    TurnSpeed(v) = { m.turn[0], m.turn[1], m.turn[2] };
+    // Position, orientation, volant et roues : apres la physique (VehiclesAfterProcess).
     Field<uint8_t>(v, 0x1A0) = m.color1;   // SET_CAR_COLOUR peut les changer en cours de route
     Field<uint8_t>(v, 0x1A1) = m.color2;
-    Field<float>(v, 0x1EC) = m.steer;
-    Field<float>(v, 0x1F0) = m.gas;
-    Field<float>(v, 0x1F4) = m.brake;
     VehHealth(v) = m.health;
     // Sans IA : un vehicule "abandonne" garde sa physique mais personne ne le conduit.
     if (EntityStatus(v) != STATUS_WRECKED) SetEntityStatus(v, STATUS_ABANDONED);
@@ -176,6 +167,56 @@ static void OnVehicle(const MsgVehicle &m)
     e->state = m;
     e->haveState = true;
     e->lastRecv = GetTickCount();
+    ClockSample(m.owner, m.time);
+    Snap n = {};
+    n.t = m.time;
+    for (int k = 0; k < 3; k++) { n.pos[k] = m.pos[k]; n.vel[k] = m.speed[k]; n.right[k] = m.right[k]; n.fwd[k] = m.fwd[k]; }
+    e->track.Push(n);
+}
+
+// Apres la physique : chaque copie est placee a son etat interpole, avec le volant et la rotation des roues du
+// proprietaire (un vehicule "abandonne" a le volant droit et freine, ses roues ne tournaient pas).
+void VehiclesAfterProcess()
+{
+    for (auto &e : g_vehs) {
+        if (!e.used || e.owner == g_localId || !e.veh || !e.haveState) continue;
+        void *v = e.veh;
+        const MsgVehicle &m = e.state;
+        Snap n;
+        if (!TrackSample(e.track, m.owner, n)) continue;
+        Pos(v) = { n.pos[0], n.pos[1], n.pos[2] };
+        Field<Vec3>(v, 0x04) = { n.right[0], n.right[1], n.right[2] };
+        Field<Vec3>(v, 0x14) = { n.fwd[0], n.fwd[1], n.fwd[2] };
+        Vec3 up = { n.right[1] * n.fwd[2] - n.right[2] * n.fwd[1], n.right[2] * n.fwd[0] - n.right[0] * n.fwd[2],
+                    n.right[0] * n.fwd[1] - n.right[1] * n.fwd[0] };
+        Field<Vec3>(v, 0x24) = up;
+        // "right" recalcule pour une matrice bien orthogonale apres le melange des deux etats.
+        Field<Vec3>(v, 0x04) = { n.fwd[1] * up.z - n.fwd[2] * up.y, n.fwd[2] * up.x - n.fwd[0] * up.z, n.fwd[0] * up.y - n.fwd[1] * up.x };
+        MoveSpeed(v) = { n.vel[0], n.vel[1], n.vel[2] };
+        TurnSpeed(v) = { m.turn[0], m.turn[1], m.turn[2] };
+        Field<float>(v, 0x1EC) = m.steer;
+        Field<float>(v, 0x1F0) = m.gas;
+        Field<float>(v, 0x1F4) = m.brake;
+        // Roues : le rendu ne les fait tourner que si elles touchent le sol dans notre physique ; sinon on le fait.
+        float step = TimeStep();
+        if (m.vclass == VCLASS_BIKE) {
+            if (Field<float>(v, 0x3F0) <= 0.0f && Field<float>(v, 0x3F4) <= 0.0f) Field<float>(v, 0x410) += m.wheelSpin[0] * step;
+            if (Field<float>(v, 0x3F8) <= 0.0f && Field<float>(v, 0x3FC) <= 0.0f) Field<float>(v, 0x414) += m.wheelSpin[1] * step;
+        } else if (m.vclass != VCLASS_BOAT) {
+            for (int i = 0; i < 4; i++)
+                if (Field<float>(v, 0x4A4 + i * 4) <= 0.0f) Field<float>(v, 0x4D0 + i * 4) += m.wheelSpin[i] * step;
+        }
+        if (g_cfg.logScripts && (m.speed[0] * m.speed[0] + m.speed[1] * m.speed[1]) > 0.01f) {
+            static uint32_t lastLog;
+            if (GetTickCount() - lastLog > 1000) {
+                lastLog = GetTickCount();
+                bool bike = m.vclass == VCLASS_BIKE;
+                Log("vehicules : copie %08X roule, volant %.2f, roues %.2f/%.2f (recu %.2f/%.2f), contact %.2f/%.2f", m.id, m.steer,
+                    Field<float>(v, bike ? 0x410 : 0x4D0), Field<float>(v, bike ? 0x414 : 0x4D8), m.wheelSpin[0], m.wheelSpin[bike ? 1 : 2],
+                    Field<float>(v, bike ? 0x3F0 : 0x4A4), Field<float>(v, bike ? 0x3F8 : 0x4AC));
+            }
+        }
+    }
 }
 
 static void OnVehRemove(uint32_t id)
@@ -244,7 +285,7 @@ void VehiclesFrame(bool inGame)
                 uint8_t by = Field<uint8_t>(v, 0x1F8);
                 if (VehClass(v) == VCLASS_TRAIN || FindByPtr(v)) continue;
                 // Vehicules de mission partout ; circulation et voitures garees seulement pres d'un invite.
-                bool ambient = (by == 1 || by == 3) && NearAnyGuest(&Pos(v).x, AreaCode(v), 100.0f);
+                bool ambient = (by == 1 || by == 3) && NearAnyGuest(&Pos(v).x, AreaCode(v), (float)AMBIENT_SHARE_M);
                 if (by != VEHICLE_MISSION && !ambient) continue;
                 NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
                 if (!e) break;
@@ -265,8 +306,8 @@ void VehiclesFrame(bool inGame)
                 e.used = false;
                 continue;
             }
-            // Circulation partagee : plus aucun invite a 130 m -> on la retire chez eux (on la garde ici).
-            if (e.ambient && e.veh != myVeh && !NearAnyGuest(&Pos(e.veh).x, AreaCode(e.veh), 130.0f)) {
+            // Circulation partagee : plus aucun invite assez pres -> on la retire chez eux (on la garde ici).
+            if (e.ambient && e.veh != myVeh && !NearAnyGuest(&Pos(e.veh).x, AreaCode(e.veh), AMBIENT_SHARE_M + 40.0f)) {
                 MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
                 NetSendToAll(&r, sizeof(r));
                 Unbind(e);
@@ -274,10 +315,10 @@ void VehiclesFrame(bool inGame)
                 continue;
             }
             if (e.veh != myVeh) {
-                // Sans nous au volant : 10 fois par seconde s'il bouge, 1 fois sinon.
+                // Sans nous au volant : 20 fois par seconde s'il bouge, 1 fois sinon.
                 Vec3 v = MoveSpeed(e.veh);
                 bool moving = v.x * v.x + v.y * v.y + v.z * v.z > 0.0001f || VehDriver(e.veh);
-                if (now - e.lastSend >= (moving ? 100u : 1000u)) SendVehicle(e);
+                if (now - e.lastSend >= (moving ? 50u : 1000u)) SendVehicle(e);
             }
             continue;
         }
