@@ -51,6 +51,8 @@ void InstallCombatHooks();
 // display.cpp
 void InstallDisplay();
 void UpdateHudScale();
+bool MenuSqueezeActive();
+float MenuSqueezeFactor();
 
 // population.cpp
 void InstallPopulation();

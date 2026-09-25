@@ -42,7 +42,7 @@ DISPLAY
 By default the game runs borderless fullscreen at your desktop resolution,
 in your screen's real aspect ratio (16:9, 21:9, 32:9): a wider view with no
 stretching, and the HUD keeps its proportions. Settings in vccoop.ini
-(Fenetre, GrandEcran). Menus are still stretched for now.
+(Fenetre, GrandEcran). Menus keep their proportions, centred.
 
 KNOWN LIMITS (test build)
 -------------------------

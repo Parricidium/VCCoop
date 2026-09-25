@@ -45,7 +45,7 @@ AFFICHAGE
 Par defaut le jeu tourne en plein ecran fenetre, a la resolution du bureau,
 au vrai format de l'ecran (16:9, 21:9, 32:9) : on voit plus large, sans
 deformation, et le HUD garde ses proportions. Reglages dans vccoop.ini
-(Fenetre, GrandEcran). Les menus restent etires pour l'instant.
+(Fenetre, GrandEcran). Les menus gardent leurs proportions, centres.
 
 A SAVOIR (version de test)
 --------------------------
