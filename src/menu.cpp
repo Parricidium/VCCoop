@@ -8,6 +8,7 @@
 #include "vccoop.h"
 #include "net.h"
 #include "game.h"
+#include "saveshare.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -43,6 +44,9 @@ static int g_pendingSelect = -1;    // entree a valider sur l'ecran courant
 static uint32_t g_joinSince;
 
 bool CoopNetworkStarted() { return g_netStarted; }
+void MenuRequestPage(int page) { g_pendingPage = page; }
+void MenuRequestSelect(int entry) { g_pendingSelect = entry; }
+int MenuCurrentPage() { return CurrentPage(); }
 
 void CoopStartNetwork()
 {
@@ -209,6 +213,13 @@ void MenuFrame()
     }
     if (!g_joining) return;
     if (g_localId > 0) {
+        // Si l'hote a charge une sauvegarde, elle arrive juste apres l'accord : on l'attend (elle se chargera
+        // toute seule) au lieu de proposer une nouvelle partie.
+        static uint32_t connectedAt;
+        if (!connectedAt) connectedAt = GetTickCount();
+        if (GuestWaitingForSave()) { g_joining = false; connectedAt = 0; Log("menu : connecte, sauvegarde de l'hote en route"); return; }
+        if (GetTickCount() - connectedAt < 2000) return;
+        connectedAt = 0;
         g_joining = false;
         Log("menu : connecte, nouvelle partie");
         if (GameState() == GS_FRONTEND && CurrentPage() == PAGE_COOP) g_pendingPage = PAGE_NEW_GAME;

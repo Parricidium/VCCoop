@@ -47,7 +47,10 @@ A SAVOIR (version de test)
   tel endroit, monter dans telle voiture...) se jouent sur l'hote.
 - Pas de tir ami entre joueurs. Les tirs des autres joueurs sont visibles
   pour les armes a balles (pas encore les grenades ni les roquettes).
-- Pas encore de partage de sauvegarde : pour l'instant, tout le monde
-  commence une nouvelle partie ensemble. L'avancement de l'histoire de
-  l'hote est transmis aux invites au fil des missions.
+- Sauvegardes : pour reprendre une partie, l'hote charge sa sauvegarde (menu
+  Commencer partie > Charger, ou Pause > Charger) : elle est envoyee aux
+  invites, qui la chargent automatiquement dans leur emplacement 8 (reserve
+  a la coop : ce qu'il contenait est remplace). Un invite qui arrive plus
+  tard la recoit aussi. L'avancement de l'histoire de l'hote est ensuite
+  transmis aux invites au fil des missions.
 - En cas de souci : vccoop.log (dans le dossier du jeu) aide a comprendre.

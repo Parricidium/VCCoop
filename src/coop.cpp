@@ -8,6 +8,7 @@
 #include "mirror.h"
 #include "seats.h"
 #include "combat.h"
+#include "saveshare.h"
 #include <math.h>
 #include <string.h>
 
@@ -368,6 +369,7 @@ void CoopFrame()
     }
 
     MenuFrame();
+    SaveShareFrame();
     AutotestFrame();
     NetPoll();
     // En coop, le menu Pause n'arrete pas le monde (sinon toute la partie des invites se fige derriere le menu

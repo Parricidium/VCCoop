@@ -9,6 +9,7 @@
 #include "entities.h"
 #include "combat.h"
 #include "mirror.h"
+#include "saveshare.h"
 #include <string.h>
 
 using namespace game;
@@ -100,6 +101,7 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
 
 void CombatOnReliable(int from, const uint8_t *data, int len)
 {
+    if (data[0] >= 20) { SaveShareOnReliable(from, data, len); return; }   // saveshare.cpp
     if (data[0] == RL_DAMAGE_PED && g_cfg.host && len >= (int)sizeof(RlDamagePed)) {
         const RlDamagePed &d = *(const RlDamagePed *)data;
         void *ped = PedFromHandle(d.hostHandle);

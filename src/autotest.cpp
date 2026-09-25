@@ -10,6 +10,7 @@
 //   Autotest=frappe : (invite) toutes les 2 s, inflige 25 points a la copie du personnage de mission le plus proche
 //   Autotest=histoire : (hote) passe les cinematiques et se teleporte sur le dernier objectif / point de contact
 //   Autotest=tireur : (hote) prend un pistolet et tire une balle par seconde droit devant
+//   Autotest=sauvecharge : (hote) sauvegarde dans l'emplacement 1 puis recharge cette sauvegarde (une fois)
 //   Autotest=rejoindre : idem, puis se teleporte devant le joueur 0, un peu de cote (une fois)
 #include "util.h"
 #include "vccoop.h"
@@ -19,6 +20,7 @@
 #include "entities.h"
 #include "mirror.h"
 #include "combat.h"
+#include "saveshare.h"
 #include <math.h>
 #include <string.h>
 
@@ -93,6 +95,28 @@ void AutotestFrame()
                 Log("autotest : l'hote est au volant, touche G");
                 TogglePassenger();
             }
+        }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "sauvecharge") == 0) {
+        // Comme a une planque : ACTIVATE_SAVE_MENU (m_bSaveMenuActive, menu +0x3B) ouvre le menu de sauvegarde
+        // (ecran 15), emplacement 1, "Oui" (16), le jeu sauvegarde (17), "OK" (18) ; puis on recharge.
+        static int step;
+        static uint32_t at;
+        uint32_t t = frame - controlSince;
+        if (step == 0 && t > 300) { *(bool *)(0x869630 + 0x3B) = true; step = 1; at = frame; Log("autotest : menu de sauvegarde"); }
+        else if (step == 1 && MenuCurrentPage() == 15 && frame - at > 60) { MenuRequestSelect(0); step = 2; at = frame; }
+        else if (step == 2 && MenuCurrentPage() == 16 && frame - at > 30) { MenuRequestSelect(2); step = 3; at = frame; }
+        else if (step == 3 && MenuCurrentPage() == 18 && frame - at > 30) { Log("autotest : sauvegarde faite"); MenuRequestSelect(1); step = 4; at = frame; }
+        else if (step == 4 && MenuActive() && MenuCurrentPage() == 18 && frame - at > 60) { MenuRequestSelect(1); at = frame; }   // "OK"
+        else if (step == 4 && MenuActive() && MenuCurrentPage() == 15 && frame - at > 60) { MenuRequestSelect(8); at = frame; }   // "Annuler"
+        else if (step == 4 && MenuActive() && frame - at > 300) { Log("autotest : menu toujours ouvert (ecran %d)", MenuCurrentPage()); at = frame; }
+        else if (step == 4 && !MenuActive() && frame - at > 90) {
+            step = 5;
+            *(int *)(0x869630 + 0x100) = 0;
+            MenuWantToRestart() = 1;
+            MenuWantToLoad() = 1;
+            Log("autotest : chargement de l'emplacement 1");
         }
         return;
     }

@@ -43,6 +43,8 @@ static LONG WINAPI OnVectored(EXCEPTION_POINTERS *ep)
         code == EXCEPTION_INT_DIVIDE_BY_ZERO || code == EXCEPTION_STACK_OVERFLOW) {
         static int count;
         if (count++ < 3) OnCrash(ep);
+        // Instance de test hors ecran : pas de boite "Unhandled Exception" sur l'ecran de JD, on s'arrete la.
+        if (g_cfg.background) { Log("instance de test : arret apres plantage"); TerminateProcess(GetCurrentProcess(), 3); }
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }

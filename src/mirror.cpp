@@ -1,4 +1,4 @@
-﻿// Reproduction de la "presentation" des missions : l'hote capture certaines commandes de ses scripts de
+// Reproduction de la "presentation" des missions : l'hote capture certaines commandes de ses scripts de
 // mission (fondus, textes, camera, marqueurs radar, cinematiques, dialogues...) avec leurs parametres
 // evalues, et les envoie sur le flux fiable. Chaque invite les rejoue dans un script prive, en traduisant
 // les references d'entites (personnages et vehicules copies, marqueurs et objets crees par ces commandes).
@@ -10,6 +10,7 @@
 #include "entities.h"
 #include "mirror.h"
 #include "combat.h"
+#include "saveshare.h"
 #include <string.h>
 
 using namespace game;
@@ -244,7 +245,8 @@ void MirrorMissionStart()
 // Seules les valeurs "drapeau" (petits entiers) circulent : elles portent l'avancement de l'histoire. Les autres
 // globales contiennent aussi des references d'entites (marqueurs, objets, pickups) propres a chaque machine, qu'il
 // ne faut surtout pas ecraser, et des coordonnees que le script de l'invite calcule lui-meme.
-static bool IsFlagValue(uint32_t v) { return (int32_t)v >= -1 && (int32_t)v <= 1000; }
+// -1..255 : au-dela, une valeur peut etre une reference de pool (case << 8 | compteur, 256 des la case 1).
+static bool IsFlagValue(uint32_t v) { return (int32_t)v >= -1 && (int32_t)v <= 255; }
 
 // peer < 0 : a tous ; changedOnly : seulement ce qui differe de la photo (sinon tout ce qui est non nul).
 static void SendGlobals(int peer, bool changedOnly)
@@ -279,13 +281,24 @@ static void SendGlobalChanges()
 // Hote : chaque invite recoit l'etat complet de l'histoire des que l'hote est en partie (a son arrivee, ou plus
 // tard si l'hote etait encore au menu).
 static bool g_synced[MAX_PLAYERS];
+static bool g_sameSave[MAX_PLAYERS];   // l'invite va charger la sauvegarde que l'hote vient de charger
+void MirrorGuestsGetHostSave() { for (int i = 1; i < MAX_PLAYERS; i++) if (g_players[i].connected) g_sameSave[i] = true; }
 void MirrorPlayerJoined(int peer) { if (peer > 0 && peer < MAX_PLAYERS) g_synced[peer] = false; }
 
 static void HostSyncNewcomers(bool inGame)
 {
-    if (!inGame) return;
-    for (int i = 1; i < MAX_PLAYERS; i++)
-        if (g_players[i].connected && !g_synced[i]) { g_synced[i] = true; SendGlobals(i, false); }
+    // Nouvel invite : d'abord la sauvegarde de l'hote s'il en a charge une, puis (une fois l'invite en partie)
+    // l'etat complet de l'histoire. Chaque retour en partie d'un invite (apres un chargement) le renvoie aussi.
+    static bool saveSent[MAX_PLAYERS], wasInGame[MAX_PLAYERS];
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        if (!g_players[i].connected) { saveSent[i] = wasInGame[i] = false; continue; }
+        if (!saveSent[i] && !g_synced[i]) { saveSent[i] = true; if (HostHasSave()) { SendHostSave(i); g_sameSave[i] = true; } }
+        bool in = g_players[i].state.inGame != 0;
+        // Retour en partie apres avoir charge la sauvegarde de l'hote : memes variables que lui, rien a envoyer.
+        if (in && !wasInGame[i]) { if (g_sameSave[i]) { g_sameSave[i] = false; g_synced[i] = true; } else g_synced[i] = false; }
+        wasInGame[i] = in;
+        if (inGame && in && !g_synced[i]) { g_synced[i] = true; SendGlobals(i, false); }
+    }
 }
 
 void MirrorMissionEnd()
