@@ -33,7 +33,10 @@ static void HostScan()
     for (int i = 0; i < pool->size; i++) {
         if (pool->flags[i] & 0x80) continue;
         void *ped = pool->objects + i * PED_POOL_ENTRY;
-        if (ped == player || CharCreatedBy(ped) != PED_CHAR_MISSION || IsPuppet(ped)) continue;
+        if (ped == player || IsPuppet(ped)) continue;
+        // Personnages de mission partout ; passants seulement pres d'un invite (population partagee).
+        if (CharCreatedBy(ped) != PED_CHAR_MISSION &&
+            !(CharCreatedBy(ped) == 1 && NearAnyGuest(&Pos(ped).x, AreaCode(ped), 100.0f))) continue;
         MsgPed m = {};
         m.type = MSG_PED;
         m.handle = PedHandle(ped);
