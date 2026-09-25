@@ -20,7 +20,9 @@ struct Config {
     int testMenu;
     char testMenuPlan[16];   // test : "creer" / "rejoindre" depuis l'ecran COOP       // test : ecran de menu a ouvrir au demarrage       // reseau demarre d'office (ligne de commande -vccoop, ou Reseau=1) ; sinon par le menu COOP
     bool logScripts;
-    int logOpcodes;    // diagnostic : chaque opcode des scripts de mission
+    int logOpcodes;
+    char traceScript[9];
+    int watchPuppetField;   // diagnostic : surveille ce champ du Tommy distant (SurveilleTommy=0x24C)   // diagnostic : trace d'un script nomme    // diagnostic : chaque opcode des scripts de mission
     char autotest[16];  // instances de test : "passer" / "marche" (pilote la manette 0)    // diagnostic : scripts actifs dans le journal     // instances de test : nouvelle partie directement
 };
 extern Config g_cfg;
@@ -41,6 +43,7 @@ void InstallCrashLog();
 
 // watchdog.cpp
 void StartWatchdog();
+void WatchAddress(uintptr_t addr);   // diagnostic : point d'arret materiel en ecriture
 void WatchdogFrame();
 
 // script.cpp

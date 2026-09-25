@@ -66,6 +66,26 @@ static char __fastcall h_ProcessOneCommand(void *script)
             Log("op %04X @%X (%.8s) %s", op, ip, (char *)script + 8, hex);
         }
     }
+    // Diagnostic : textes d'aide / messages affiches par n'importe quel script (etiquette, script, position).
+    if (g_cfg.logScripts && (op == 0x03E5 || op == 0x00BC || op == 0x00BB)) {
+        static char last[9];
+        const char *label = (const char *)ScriptSpace() + ip + 2;
+        if (memcmp(last, label, 8) != 0) {
+            memcpy(last, label, 8);
+            void *me = FindPlayerPed();
+            Log("script : %04X '%.8s' par %.8s (mission %d) joueur en %.1f %.1f, modele 0 '%s'", op, label,
+                (char *)script + 8, Field<bool>(script, 0x85), me ? Pos(me).x : 0.0f, me ? Pos(me).y : 0.0f, ModelName(0));
+        }
+    }
+    // Diagnostic TraceScript=nom : chaque opcode d'un script nomme, avec ses octets (6000 au plus).
+    if (g_cfg.traceScript[0] && !_strnicmp((char *)script + 8, g_cfg.traceScript, 8)) {
+        static int traced;
+        if (traced++ < 6000) {
+            char hex[64];
+            for (int i = 0; i < 20; i++) wsprintfA(hex + i * 3, "%02X ", ScriptSpace()[ip + 2 + i]);
+            Log("trace %04X @%X %s", op, ip, hex);
+        }
+    }
     ConditionsBeginCommand(script, op);
     if (g_cfg.host) {
         if (op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85)) MirrorMissionEnd();

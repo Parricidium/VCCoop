@@ -209,6 +209,7 @@ static void UpdateGhost(Ghost &g)
     MoveSpeed(ped) = { m.speed[0], m.speed[1], m.speed[2] };
     SetHeadingMatrix(ped, m.heading);
     Heading(ped) = HeadingGoal(ped) = m.heading;
+    PedState(ped) = 0;   // etat "aucun" : l'IA ne remet pas le deplacement a "immobile" (cf. coop.cpp)
     SetMoveStateFn(ped, m.moveState);
     SetMoveAnim(ped);
 }

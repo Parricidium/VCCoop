@@ -41,6 +41,8 @@ static void LoadConfig()
     g_cfg.logScripts = GetPrivateProfileIntA("VCCoop", "JournalScripts", 0, ini) != 0;
     GetPrivateProfileStringA("VCCoop", "Autotest", "", g_cfg.autotest, sizeof(g_cfg.autotest), ini);
     g_cfg.logOpcodes = GetPrivateProfileIntA("VCCoop", "JournalOpcodes", 0, ini);
+    GetPrivateProfileStringA("VCCoop", "TraceScript", "", g_cfg.traceScript, sizeof(g_cfg.traceScript), ini);
+    g_cfg.watchPuppetField = GetPrivateProfileIntA("VCCoop", "SurveilleTommy", 0, ini);
     g_cfg.autoStart = GetPrivateProfileIntA("VCCoop", "AutoDemarrer", 0, ini) != 0;
     g_cfg.borderless = GetPrivateProfileIntA("VCCoop", "Fenetre", 1, ini) == 2;
     g_cfg.widescreen = GetPrivateProfileIntA("VCCoop", "GrandEcran", 1, ini) != 0;
