@@ -52,6 +52,9 @@ static void ArmWatch(HANDLE th)
     Log("surveillance des ecritures en %08lX", (DWORD)g_watchAddr);
 }
 
+static volatile uintptr_t g_watchRequest;   // adresse a surveiller demandee en cours de partie
+void WatchAddress(uintptr_t addr) { g_watchRequest = addr; }
+
 static DWORD WINAPI WatchdogThread(LPVOID)
 {
     HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT, FALSE, g_mainThreadId);
@@ -61,6 +64,13 @@ static DWORD WINAPI WatchdogThread(LPVOID)
     int stalls = 0, ticks = 0;
     for (;;) {
         Sleep(3000);
+        if (g_watchRequest) {
+            static bool vehAdded;
+            if (!vehAdded) { AddVectoredExceptionHandler(1, OnSingleStep); vehAdded = true; }
+            g_watchAddr = g_watchRequest;
+            g_watchRequest = 0;
+            ArmWatch(th);
+        }
         LONG now = g_frameCount;
         // Mode diagnostic (JournalScripts=1) : un releve toutes les ~9 s meme si des images arrivent.
         bool sample = g_cfg.logScripts && (++ticks % 3) == 0;

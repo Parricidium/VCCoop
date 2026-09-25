@@ -96,6 +96,7 @@ static void CreatePuppet(Puppet &pp, const MsgState &s)
     pp.ped = ped;
     pp.lastMoveState = -1;
     RegisterReference(ped, &pp.ped);
+    if (g_cfg.watchPuppetField) WatchAddress((uintptr_t)ped + g_cfg.watchPuppetField);
     Log("coop : Tommy de %s cree (%p, tenue %s) en %.1f %.1f %.1f", s.name, ped, s.outfit, s.pos[0], s.pos[1], s.pos[2]);
 }
 
@@ -151,8 +152,10 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     for (int n = 0; pp.lastShots != s.shots && n < 3; n++) { pp.lastShots++; PuppetShoot(ped, s.weapon); }
     pp.lastShots = s.shots;
 
-    // L'IA du personnage remet son etat de deplacement a chaque image : on impose le notre a chaque fois
-    // (SetMoveAnim ne relance l'animation que si elle change).
+    // L'IA "au repos" (etat 1, FUN_004FDEB0) remettait le deplacement a "immobile" a chaque image : l'animation de
+    // marche redemarrait sans cesse (on voyait l'autre joueur glisser dans une pose figee). Dans l'etat 0 ("aucun"),
+    // le jeu ne fait rien : c'est l'etat recu du reseau qui pilote seul l'animation.
+    PedState(ped) = 0;
     int before = MoveState(ped);
     SetMoveStateFn(ped, s.moveState);
     SetMoveAnim(ped);
@@ -278,11 +281,13 @@ void RequestGather() { g_gathered = false; }
 static void GatherToHost(bool inGame)
 {
     bool &gathered = g_gathered;
-    // Mort ou arrete : il reapparait a l'hopital / au commissariat ; on le ramene ensuite pres de l'hote.
+    // Mort : il reapparait a l'hopital ; on le ramene ensuite pres de l'hote. (PED_DEAD = 55, verifie dans
+    // CPed::SetDead ; 54 = PED_DIE. Surtout pas 56 et suivants : etats de vol de voiture, l'invite etait teleporte
+    // en pleine action.)
     static bool wasDown;
     if (inGame && !g_cfg.host) {
         void *me = FindPlayerPed();
-        bool down = me && (Health(me) <= 0.0f || PedState(me) == 54 || PedState(me) == 55 || PedState(me) == 56);
+        bool down = me && (Health(me) <= 0.0f || PedState(me) == 54 || PedState(me) == 55);
         if (wasDown && !down) { gathered = false; Log("coop : de retour apres la mort / l'arrestation"); }
         wasDown = down;
     }

@@ -97,6 +97,11 @@ static UpdateCompareFlag_t o_UpdateCompareFlag;
 
 static void __fastcall h_UpdateCompareFlag(void *script, void *edx, uint8_t flag)
 {
+    // Invite : les scripts hors mission ne voient aucun pickup ramasse (HAS_PICKUP_BEEN_COLLECTED 0214). Le moteur
+    // donne toujours armes / sante / gilet, mais les reactions du script principal, qui appartiennent a l'histoire
+    // de l'hote, ne se declenchent pas chez lui : vetements (le thread "pickups" coupait le controle, rhabillait et
+    // affichait "Vetements changes !" en boucle : l'invite apparait sur ce pickup), paquets caches, saccages.
+    if (!g_cfg.host && flag && g_curOp == 0x0214 && script == g_curScript && !Field<bool>(script, 0x85)) flag = 0;
     if (g_cfg.host && !flag && script == g_curScript && Field<bool>(script, 0x85)) {
         uint16_t op = g_curOp;
         // Le sujet doit etre l'hote : joueur 0 ($PLAYER_CHAR) ou, pour un LOCATE de personnage, son Tommy.

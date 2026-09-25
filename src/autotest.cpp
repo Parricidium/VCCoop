@@ -14,6 +14,7 @@
 //   Autotest=loin : (invite) passe les cinematiques, puis au bout de 30 s se teleporte a 300 m (population locale)
 //   Autotest=objectif : se teleporte sur le dernier cylindre de mission actif (invite : ceux de l'hote)
 //   Autotest=principal : (hote) se teleporte sur les cylindres du script principal (lance les missions)
+//   Autotest=cours : cycles de 3 s : marche, course, sprint, arret (tourne un peu pour rester dans la zone)
 //   Autotest=rejoindre : idem, puis se teleporte devant le joueur 0, un peu de cote (une fois)
 #include "util.h"
 #include "vccoop.h"
@@ -122,6 +123,17 @@ void AutotestFrame()
         Pos(mover) = { mk.x, mk.y, z + 1.0f };
         MoveSpeed(mover) = { 0, 0, 0 };
         Log("autotest : %s sur le cylindre %s (%.1f %.1f %.1f)", veh ? "voiture" : "a pied", &mk == &g_mainMarker ? "du script principal" : "de mission", mk.x, mk.y, z);
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "cours") == 0) {
+        uint32_t t = frame - controlSince;
+        if (t < 90) return;
+        int phase = (int)((t / 90) % 4);   // 3 s par phase a 30 images/s
+        if (phase == 0) { Press(PAD_LSTICK_Y, -60); Press(PAD_LSTICK_X, 40); }            // marche
+        else if (phase == 1) { Press(PAD_LSTICK_Y, -128); Press(PAD_LSTICK_X, 40); }      // course
+        else if (phase == 2) { Press(PAD_LSTICK_Y, -128); Press(PAD_CROSS, 255); }         // sprint
+        static int lastPhase = -1;
+        if (phase != lastPhase) { lastPhase = phase; Log("autotest : phase %d, deplacement %d", phase, MoveState(FindPlayerPed())); }
         return;
     }
     if (_stricmp(g_cfg.autotest, "loin") == 0) {
