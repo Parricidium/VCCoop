@@ -36,8 +36,8 @@ JOUER
 
 MONDE PARTAGE
 -------------
-Quand un invite est pres de l'hote (moins de 60 m), il voit les memes
-passants et la meme circulation que lui. En s'eloignant (plus de 100 m), il
+Quand un invite est pres de l'hote (moins de 120 m), il voit les memes
+passants et la meme circulation que lui. En s'eloignant (plus de 170 m), il
 retrouve sa propre ville autour de lui.
 
 AFFICHAGE

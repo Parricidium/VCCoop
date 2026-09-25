@@ -9,6 +9,7 @@
 NetPlayer g_players[MAX_PLAYERS];
 int g_localId = -1;
 void (*g_onWorld)(const MsgWorld &w);
+void (*g_onState)(const MsgState &s);
 void (*g_onVehicle)(const MsgVehicle &v);
 void (*g_onVehRemove)(uint32_t id);
 void (*g_onPed)(const MsgPed &p);
@@ -57,7 +58,7 @@ bool NearAnyGuest(const float *p, uint8_t area, float r)
 {
     for (int i = 1; i < MAX_PLAYERS; i++) {
         const NetPlayer &g = g_players[i];
-        if (!g.connected || !g.state.inGame || g.state.area != area) continue;
+        if (!g.connected || !g.state.inGame || !g.state.shared || g.state.area != area) continue;
         float dx = g.state.pos[0] - p[0], dy = g.state.pos[1] - p[1], dz = g.state.pos[2] - p[2];
         if (dx * dx + dy * dy + dz * dz < r * r) return true;
     }
@@ -231,6 +232,7 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         MsgState s = *(const MsgState *)buf;
         s.id = (uint8_t)id;
         g_players[id].state = s;
+        if (g_onState) g_onState(s);
         for (int i = 1; i < MAX_PLAYERS; i++)   // relais aux autres invites
             if (i != id && g_players[i].connected) SendTo(g_peerAddr[i], &s, sizeof(s));
     } else if (buf[0] == MSG_RELIABLE) {
@@ -277,6 +279,7 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
                 p.connected = true;
                 p.state = *s;
                 p.lastSeen = GetTickCount();
+                if (g_onState) g_onState(*s);
             }
         }
         break;

@@ -5,7 +5,10 @@
 //   Autotest=marche : idem, puis marche en rond une fois qu'on a la main
 //   Autotest=voiture : comme marche, mais monte dans le vehicule le plus proche, roule 4 s puis descend
 //   Autotest=taxi : monte dans le vehicule le plus proche, attend un passager (autre joueur), roule 4 s
-//   Autotest=passager : des qu'un autre joueur est au volant pres de nous, monte a cote de lui (touche G)
+//   Autotest=passager : des qu'un autre joueur est au volant pres de nous, monte a cote de lui (touche G), et
+//                       redescend (G) 6 s plus tard
+//   Autotest=bagarre : toutes les 2 s, alternativement un coup de poing (rond) et un saut (carre)
+//   Autotest=moto : (hote) fait apparaitre un Faggio a cote de lui, s'assoit dessus, roule doucement par moments
 //   Autotest=cible : (hote) cree un personnage de mission a cote de lui ; toutes les 3 s il "blesse" le Tommy de l'invite
 //   Autotest=frappe : (invite) toutes les 2 s, inflige 25 points a la copie du personnage de mission le plus proche
 //   Autotest=histoire : (hote) passe les cinematiques et se teleporte sur le dernier objectif / point de contact
@@ -26,13 +29,14 @@
 #include "combat.h"
 #include "saveshare.h"
 #include "conditions.h"
+#include "seats.h"
 #include <math.h>
 #include <string.h>
 
 using namespace game;
 
 // CControllerState (0x2A octets, des short) : LeftStickX +0, LeftStickY +2, ..., Cross +0x20
-enum { PAD_LSTICK_X = 0x00, PAD_LSTICK_Y = 0x02, PAD_TRIANGLE = 0x1E, PAD_CROSS = 0x20, PAD_CIRCLE = 0x22 };
+enum { PAD_LSTICK_X = 0x00, PAD_LSTICK_Y = 0x02, PAD_SQUARE = 0x1C, PAD_TRIANGLE = 0x1E, PAD_CROSS = 0x20, PAD_CIRCLE = 0x22 };
 static uint8_t *PadJoyState() { return (uint8_t *)0x7DBCB0 + 0x96; }   // Pads[0].PCTempJoyState
 static short &PadDisableControls() { return *(short *)(0x7DBCB0 + 0xF0); }
 static bool CutsceneRunning() { return *(bool *)0xA10AB2; }
@@ -56,8 +60,8 @@ void AutotestFrame()
     }
     if (_stricmp(g_cfg.autotest, "rejoindre") == 0) {
         static bool done;
-        const NetPlayer &host = g_players[0];
-        if (!done && frame - controlSince > 60 && g_localId > 0 && host.connected && host.state.inGame) {
+        const NetPlayer &host = g_players[g_localId == 0 ? 1 : 0];   // l'hote va aupres du joueur 1
+        if (!done && frame - controlSince > 60 && g_localId >= 0 && host.connected && host.state.inGame) {
             done = true;
             void *ped = FindPlayerPed();
             Vec3 &p = Pos(ped);
@@ -89,14 +93,58 @@ void AutotestFrame()
         if (drive && frame - drive > 60 && frame - drive < 180) Press(PAD_CROSS, 255);
         return;
     }
+    if (_stricmp(g_cfg.autotest, "bagarre") == 0) {
+        uint32_t t = frame - controlSince;
+        if (t < 150) return;
+        uint32_t k = (t - 150) % 120;
+        if (k < 4) Press(((t - 150) / 120) % 2 ? PAD_SQUARE : PAD_CIRCLE, 255);
+        if (k == 0) Log("autotest : %s", ((t - 150) / 120) % 2 ? "saut" : "coup de poing");
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "moto") == 0) {
+        static void *bike;
+        static uint32_t seated;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        enum { MI_FAGGIO = 192 };
+        if (!bike && !seated && t > 60) {
+            if (!HasModelLoaded(MI_FAGGIO)) { RequestModel(MI_FAGGIO, 1); return; }
+            void *v = VehicleAlloc();
+            BikeCtor(v, MI_FAGGIO, VEHICLE_MISSION);
+            float h = Heading(me);
+            Pos(v) = { Pos(me).x - sinf(h) * 3.0f, Pos(me).y + cosf(h) * 3.0f, Pos(me).z };
+            SetHeadingMatrix(v, h);
+            SetEntityStatus(v, STATUS_ABANDONED);
+            WorldAdd(v);
+            bike = v;
+            RegisterReference(v, &bike);
+            Log("autotest : Faggio cree");
+        }
+        if (bike && !seated && t > 120) {
+            seated = frame;
+            WarpIntoSeat(me, bike, 0);
+            Log("autotest : sur le Faggio (conducteur %d)", VehDriver(bike) == me);
+        }
+        // Avance 2 s toutes les 8 s.
+        if (seated && InVehicle(me) && (frame - seated) % 240 > 180) Press(PAD_CROSS, 160);
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "passager") == 0) {
-        static bool boarded;
+        static bool boarded, left;
+        static uint32_t boardedAt;
+        if (boarded && !left && frame - boardedAt > 180) {
+            left = true;
+            Log("autotest : touche G (descendre)");
+            TogglePassenger();
+            Log("autotest : descendu, a pied=%d", !InVehicle(FindPlayerPed()));
+        }
         const NetPlayer &h = g_players[0];
         if (!boarded && g_localId > 0 && h.connected && h.state.inVehicle && h.state.seat == 0 && frame - controlSince > 30) {
             void *ped = FindPlayerPed();
             float dx = h.state.pos[0] - Pos(ped).x, dy = h.state.pos[1] - Pos(ped).y;
             if (dx * dx + dy * dy < 64.0f) {
                 boarded = true;
+                boardedAt = frame;
                 Log("autotest : l'hote est au volant, touche G");
                 TogglePassenger();
             }

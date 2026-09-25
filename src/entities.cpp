@@ -9,6 +9,7 @@
 #include "mirror.h"
 #include "seats.h"
 #include "combat.h"
+#include "interp.h"
 #include <string.h>
 
 using namespace game;
@@ -36,7 +37,7 @@ static void HostScan()
         if (ped == player || IsPuppet(ped)) continue;
         // Personnages de mission partout ; passants seulement pres d'un invite (population partagee).
         if (CharCreatedBy(ped) != PED_CHAR_MISSION &&
-            !(CharCreatedBy(ped) == 1 && NearAnyGuest(&Pos(ped).x, AreaCode(ped), 100.0f))) continue;
+            !(CharCreatedBy(ped) == 1 && NearAnyGuest(&Pos(ped).x, AreaCode(ped), (float)AMBIENT_SHARE_M))) continue;
         MsgPed m = {};
         m.type = MSG_PED;
         m.handle = PedHandle(ped);
@@ -50,6 +51,7 @@ static void HostScan()
         m.moveState = (uint8_t)MoveState(ped);
         m.pedState = (uint8_t)PedState(ped);
         m.pedType = (uint8_t)PedType(ped);
+        m.time = now;
         m.area = AreaCode(ped);
         m.weapon = WeaponTypeInSlot(ped, CurrentWeaponSlot(ped));
         if (InVehicle(ped) && PedVehicle(ped)) {
@@ -82,6 +84,7 @@ struct Ghost {
     uint32_t lastRecv;
     int lastMoveState;
     bool dead;
+    Track track;
 };
 static Ghost g_ghosts[MAX_GHOSTS];
 
@@ -199,16 +202,7 @@ static void UpdateGhost(Ghost &g)
     if (m.vehicleId) flags &= ~0x04;   // vehicule pas encore copie : cache
     else flags |= 0x04;
 
-    float age = (GetTickCount() - g.lastRecv) / 1000.0f;
-    if (age > 0.25f) age = 0.25f;
-    Vec3 target = { m.pos[0] + m.speed[0] * age * 50.0f, m.pos[1] + m.speed[1] * age * 50.0f, m.pos[2] + m.speed[2] * age * 50.0f };
-    Vec3 &p = Pos(ped);
-    float dx = target.x - p.x, dy = target.y - p.y, dz = target.z - p.z;
-    if (dx * dx + dy * dy + dz * dz > 25.0f) p = target;
-    else { p.x += dx * 0.5f; p.y += dy * 0.5f; p.z += dz * 0.5f; }
-    MoveSpeed(ped) = { m.speed[0], m.speed[1], m.speed[2] };
-    SetHeadingMatrix(ped, m.heading);
-    Heading(ped) = HeadingGoal(ped) = m.heading;
+    // Position et cap : apres la physique, par interpolation (GhostsAfterProcess).
     PedState(ped) = 0;   // etat "aucun" : l'IA ne remet pas le deplacement a "immobile" (cf. coop.cpp)
     SetMoveStateFn(ped, m.moveState);
     SetMoveAnim(ped);
@@ -224,6 +218,27 @@ static void OnPed(const MsgPed &m)
     }
     g->state = m;
     g->lastRecv = GetTickCount();
+    ClockSample(0, m.time);
+    Snap n = {};
+    n.t = m.time;
+    for (int k = 0; k < 3; k++) { n.pos[k] = m.pos[k]; n.vel[k] = m.speed[k]; }
+    n.heading = m.heading;
+    g->track.Push(n);
+}
+
+// Apres la physique : les copies a pied (et vivantes) sont placees a leur position interpolee.
+void GhostsAfterProcess()
+{
+    if (g_cfg.host) return;
+    for (auto &g : g_ghosts) {
+        if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.state.vehicleId) continue;
+        Snap n;
+        if (!TrackSample(g.track, 0, n, true)) continue;
+        Pos(g.ped) = { n.pos[0], n.pos[1], n.pos[2] };
+        MoveSpeed(g.ped) = { n.vel[0], n.vel[1], n.vel[2] };
+        SetHeadingMatrix(g.ped, n.heading);
+        Heading(g.ped) = HeadingGoal(g.ped) = n.heading;
+    }
 }
 
 static void OnPedRemove(uint32_t handle)
