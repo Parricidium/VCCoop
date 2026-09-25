@@ -106,6 +106,38 @@ const OpSig *FindOp(uint16_t op)
     return NULL;
 }
 
+// ======================================================================= Hote : marqueurs actifs
+// Les marqueurs radar poses par les missions et pas encore retires sont gardes (la commande telle qu'envoyee),
+// pour les rejouer chez un invite qui arrive en cours de mission.
+struct ActiveBlip { uint32_t hostBlip; int len; uint8_t cmd[64]; };
+static ActiveBlip g_activeBlips[64];
+static int g_activeBlipCount;
+
+static bool CreatesBlip(uint16_t op) { return op == 0x0186 || op == 0x0187 || op == 0x018A || op == 0x02A7 || op == 0x02A8 || op == 0x04CE; }
+
+static void RememberActiveBlip(uint16_t op, const uint8_t *cmd, int len)
+{
+    if (op == 0x0164) {   // REMOVE_BLIP : parametre 'B' (1 octet de genre + 4 de valeur) apres l'entete de 4 octets
+        uint32_t h;
+        memcpy(&h, cmd + 5, 4);
+        for (int i = 0; i < g_activeBlipCount; i++)
+            if (g_activeBlips[i].hostBlip == h) { g_activeBlips[i] = g_activeBlips[--g_activeBlipCount]; break; }
+        return;
+    }
+    if (!CreatesBlip(op) || len > 64 || g_activeBlipCount >= 64) return;
+    // La sortie 'b' est le dernier parametre : ses 4 derniers octets sont la reference du marqueur chez l'hote.
+    ActiveBlip &b = g_activeBlips[g_activeBlipCount++];
+    memcpy(&b.hostBlip, cmd + len - 4, 4);
+    b.len = len;
+    memcpy(b.cmd, cmd, len);
+}
+
+static void SendActiveBlips(int peer)
+{
+    for (int i = 0; i < g_activeBlipCount; i++) NetSendReliableTo(peer, g_activeBlips[i].cmd, g_activeBlips[i].len);
+    if (g_activeBlipCount) Log("miroir : %d marqueurs en cours envoyes a un nouvel invite", g_activeBlipCount);
+}
+
 // ======================================================================= Hote : capture
 struct ParamRef {
     char kind;
@@ -215,7 +247,10 @@ void MirrorAfter(void *script)
         else if (p.type == 3) v = Field<int32_t>(script, 0x30 + p.where * 4);
         memcpy(buf + len, &v, 4); len += 4;
     }
-    if (!g_captureOnly) NetSendReliable(buf, len);
+    if (!g_captureOnly) {
+        NetSendReliable(buf, len);
+        RememberActiveBlip(sig->op, buf, len);
+    }
     // Autotest : dernier objectif / point de contact poses par les missions (coordonnees x, y, z en tete).
     if (sig->op == 0x018A || sig->op == 0x02A7) {
         float c[3];
@@ -297,7 +332,7 @@ static void HostSyncNewcomers(bool inGame)
         // Retour en partie apres avoir charge la sauvegarde de l'hote : memes variables que lui, rien a envoyer.
         if (in && !wasInGame[i]) { if (g_sameSave[i]) { g_sameSave[i] = false; g_synced[i] = true; } else g_synced[i] = false; }
         wasInGame[i] = in;
-        if (inGame && in && !g_synced[i]) { g_synced[i] = true; SendGlobals(i, false); }
+        if (inGame && in && !g_synced[i]) { g_synced[i] = true; SendGlobals(i, false); SendActiveBlips(i); }
     }
 }
 
@@ -470,7 +505,7 @@ void MirrorInit()
 
 void MirrorFrame(bool inGame)
 {
-    if (g_cfg.host) { HostSyncNewcomers(inGame); return; }
+    if (g_cfg.host) { if (!inGame) g_activeBlipCount = 0; HostSyncNewcomers(inGame); return; }
     if (!inGame) { g_blipCount = g_objCount = 0; return; }
     uint32_t now = GetTickCount();
     while (g_qHead != g_qTail) {

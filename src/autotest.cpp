@@ -102,22 +102,26 @@ void AutotestFrame()
         }
         return;
     }
-    bool mainOnly = _stricmp(g_cfg.autotest, "principal") == 0;
-    if (mainOnly || _stricmp(g_cfg.autotest, "objectif") == 0) {
+    bool mainOnly = _stricmp(g_cfg.autotest, "principal") == 0, both = _stricmp(g_cfg.autotest, "mission") == 0;
+    if (mainOnly || both || _stricmp(g_cfg.autotest, "objectif") == 0) {
         static int doneIp = -1;
         static uint32_t lastMove;
-        const AutotestMarker &mk = mainOnly ? g_mainMarker : g_missionMarker;
         uint32_t now = GetTickCount();
+        bool missionActive = g_missionMarker.at && now - g_missionMarker.at < 1000;
+        const AutotestMarker &mk = mainOnly ? g_mainMarker : both ? (missionActive ? g_missionMarker : g_mainMarker) : g_missionMarker;
         void *me = FindPlayerPed();
-        if (!mk.at || now - mk.at > 1000 || InVehicle(me) || now - lastMove < 8000) return;   // marqueur actif seulement
+        void *veh = InVehicle(me) ? PedVehicle(me) : NULL;
+        if (!mk.at || now - mk.at > 1000 || now - lastMove < 8000) return;   // marqueur actif seulement
+        if (veh && !both) return;
         float dx = mk.x - Pos(me).x, dy = mk.y - Pos(me).y;
         if (mk.ip == doneIp && dx * dx + dy * dy < 4.0f) return;
         doneIp = mk.ip;
         lastMove = now;
         float z = mk.z != 0.0f ? mk.z : Pos(me).z;
-        Pos(me) = { mk.x, mk.y, z + 1.0f };
-        MoveSpeed(me) = { 0, 0, 0 };
-        Log("autotest : sur le cylindre %s (%.1f %.1f %.1f)", mainOnly ? "du script principal" : "de mission", mk.x, mk.y, z);
+        void *mover = veh ? veh : me;   // au volant : la voiture (et ses passagers, Lance...) vient avec
+        Pos(mover) = { mk.x, mk.y, z + 1.0f };
+        MoveSpeed(mover) = { 0, 0, 0 };
+        Log("autotest : %s sur le cylindre %s (%.1f %.1f %.1f)", veh ? "voiture" : "a pied", &mk == &g_mainMarker ? "du script principal" : "de mission", mk.x, mk.y, z);
         return;
     }
     if (_stricmp(g_cfg.autotest, "loin") == 0) {
