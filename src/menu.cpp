@@ -158,6 +158,13 @@ static Buttons_t o_Buttons;
 static void __fastcall h_Buttons(void *menu, void *edx, int down, int up, int select, int back, int wheel)
 {
     if (g_edit != EDIT_NONE) return;   // saisie en cours : le menu ne bouge pas
+    // Menus resserres en grand ecran (display.cpp) : la souris recoit la transformation inverse, pour que les
+    // clics et le curseur (dessine resserre) tombent juste. m_nMouseTempPosX +0x64 (brut), m_nMousePosX +0x12C.
+    if (MenuSqueezeActive()) {
+        float cx = *(int *)0x9B48DC * 0.5f;
+        int raw = *(int *)(Menu() + 0x64);
+        *(int *)(Menu() + 0x12C) = (int)(cx + (raw - cx) / MenuSqueezeFactor());
+    }
     if (g_pendingPage >= 0) { int p = g_pendingPage; g_pendingPage = -1; SwitchToNewScreen(p); return; }
     if (g_pendingSelect >= 0) { *(int *)(Menu() + 0x30) = g_pendingSelect; g_pendingSelect = -1; select = 1; }
     if ((char)select && CurrentPage() == PAGE_COOP) {

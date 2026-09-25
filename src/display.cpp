@@ -88,8 +88,11 @@ static const uintptr_t kHudScaleX[] = {
     0x68FD14,   // CRadar
 };
 
+void HookIm2D();
+
 void UpdateHudScale()
 {
+    HookIm2D();
     static float applied = -1.0f;
     float v = 1.0f / 640.0f;
     if (Widescreen()) v *= (4.0f / 3.0f) / ScreenAspect();
@@ -100,6 +103,49 @@ void UpdateHudScale()
     }
     applied = v;
     Log("affichage : echelle horizontale de l'interface %.6f (format %.3f)", v, ScreenAspect());
+}
+
+// --- Menus en grand ecran ---
+// Les menus sont dessines pour du 640 de large puis etires. Pendant qu'un menu est affiche, tout ce qui passe par
+// les fonctions 2D de RenderWare (RwEngineInstance +0x28 ligne, +0x2C triangle, +0x30 primitive, +0x34 primitive
+// indexee) est resserre horizontalement vers le centre (facteur 4/3 / format) : menus aux bonnes proportions,
+// bandes noires sur les cotes. Sommets RwIm2DVertex : x, y, z, rhw, couleur, u, v (28 octets).
+struct Im2DVertex { float x, y, z, rhw; uint32_t color; float u, v; };
+typedef int(__cdecl *Im2DLine_t)(Im2DVertex *, int, int, int);
+typedef int(__cdecl *Im2DTri_t)(Im2DVertex *, int, int, int, int);
+typedef int(__cdecl *Im2DPrim_t)(int, Im2DVertex *, int);
+typedef int(__cdecl *Im2DIdx_t)(int, Im2DVertex *, int, void *, int);
+static Im2DLine_t o_Line;
+static Im2DTri_t o_Tri;
+static Im2DPrim_t o_Prim;
+static Im2DIdx_t o_Idx;
+static Im2DVertex g_squeezed[8192];
+
+bool MenuSqueezeActive() { return Widescreen() && *(char *)0x869668; }   // m_bMenuActive
+float MenuSqueezeFactor() { return (4.0f / 3.0f) / ScreenAspect(); }
+
+static Im2DVertex *Squeeze(Im2DVertex *v, int n)
+{
+    if (!MenuSqueezeActive() || n <= 0 || n > 8192) return v;
+    float cx = *(int *)0x9B48DC * 0.5f, f = MenuSqueezeFactor();
+    for (int i = 0; i < n; i++) { g_squeezed[i] = v[i]; g_squeezed[i].x = cx + (v[i].x - cx) * f; }
+    return g_squeezed;
+}
+
+static int __cdecl h_Line(Im2DVertex *v, int n, int a, int b) { return o_Line(Squeeze(v, n), n, a, b); }
+static int __cdecl h_Tri(Im2DVertex *v, int n, int a, int b, int c) { return o_Tri(Squeeze(v, n), n, a, b, c); }
+static int __cdecl h_Prim(int type, Im2DVertex *v, int n) { return o_Prim(type, Squeeze(v, n), n); }
+static int __cdecl h_Idx(int type, Im2DVertex *v, int n, void *idx, int ni) { return o_Idx(type, Squeeze(v, n), n, idx, ni); }
+
+// Les pointeurs n'existent qu'une fois le moteur ouvert : poses a la premiere image.
+void HookIm2D()
+{
+    uint8_t *g = *(uint8_t **)0x7870C0;   // RwEngineInstance
+    if (o_Line || !g || !*(void **)(g + 0x34)) return;
+    o_Line = (Im2DLine_t)PatchPointer((void **)(g + 0x28), (void *)h_Line);
+    o_Tri = (Im2DTri_t)PatchPointer((void **)(g + 0x2C), (void *)h_Tri);
+    o_Prim = (Im2DPrim_t)PatchPointer((void **)(g + 0x30), (void *)h_Prim);
+    o_Idx = (Im2DIdx_t)PatchPointer((void **)(g + 0x34), (void *)h_Idx);
 }
 
 void InstallDisplay()
