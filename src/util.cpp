@@ -73,6 +73,20 @@ void *PatchPointer(void **slot, void *value)
     return old;
 }
 
+void *MakeDetour(uintptr_t addr, const void *expected, size_t n, void *hook)
+{
+    if (memcmp((void *)addr, expected, n) != 0) {
+        Log("detour : octets inattendus en 0x%06X, crochet non pose", (unsigned)addr);
+        return NULL;
+    }
+    uint8_t *t = (uint8_t *)VirtualAlloc(NULL, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    memcpy(t, expected, n);
+    t[n] = 0xE9;
+    *(int32_t *)(t + n + 1) = (int32_t)((addr + n) - ((uintptr_t)t + n + 5));
+    PatchJump(addr, hook, n);
+    return t;
+}
+
 void *HookImport(const char *dll, const char *func, void *hook)
 {
     uint8_t *base = (uint8_t *)GetModuleHandleA(NULL);

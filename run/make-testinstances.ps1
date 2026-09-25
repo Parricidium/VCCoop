@@ -28,6 +28,7 @@ ImagesParSeconde=30
 Role=invite
 Adresse=127.0.0.1
 AutoDemarrer=1
+Reseau=1
 "@
   "instance $n : $dst"
 }

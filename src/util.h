@@ -17,5 +17,10 @@ void *PatchPointer(void **slot, void *value);
 // Crochet d'une importation de gta-vc.exe ; renvoie la fonction d'origine (NULL si absente).
 void *HookImport(const char *dll, const char *func, void *hook);
 
+// Detour : copie les n premiers octets de addr (instructions entieres et deplacables) dans un trampoline suivi
+// d'un saut vers addr+n, puis remplace le debut de addr par un saut vers hook. Renvoie le trampoline (a appeler
+// pour executer la fonction d'origine), ou NULL si les octets attendus ne sont pas la.
+void *MakeDetour(uintptr_t addr, const void *expected, size_t n, void *hook);
+
 // Chemin du dossier du jeu (avec antislash final).
 const char *GameDir();
