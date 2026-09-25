@@ -10,6 +10,7 @@
 #include "combat.h"
 #include "saveshare.h"
 #include "population.h"
+#include "conditions.h"
 #include <math.h>
 #include <string.h>
 
@@ -382,6 +383,7 @@ void CoopFrame()
     bool inGame = GameState() == GS_PLAYING && FindPlayerPed() != NULL;
     GatherToHost(inGame);
     PopulationFrame(inGame);
+    ConditionsFrame(inGame);
     if (inGame) PassengerKey();
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);

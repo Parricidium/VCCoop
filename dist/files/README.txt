@@ -46,8 +46,9 @@ stretching, and the HUD keeps its proportions. Settings in vccoop.ini
 
 KNOWN LIMITS (test build)
 -------------------------
-- Only the host can start missions; mission conditions (go there, get in
-  that car...) are checked on the host.
+- Only the host can start missions. "Go there" / "get in that car" goals can
+  be met by any player, and guests see the destination markers. A character
+  who follows the player (Lance...) follows the host: go together on those.
 - No friendly fire between players. Other players' gunfire is shown for
   bullet weapons (not grenades or rockets yet).
 - Saves: to resume, the host loads their save (Start Game > Load, or Pause >

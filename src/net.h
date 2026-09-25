@@ -17,6 +17,7 @@ enum MsgType : uint8_t {
     MSG_PED_REMOVE,  // hote -> invites : personnage de mission disparu
     MSG_RELIABLE,    // enveloppe fiable et ordonnee : seq + charge utile (voir NetSendReliable)
     MSG_ACK,         // accuse de reception cumulatif d'un flux fiable
+    MSG_MARKER,      // hote -> invites : cylindre de destination d'une mission (conditions.cpp)
 };
 
 #pragma pack(push, 1)

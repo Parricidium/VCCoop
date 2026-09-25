@@ -49,8 +49,10 @@ deformation, et le HUD garde ses proportions. Reglages dans vccoop.ini
 
 A SAVOIR (version de test)
 --------------------------
-- Seul l'hote peut lancer les missions ; les conditions de mission (aller a
-  tel endroit, monter dans telle voiture...) se jouent sur l'hote.
+- Seul l'hote peut lancer les missions. Les objectifs "aller a tel endroit",
+  "monter dans telle voiture" peuvent etre remplis par n'importe quel joueur,
+  et les invites voient les marqueurs de destination. Un personnage qui suit
+  le joueur (Lance...) suit l'hote : pour ces missions, venez ensemble.
 - Pas de tir ami entre joueurs. Les tirs des autres joueurs sont visibles
   pour les armes a balles (pas encore les grenades ni les roquettes).
 - Sauvegardes : pour reprendre une partie, l'hote charge sa sauvegarde (menu

@@ -6,6 +6,7 @@
 #include "vccoop.h"
 #include "game.h"
 #include "mirror.h"
+#include "conditions.h"
 #include <string.h>
 
 using namespace game;
@@ -38,8 +39,26 @@ static char __fastcall h_ProcessOneCommand(void *script)
         }
         return 0;
     }
-    if (g_cfg.logOpcodes && Field<bool>(script, 0x85)) {
-        static int logged;
+    // Diagnostic JournalOpcodes=2 : compte les opcodes de tous les scripts pendant 15 s apres la 2e fin de mission.
+    if (g_cfg.logOpcodes == 2) {
+        static uint32_t counts[0x800], start;
+        static int ends;
+        static bool dumped;
+        if (op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85) && ++ends == 2) start = GetTickCount();
+        if (start && !dumped) {
+            if (op < 0x800) counts[op]++;
+            if (GetTickCount() - start > 15000) {
+                dumped = true;
+                char line[2048];
+                int n = wsprintfA(line, "opcodes apres l'intro :");
+                for (int i = 0; i < 0x800 && n < 2000; i++) if (counts[i]) n += wsprintfA(line + n, " %04X:%u", i, counts[i]);
+                Log("%s", line);
+            }
+        }
+    }
+    static int logged;                       // trace remise a zero a chaque lancement de mission
+    if (op == OP_START_MISSION) logged = 0;
+    if (g_cfg.logOpcodes == 1 && Field<bool>(script, 0x85)) {
         if (logged < 4000) {
             logged++;
             char hex[64];
@@ -47,6 +66,7 @@ static char __fastcall h_ProcessOneCommand(void *script)
             Log("op %04X @%X (%.8s) %s", op, ip, (char *)script + 8, hex);
         }
     }
+    ConditionsBeginCommand(script, op);
     if (g_cfg.host) {
         if (op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85)) MirrorMissionEnd();
         if (op == OP_START_MISSION) {
@@ -64,6 +84,9 @@ static char __fastcall h_ProcessOneCommand(void *script)
             MirrorAfter(script);
             return r;
         }
+        char r = o_ProcessOneCommand(script);
+        ConditionsAfterCommand(script, op, ip);
+        return r;
     }
     return o_ProcessOneCommand(script);
 }

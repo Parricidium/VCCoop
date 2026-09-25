@@ -12,6 +12,8 @@
 //   Autotest=tireur : (hote) prend un pistolet et tire une balle par seconde droit devant
 //   Autotest=sauvecharge : (hote) sauvegarde dans l'emplacement 1 puis recharge cette sauvegarde (une fois)
 //   Autotest=loin : (invite) passe les cinematiques, puis au bout de 30 s se teleporte a 300 m (population locale)
+//   Autotest=objectif : se teleporte sur le dernier cylindre de mission actif (invite : ceux de l'hote)
+//   Autotest=principal : (hote) se teleporte sur les cylindres du script principal (lance les missions)
 //   Autotest=rejoindre : idem, puis se teleporte devant le joueur 0, un peu de cote (une fois)
 #include "util.h"
 #include "vccoop.h"
@@ -22,6 +24,7 @@
 #include "mirror.h"
 #include "combat.h"
 #include "saveshare.h"
+#include "conditions.h"
 #include <math.h>
 #include <string.h>
 
@@ -97,6 +100,24 @@ void AutotestFrame()
                 TogglePassenger();
             }
         }
+        return;
+    }
+    bool mainOnly = _stricmp(g_cfg.autotest, "principal") == 0;
+    if (mainOnly || _stricmp(g_cfg.autotest, "objectif") == 0) {
+        static int doneIp = -1;
+        static uint32_t lastMove;
+        const AutotestMarker &mk = mainOnly ? g_mainMarker : g_missionMarker;
+        uint32_t now = GetTickCount();
+        void *me = FindPlayerPed();
+        if (!mk.at || now - mk.at > 1000 || InVehicle(me) || now - lastMove < 8000) return;   // marqueur actif seulement
+        float dx = mk.x - Pos(me).x, dy = mk.y - Pos(me).y;
+        if (mk.ip == doneIp && dx * dx + dy * dy < 4.0f) return;
+        doneIp = mk.ip;
+        lastMove = now;
+        float z = mk.z != 0.0f ? mk.z : Pos(me).z;
+        Pos(me) = { mk.x, mk.y, z + 1.0f };
+        MoveSpeed(me) = { 0, 0, 0 };
+        Log("autotest : sur le cylindre %s (%.1f %.1f %.1f)", mainOnly ? "du script principal" : "de mission", mk.x, mk.y, z);
         return;
     }
     if (_stricmp(g_cfg.autotest, "loin") == 0) {
