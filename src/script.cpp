@@ -1,0 +1,84 @@
+// Crochet de la machine virtuelle des scripts : CRunningScript::ProcessOneCommand (0x44FBE0) passe par nous
+// avant chaque opcode.
+//  - Invite : les missions ne se lancent jamais chez lui (START_MISSION 0417 est consomme sans effet) ;
+//    c'est l'hote qui les joue et qui en reproduit le contenu.
+#include "util.h"
+#include "vccoop.h"
+#include "game.h"
+#include "mirror.h"
+#include <string.h>
+
+using namespace game;
+
+typedef char(__fastcall *ProcessOneCommand_t)(void *script);
+static ProcessOneCommand_t o_ProcessOneCommand;   // trampoline : 7 octets d'origine puis jmp 0x44FBE7
+
+// CRunningScript::CollectParameters(int *ip, short count) : lit les parametres dans ScriptParams.
+static void CollectParameters(void *script, int count)
+{
+    ((void(__thiscall *)(void *, int *, short))0x451010)(script, &Field<int>(script, 0x10), (short)count);
+}
+
+enum { OP_TERMINATE_THIS_SCRIPT = 0x004E, OP_START_MISSION = 0x0417 };
+
+char CallOriginalProcessOneCommand(void *script) { return o_ProcessOneCommand(script); }
+
+static char __fastcall h_ProcessOneCommand(void *script)
+{
+    int ip = Field<int>(script, 0x10);
+    uint16_t op = *(uint16_t *)(ScriptSpace() + ip) & 0x7FFF;
+    if (!g_cfg.host && op == OP_START_MISSION) {
+        static uint32_t lastLog;
+        Field<int>(script, 0x10) = ip + 2;
+        CollectParameters(script, 1);
+        uint32_t now = GetTickCount();
+        if (now - lastLog > 5000) {
+            Log("script : mission %d non lancee chez l'invite (%.8s)", *(int *)0x7D7438, (char *)script + 8);
+            lastLog = now;
+        }
+        return 0;
+    }
+    if (g_cfg.logOpcodes && Field<bool>(script, 0x85)) {
+        static int logged;
+        if (logged < 4000) {
+            logged++;
+            char hex[64];
+            for (int i = 0; i < 20; i++) wsprintfA(hex + i * 3, "%02X ", ScriptSpace()[ip + 2 + i]);
+            Log("op %04X @%X (%.8s) %s", op, ip, (char *)script + 8, hex);
+        }
+    }
+    if (g_cfg.host) {
+        if (op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85)) MirrorMissionEnd();
+        if (op == OP_START_MISSION) {
+            MirrorMissionStart();
+            int at = ip + 2, n = 0;
+            uint8_t t = ScriptSpace()[at];
+            if (t == 4) n = (int8_t)ScriptSpace()[at + 1];
+            else if (t == 5) n = *(int16_t *)(ScriptSpace() + at + 1);
+            else if (t == 1) n = *(int32_t *)(ScriptSpace() + at + 1);
+            else if (t == 2) n = *(int32_t *)(ScriptSpace() + *(uint16_t *)(ScriptSpace() + at + 1));
+            Log("script : l'hote lance la mission %d (%.8s)", n, (char *)script + 8);
+        }
+        if (MirrorBefore(script, ip, op)) {
+            char r = o_ProcessOneCommand(script);
+            MirrorAfter(script);
+            return r;
+        }
+    }
+    return o_ProcessOneCommand(script);
+}
+
+void InstallScriptHooks()
+{
+    static const uint8_t prologue[] = { 0x66, 0xFF, 0x05, 0x66, 0x0A, 0xA1, 0x00 };
+    if (memcmp((void *)0x44FBE0, prologue, sizeof(prologue)) != 0) {
+        Log("script : prologue inattendu, crochet non pose");
+        return;
+    }
+    uint8_t *tramp = (uint8_t *)VirtualAlloc(NULL, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    memcpy(tramp, prologue, sizeof(prologue));
+    tramp[7] = 0xE9;
+    *(int32_t *)(tramp + 8) = (int32_t)(0x44FBE7 - ((uintptr_t)tramp + 12));
+    o_ProcessOneCommand = (ProcessOneCommand_t)tramp;
+    PatchJump(0x44FBE0, (void *)h_ProcessOneCommand, 7);
+}

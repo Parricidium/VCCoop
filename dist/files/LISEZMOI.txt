@@ -1,0 +1,42 @@
+VCCoop - Les missions de GTA Vice City a plusieurs (2 a 4 joueurs)
+===================================================================
+
+Version de test. L'hote joue l'histoire ; les autres joueurs l'accompagnent
+dans les missions : ils voient les memes personnages, vehicules, cinematiques,
+textes et marqueurs, et leurs tirs comptent chez l'hote.
+
+CE QU'IL FAUT
+-------------
+- GTA Vice City sur PC avec gta-vc.exe en version 1.0 (3 088 896 octets).
+  La version Steam doit etre retrogradee en 1.0 (outil "downgrader" de la
+  communaute). Chaque joueur a besoin de son propre jeu en 1.0.
+- Une connexion entre les joueurs : le plus simple est un reseau virtuel
+  (Radmin VPN, ZeroTier, Hamachi). Sinon, l'hote ouvre le port UDP 7790 sur
+  sa box (redirection de port) et donne son IP publique.
+
+INSTALLATION
+------------
+1. Copier tous les fichiers de ce zip dans le dossier du jeu (a cote de
+   gta-vc.exe). Conseil : faire une copie du dossier du jeu pour la coop.
+2. Ouvrir vccoop.ini et mettre son pseudo.
+
+JOUER
+-----
+- L'hote lance "VCCoop - Heberger.cmd".
+- Les autres lancent "VCCoop - Rejoindre.cmd" et tapent l'adresse de l'hote.
+- Tout le monde fait "Commencer partie" (nouvelle partie) dans le menu.
+- L'hote joue les missions comme en solo. Les invites sont places a cote de
+  lui au debut et a la fin de chaque mission.
+- Touche G : monter comme passager dans le vehicule d'un autre joueur
+  (ou en descendre).
+
+A SAVOIR (version de test)
+--------------------------
+- Seul l'hote peut lancer les missions ; les conditions de mission (aller a
+  tel endroit, monter dans telle voiture...) se jouent sur l'hote.
+- Pas de tir ami entre joueurs. Les tirs des autres joueurs sont visibles
+  pour les armes a balles (pas encore les grenades ni les roquettes).
+- Pas encore de partage de sauvegarde : pour l'instant, tout le monde
+  commence une nouvelle partie ensemble. L'avancement de l'histoire de
+  l'hote est transmis aux invites au fil des missions.
+- En cas de souci : vccoop.log (dans le dossier du jeu) aide a comprendre.
