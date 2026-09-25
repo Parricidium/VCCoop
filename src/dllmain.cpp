@@ -30,7 +30,7 @@ static void LoadConfig()
     g_cfg.background = GetPrivateProfileIntA("VCCoop", "ArrierePlan", 0, ini) != 0;
     g_cfg.skipIntro = GetPrivateProfileIntA("VCCoop", "SansIntro", 1, ini) != 0;
     g_cfg.localUserFiles = GetPrivateProfileIntA("VCCoop", "SauvegardesLocales", 1, ini) != 0;
-    g_cfg.maxFps = GetPrivateProfileIntA("VCCoop", "ImagesParSeconde", 30, ini);
+    g_cfg.maxFps = GetPrivateProfileIntA("VCCoop", "ImagesParSeconde", 60, ini);
     GetPrivateProfileStringA("VCCoop", "Pseudo", "Tommy", g_cfg.playerName, sizeof(g_cfg.playerName), ini);
     char role[16];
     GetPrivateProfileStringA("VCCoop", "Role", "hote", role, sizeof(role), ini);
