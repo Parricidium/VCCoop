@@ -2,6 +2,7 @@
 // et renvoie DirectInput8Create vers la vraie DLL du systeme.
 #include "util.h"
 #include "vccoop.h"
+#include "conditions.h"
 #include <stdio.h>
 
 Config g_cfg;
@@ -39,7 +40,7 @@ static void LoadConfig()
     g_cfg.port = GetPrivateProfileIntA("VCCoop", "Port", 7790, ini);
     g_cfg.logScripts = GetPrivateProfileIntA("VCCoop", "JournalScripts", 0, ini) != 0;
     GetPrivateProfileStringA("VCCoop", "Autotest", "", g_cfg.autotest, sizeof(g_cfg.autotest), ini);
-    g_cfg.logOpcodes = GetPrivateProfileIntA("VCCoop", "JournalOpcodes", 0, ini) != 0;
+    g_cfg.logOpcodes = GetPrivateProfileIntA("VCCoop", "JournalOpcodes", 0, ini);
     g_cfg.autoStart = GetPrivateProfileIntA("VCCoop", "AutoDemarrer", 0, ini) != 0;
     g_cfg.borderless = GetPrivateProfileIntA("VCCoop", "Fenetre", 1, ini) == 2;
     g_cfg.widescreen = GetPrivateProfileIntA("VCCoop", "GrandEcran", 1, ini) != 0;
@@ -96,5 +97,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallMenu();
     InstallDisplay();
     InstallPopulation();
+    InstallConditions();
     return TRUE;
 }

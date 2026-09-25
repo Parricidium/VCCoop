@@ -3,6 +3,7 @@
 #include "util.h"
 #include "vccoop.h"
 #include "net.h"
+#include "conditions.h"
 #include <string.h>
 
 NetPlayer g_players[MAX_PLAYERS];
@@ -288,6 +289,9 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         break;
     case MSG_PED:
         if (len >= (int)sizeof(MsgPed) && g_onPed) g_onPed(*(const MsgPed *)buf);
+        break;
+    case MSG_MARKER:
+        OnMarker(buf, len);
         break;
     case MSG_PED_REMOVE:
         if (len >= (int)sizeof(MsgPedRemove) && g_onPedRemove) g_onPedRemove(((const MsgPedRemove *)buf)->handle);
