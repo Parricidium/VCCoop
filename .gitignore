@@ -1,0 +1,11 @@
+# Fichiers du jeu et retro-ingenierie : jamais dans le depot (propriete de Rockstar / Take-Two)
+re/*.exe
+re/proj/
+re/out/
+
+# Produits de compilation et paquets
+build/
+dist/out/
+
+# Captures et images des tests
+run/*.png

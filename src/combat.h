@@ -1,0 +1,10 @@
+// Combat (combat.cpp).
+#pragma once
+#include <stdint.h>
+
+void InstallCombatHooks();
+void CombatOnReliable(int from, const uint8_t *data, int len);
+bool HoldWeapon(void *ped, int weapon);   // arme en main (visuel), faux tant que le modele charge
+uint8_t LocalShotCount();
+void PuppetShoot(void *ped, int weapon);   // tir visuel du Tommy d'un autre joueur
+bool ApplyDamage(void *ped, void *damager, int weapon, float damage, int piece, uint8_t dir);   // sans renvoi reseau

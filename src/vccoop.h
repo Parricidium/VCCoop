@@ -1,0 +1,53 @@
+// VCCoop : coop des missions de GTA Vice City (gta-vc.exe 1.0 uniquement).
+#pragma once
+#include <windows.h>
+
+struct Config {
+    bool windowed;
+    bool borderless;    // Fenetre=2 : fenetre sans bordure qui couvre l'ecran
+    int winX, winY;
+    bool background;    // instance de test : fenetre jamais activee (a placer hors ecran avec FenetreX/Y)
+    bool skipIntro;     // demarre sans les videos Rockstar/intro
+    bool localUserFiles; // reglages/sauvegardes dans le dossier du jeu plutot que Mes documents
+    int maxFps;         // 0 = pas de limite
+    char playerName[32];
+    bool host;          // Role=hote / invite
+    char address[64];   // invite : adresse de l'hote
+    int port;
+    bool autoStart;
+    bool logScripts;
+    bool logOpcodes;    // diagnostic : chaque opcode des scripts de mission
+    char autotest[16];  // instances de test : "passer" / "marche" (pilote la manette 0)    // diagnostic : scripts actifs dans le journal     // instances de test : nouvelle partie directement
+};
+extern Config g_cfg;
+
+// patches.cpp
+void InstallGamePatches();
+
+// files.cpp
+void InstallFileHooks();
+
+// window.cpp
+void InstallWindowHooks();
+HWND GameWindow();
+bool GameHasFocus();
+
+// crash.cpp
+void InstallCrashLog();
+
+// watchdog.cpp
+void StartWatchdog();
+void WatchdogFrame();
+
+// script.cpp
+void InstallScriptHooks();
+// combat.cpp
+void InstallCombatHooks();
+
+// autotest.cpp
+void AutotestFrame();
+
+void TogglePassenger();   // coop.cpp : touche G
+
+// coop.cpp : appele une fois par image, sur le fil du jeu, juste avant l'affichage.
+void CoopFrame();
