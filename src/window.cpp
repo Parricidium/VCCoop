@@ -112,6 +112,7 @@ static HRESULT WINAPI h_Present(void *dev, const RECT *src, const RECT *dst, HWN
 {
     WatchdogFrame();
     GiveBackForeground();
+    UpdateHudScale();
     // Le menu peut presenter une image depuis l'interieur de notre propre boucle (SwitchToNewScreen dessine) :
     // pas de boucle coop imbriquee.
     static bool inFrame;

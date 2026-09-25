@@ -42,6 +42,7 @@ static void LoadConfig()
     g_cfg.logOpcodes = GetPrivateProfileIntA("VCCoop", "JournalOpcodes", 0, ini) != 0;
     g_cfg.autoStart = GetPrivateProfileIntA("VCCoop", "AutoDemarrer", 0, ini) != 0;
     g_cfg.borderless = GetPrivateProfileIntA("VCCoop", "Fenetre", 1, ini) == 2;
+    g_cfg.widescreen = GetPrivateProfileIntA("VCCoop", "GrandEcran", 1, ini) != 0;
 
     // Ligne de commande (raccourcis Heberger / Rejoindre) : -vccoop hote | -vccoop invite <adresse>
     const char *cmd = GetCommandLineA();
@@ -93,5 +94,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallScriptHooks();
     InstallCombatHooks();
     InstallMenu();
+    InstallDisplay();
     return TRUE;
 }

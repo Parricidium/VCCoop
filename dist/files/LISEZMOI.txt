@@ -34,6 +34,13 @@ JOUER
 - Touche G : monter comme passager dans le vehicule d'un autre joueur
   (ou en descendre).
 
+AFFICHAGE
+---------
+Par defaut le jeu tourne en plein ecran fenetre, a la resolution du bureau,
+au vrai format de l'ecran (16:9, 21:9, 32:9) : on voit plus large, sans
+deformation, et le HUD garde ses proportions. Reglages dans vccoop.ini
+(Fenetre, GrandEcran). Les menus restent etires pour l'instant.
+
 A SAVOIR (version de test)
 --------------------------
 - Seul l'hote peut lancer les missions ; les conditions de mission (aller a
