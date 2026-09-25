@@ -7,6 +7,7 @@
 #include "game.h"
 #include "vehicles.h"
 #include "mirror.h"
+#include "seats.h"
 #include <math.h>
 #include <string.h>
 
@@ -22,6 +23,7 @@ struct NetVehicle {
     bool ours;          // cree par nous (copie d'un vehicule distant)
     uint32_t lastRecv, lastSend;
     bool haveState;
+    bool ambient;       // hote : voiture de la circulation partagee (retiree quand plus aucun invite n'est pres)
     MsgVehicle state;   // dernier etat recu (vehicules distants)
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
@@ -180,9 +182,14 @@ static void OnVehRemove(uint32_t id)
 {
     NetVehicle *e = FindById(id);
     if (!e || e->owner == g_localId) return;
-    if (e->veh && e->ours && !VehDriver(e->veh)) {
+    void *me = FindPlayerPed();
+    if (e->veh && e->ours && !(me && InVehicle(me) && PedVehicle(me) == e->veh)) {
+        // Copie : on la supprime, apres avoir fait descendre ses occupants (copies ou Tommy distants).
         void *v = e->veh;
         Unbind(*e);
+        void *occ[9] = { VehDriver(v) };
+        for (int i = 0; i < 8; i++) occ[i + 1] = VehPassenger(v, i);
+        for (void *p : occ) if (p) WarpOutOfVehicle(p, NULL);
         WorldRemove(v);
         RemoveReferencesToDeletedObject(v);
         DeleteEntity(v);
@@ -234,12 +241,17 @@ void VehiclesFrame(bool inGame)
             for (int i = 0; i < pool->size; i++) {
                 if (pool->flags[i] & 0x80) continue;
                 void *v = pool->objects + i * VEHICLE_POOL_ENTRY;
-                if (Field<uint8_t>(v, 0x1F8) != VEHICLE_MISSION || VehClass(v) == VCLASS_TRAIN || FindByPtr(v)) continue;
+                uint8_t by = Field<uint8_t>(v, 0x1F8);
+                if (VehClass(v) == VCLASS_TRAIN || FindByPtr(v)) continue;
+                // Vehicules de mission partout ; circulation et voitures garees seulement pres d'un invite.
+                bool ambient = (by == 1 || by == 3) && NearAnyGuest(&Pos(v).x, AreaCode(v), 100.0f);
+                if (by != VEHICLE_MISSION && !ambient) continue;
                 NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
                 if (!e) break;
                 e->owner = (uint8_t)g_localId;
+                e->ambient = ambient;
                 Bind(*e, v);
-                Log("vehicules : vehicule de mission %08X (modele %d)", e->id, ModelIndex(v));
+                if (!ambient) Log("vehicules : vehicule de mission %08X (modele %d)", e->id, ModelIndex(v));
             }
         }
     }
@@ -250,6 +262,14 @@ void VehiclesFrame(bool inGame)
             if (!e.veh) {   // detruit chez nous : on previent les autres
                 MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
                 NetSendToAll(&r, sizeof(r));
+                e.used = false;
+                continue;
+            }
+            // Circulation partagee : plus aucun invite a 130 m -> on la retire chez eux (on la garde ici).
+            if (e.ambient && e.veh != myVeh && !NearAnyGuest(&Pos(e.veh).x, AreaCode(e.veh), 130.0f)) {
+                MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
+                NetSendToAll(&r, sizeof(r));
+                Unbind(e);
                 e.used = false;
                 continue;
             }

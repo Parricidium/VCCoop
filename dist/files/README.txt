@@ -32,6 +32,11 @@ PLAY
   the host at the start and the end of every mission.
 - G key: ride as a passenger in another player's vehicle (or get out).
 
+SHARED WORLD
+------------
+When a guest is near the host (under 60 m), they see the same pedestrians and
+traffic. Farther away (over 100 m), they get their own city around them.
+
 DISPLAY
 -------
 By default the game runs borderless fullscreen at your desktop resolution,

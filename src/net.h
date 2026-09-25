@@ -106,3 +106,5 @@ void NetSendReliableTo(int peer, const void *data, int len);   // hote : a un in
 extern void (*g_onReliable)(int from, const uint8_t *data, int len);
 extern void (*g_onJoin)(int peer);   // hote : un invite vient d'entrer
 bool NetIsHost();
+// Hote : un invite en partie est-il a moins de r metres de p (meme interieur) ?
+bool NearAnyGuest(const float *p, uint8_t area, float r);

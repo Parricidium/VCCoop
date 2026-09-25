@@ -9,6 +9,7 @@
 #include "seats.h"
 #include "combat.h"
 #include "saveshare.h"
+#include "population.h"
 #include <math.h>
 #include <string.h>
 
@@ -296,7 +297,10 @@ static void GatherToHost(bool inGame)
     Pos(ped) = { h.state.pos[0] + sinf(hh) * back + cosf(hh) * side, h.state.pos[1] - cosf(hh) * back + sinf(hh) * side,
                  h.state.pos[2] + 0.3f };
     MoveSpeed(ped) = { 0, 0, 0 };
+    SetHeadingMatrix(ped, hh);   // regarde dans la meme direction que l'hote
+    Heading(ped) = HeadingGoal(ped) = hh;
     AreaCode(ped) = h.state.area;
+    MirrorLocal(0x0373, 0, NULL);   // SET_CAMERA_BEHIND_PLAYER
     gathered = true;
     Log("coop : pose a cote de l'hote (%.1f %.1f %.1f)", Pos(ped).x, Pos(ped).y, Pos(ped).z);
 }
@@ -377,6 +381,7 @@ void CoopFrame()
     if (GameState() == GS_PLAYING && MenuActive() && UserPause() && OtherPlayersConnected()) UserPause() = false;
     bool inGame = GameState() == GS_PLAYING && FindPlayerPed() != NULL;
     GatherToHost(inGame);
+    PopulationFrame(inGame);
     if (inGame) PassengerKey();
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);

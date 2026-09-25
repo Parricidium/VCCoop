@@ -1,4 +1,4 @@
-﻿#include <winsock2.h>
+#include <winsock2.h>
 #include <ws2tcpip.h>
 #include "util.h"
 #include "vccoop.h"
@@ -51,6 +51,17 @@ static void RlReset(RlStream &r) { memset(&r, 0, sizeof(r)); r.nextSeq = 1; r.ex
 enum { TIMEOUT_MS = 8000 };
 
 bool NetIsHost() { return g_cfg.host; }
+
+bool NearAnyGuest(const float *p, uint8_t area, float r)
+{
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        const NetPlayer &g = g_players[i];
+        if (!g.connected || !g.state.inGame || g.state.area != area) continue;
+        float dx = g.state.pos[0] - p[0], dy = g.state.pos[1] - p[1], dz = g.state.pos[2] - p[2];
+        if (dx * dx + dy * dy + dz * dz < r * r) return true;
+    }
+    return false;
+}
 
 static void SendTo(const sockaddr_in &to, const void *data, int len)
 {

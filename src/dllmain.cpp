@@ -95,5 +95,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallCombatHooks();
     InstallMenu();
     InstallDisplay();
+    InstallPopulation();
     return TRUE;
 }

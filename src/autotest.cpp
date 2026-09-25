@@ -11,6 +11,7 @@
 //   Autotest=histoire : (hote) passe les cinematiques et se teleporte sur le dernier objectif / point de contact
 //   Autotest=tireur : (hote) prend un pistolet et tire une balle par seconde droit devant
 //   Autotest=sauvecharge : (hote) sauvegarde dans l'emplacement 1 puis recharge cette sauvegarde (une fois)
+//   Autotest=loin : (invite) passe les cinematiques, puis au bout de 30 s se teleporte a 300 m (population locale)
 //   Autotest=rejoindre : idem, puis se teleporte devant le joueur 0, un peu de cote (une fois)
 #include "util.h"
 #include "vccoop.h"
@@ -95,6 +96,16 @@ void AutotestFrame()
                 Log("autotest : l'hote est au volant, touche G");
                 TogglePassenger();
             }
+        }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "loin") == 0) {
+        static bool gone;
+        if (!gone && frame - controlSince > 900) {
+            gone = true;
+            void *me = FindPlayerPed();
+            Pos(me) = { Pos(me).x + 300.0f, Pos(me).y, Pos(me).z + 20.0f };
+            Log("autotest : je pars a 300 m");
         }
         return;
     }

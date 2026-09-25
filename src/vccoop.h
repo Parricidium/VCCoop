@@ -52,6 +52,9 @@ void InstallCombatHooks();
 void InstallDisplay();
 void UpdateHudScale();
 
+// population.cpp
+void InstallPopulation();
+
 // menu.cpp
 void InstallMenu();
 void MenuWindowCreated(HWND hwnd);

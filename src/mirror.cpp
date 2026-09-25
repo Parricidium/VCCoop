@@ -428,6 +428,8 @@ static void Local(uint16_t op, int n, const int32_t *vals)
     Execute(cmd, len, true);
 }
 
+void MirrorLocal(uint16_t op, int n, const int32_t *vals) { Local(op, n, vals); }
+
 static void MissionEnd()
 {
     // Remet l'ecran comme le laisse la fin d'une mission (le dernier fondu est souvent fait par le script

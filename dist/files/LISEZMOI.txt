@@ -34,6 +34,12 @@ JOUER
 - Touche G : monter comme passager dans le vehicule d'un autre joueur
   (ou en descendre).
 
+MONDE PARTAGE
+-------------
+Quand un invite est pres de l'hote (moins de 60 m), il voit les memes
+passants et la meme circulation que lui. En s'eloignant (plus de 100 m), il
+retrouve sa propre ville autour de lui.
+
 AFFICHAGE
 ---------
 Par defaut le jeu tourne en plein ecran fenetre, a la resolution du bureau,
