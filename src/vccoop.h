@@ -4,7 +4,8 @@
 
 struct Config {
     bool windowed;
-    bool borderless;    // Fenetre=2 : fenetre sans bordure qui couvre l'ecran
+    bool borderless;
+    bool widescreen;    // GrandEcran=1 : image au vrai format de l'ecran (16:9, 21:9...)    // Fenetre=2 : fenetre sans bordure qui couvre l'ecran
     int winX, winY;
     bool background;    // instance de test : fenetre jamais activee (a placer hors ecran avec FenetreX/Y)
     bool skipIntro;     // demarre sans les videos Rockstar/intro
@@ -46,6 +47,10 @@ void WatchdogFrame();
 void InstallScriptHooks();
 // combat.cpp
 void InstallCombatHooks();
+
+// display.cpp
+void InstallDisplay();
+void UpdateHudScale();
 
 // menu.cpp
 void InstallMenu();

@@ -32,6 +32,13 @@ PLAY
   the host at the start and the end of every mission.
 - G key: ride as a passenger in another player's vehicle (or get out).
 
+DISPLAY
+-------
+By default the game runs borderless fullscreen at your desktop resolution,
+in your screen's real aspect ratio (16:9, 21:9, 32:9): a wider view with no
+stretching, and the HUD keeps its proportions. Settings in vccoop.ini
+(Fenetre, GrandEcran). Menus are still stretched for now.
+
 KNOWN LIMITS (test build)
 -------------------------
 - Only the host can start missions; mission conditions (go there, get in
