@@ -45,6 +45,9 @@ KNOWN LIMITS (test build)
   that car...) are checked on the host.
 - No friendly fire between players. Other players' gunfire is shown for
   bullet weapons (not grenades or rockets yet).
-- No save sharing yet: for now everyone starts a new game together. The
-  host's story progress is passed to guests mission after mission.
+- Saves: to resume, the host loads their save (Start Game > Load, or Pause >
+  Load): it is sent to the guests, who load it automatically from their slot
+  8 (reserved for co-op: its previous content is replaced). A guest who joins
+  later gets it too. The host's story progress then reaches the guests
+  mission after mission.
 - If something goes wrong, vccoop.log (in the game folder) helps.
