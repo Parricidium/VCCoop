@@ -265,7 +265,7 @@ static void CloseMenu(bool keep)
     if (keep) {
         lstrcpynA(g_cfg.skin, PedOutfit(FindPlayerPed()), sizeof(g_cfg.skin));
         char ini[MAX_PATH];
-        wsprintfA(ini, "%svccoop.ini", GameDir());
+        lstrcpynA(ini, IniPath(), MAX_PATH);
         WritePrivateProfileStringA("VCCoop", "Tenue", g_cfg.skin, ini);
         Log("tenues : %s choisie", g_cfg.skin);
     }
@@ -313,7 +313,7 @@ void PlayersFrame(bool inGame)
             // TestTenues=a,b,c : cette suite-la ; sinon on saute de 17 en 17.
             char list[256], *tok, *ctx = NULL;
             char ini[MAX_PATH];
-            wsprintfA(ini, "%svccoop.ini", GameDir());
+            lstrcpynA(ini, IniPath(), MAX_PATH);
             GetPrivateProfileStringA("VCCoop", "TestTenues", "", list, sizeof(list), ini);
             const char *name = NULL;
             int k = 1;

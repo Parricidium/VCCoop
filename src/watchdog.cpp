@@ -101,7 +101,7 @@ static DWORD WINAPI WatchdogThread(LPVOID)
 void StartWatchdog()
 {
     char ini[MAX_PATH], v[32];
-    wsprintfA(ini, "%svccoop.ini", GameDir());
+    lstrcpynA(ini, IniPath(), MAX_PATH);
     GetPrivateProfileStringA("VCCoop", "SurveilleEcriture", "", v, sizeof(v), ini);
     if (v[0]) g_watchAddr = strtoul(v, NULL, 0);
     g_mainThreadId = GetCurrentThreadId();

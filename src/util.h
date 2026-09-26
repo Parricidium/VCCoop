@@ -24,3 +24,4 @@ void *MakeDetour(uintptr_t addr, const void *expected, size_t n, void *hook);
 
 // Chemin du dossier du jeu (avec antislash final).
 const char *GameDir();
+const char *IniPath();   // vccoop.ini a lire et ecrire (dossier du jeu, ou copie modifiable)

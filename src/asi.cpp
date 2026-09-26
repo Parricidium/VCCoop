@@ -43,7 +43,7 @@ static void WINAPI h_GetStartupInfoA(LPSTARTUPINFOA si)
 void InstallAsiLoader()
 {
     char ini[MAX_PATH];
-    wsprintfA(ini, "%svccoop.ini", GameDir());
+    lstrcpynA(ini, IniPath(), MAX_PATH);
     if (!GetPrivateProfileIntA("VCCoop", "ChargerASI", 1, ini)) return;
     o_GetStartupInfoA = (GetStartupInfoA_t)HookImport("kernel32.dll", "GetStartupInfoA", (void *)h_GetStartupInfoA);
     if (!o_GetStartupInfoA) Log("asi : GetStartupInfoA introuvable, mods .asi non charges");
