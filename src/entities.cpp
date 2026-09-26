@@ -354,7 +354,7 @@ void EntitiesFrame(bool inGame)
         return;
     }
     if (g_cfg.host) { HostScan(); return; }
-    DedupeScriptEntities();
+    if (!GuestSideMission()) DedupeScriptEntities();   // sa mission cree ses propres personnages et vehicules
     uint32_t now = GetTickCount();
     for (auto &g : g_ghosts) {
         if (!g.used) continue;

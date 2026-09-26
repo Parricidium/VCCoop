@@ -78,6 +78,7 @@ struct MsgVehicle {
     uint32_t poolHandle;     // reference de pool chez le proprietaire (traduction des commandes de l'hote)
     uint32_t time;           // GetTickCount de l'envoi
     float wheelSpin[4];      // rotation des roues par 1/50 s (moto : avant, arriere)
+    uint8_t radio;           // station de radio (m_nRadioStation +0x23C) : celle du conducteur pour tout le monde
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 

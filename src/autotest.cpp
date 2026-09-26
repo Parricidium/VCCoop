@@ -91,7 +91,9 @@ void AutotestFrame()
                 if (i != g_localId && g_players[i].connected && g_players[i].state.inVehicle &&
                     g_players[i].state.vehicleId == myId && g_players[i].state.seat > 0) {
                     drive = frame;
-                    Log("autotest : passager a bord (joueur %d), je roule", i);
+                    Log("autotest : passager a bord (joueur %d), je roule ; radio %d -> 3", i, *(int *)(0x980038 + 0x3984));
+                    int32_t radio[2] = { 3, -1 };
+                    MirrorLocal(0x041E, 2, radio);   // change de station (le passager doit suivre)
                 }
         }
         if (drive && frame - drive > 60 && frame - drive < 180) Press(PAD_CROSS, 255);
@@ -145,6 +147,22 @@ void AutotestFrame()
             ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(victim, FindPlayerPed(), 0, 10.0f, 0, 0);
             Log("autotest : je frappe l'autre joueur");
         }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "grenade") == 0) {   // grenade toutes les 4 s, puis lance-flammes
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        static int armed;
+        int weapon = t < 600 ? 12 : 31;
+        if (armed != weapon && t > 100) {
+            int model = *(int *)(0x782A14 + weapon * 0x64 + 0x54);
+            if (model > 0 && !HasModelLoaded(model)) { RequestModel(model, 1); return; }
+            GiveWeapon(me, weapon, 50); SetCurrentWeapon(me, weapon);
+            armed = weapon;
+            Log("autotest : arme %d en main", weapon);
+        }
+        if (armed == 12 && t > 150 && t % 120 < 20) Press(PAD_CIRCLE, 255);
+        if (armed == 31 && t % 120 < 40) Press(PAD_CIRCLE, 255);
         return;
     }
     if (_stricmp(g_cfg.autotest, "recherche") == 0) {   // (invite) 2 etoiles au bout de 5 s de jeu

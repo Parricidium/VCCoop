@@ -55,6 +55,7 @@ void WatchdogFrame();
 
 // script.cpp
 void InstallScriptHooks();
+bool GuestSideMission();   // invite : il joue une mission secondaire (taxi, ambulance...) chez lui
 // combat.cpp
 void InstallCombatHooks();
 

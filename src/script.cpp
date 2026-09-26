@@ -1,7 +1,8 @@
 // Crochet de la machine virtuelle des scripts : CRunningScript::ProcessOneCommand (0x44FBE0) passe par nous
 // avant chaque opcode.
-//  - Invite : les missions ne se lancent jamais chez lui (START_MISSION 0417 est consomme sans effet) ;
-//    c'est l'hote qui les joue et qui en reproduit le contenu.
+//  - Invite : les missions de l'histoire ne se lancent jamais chez lui (START_MISSION 0417 est consomme sans effet) ;
+//    c'est l'hote qui les joue et qui en reproduit le contenu. Exception : les missions secondaires de vehicule
+//    (taxi, ambulance, pompiers, vigilante, livreur de pizza), qu'il joue seul chez lui.
 #include "util.h"
 #include "vccoop.h"
 #include "game.h"
@@ -24,10 +25,35 @@ enum { OP_TERMINATE_THIS_SCRIPT = 0x004E, OP_START_MISSION = 0x0417 };
 
 char CallOriginalProcessOneCommand(void *script) { return o_ProcessOneCommand(script); }
 
+// Vehicules des missions secondaires : c'est en y etant (et en appuyant sur le bouton de mission) que le script
+// principal lance taxi, ambulance, pompiers, vigilante, pizzas. Aucune mission de l'histoire ne demarre ainsi.
+static bool InSideMissionVehicle()
+{
+    void *me = FindPlayerPed();
+    if (!me || !InVehicle(me) || !PedVehicle(me) || VehDriver(PedVehicle(me)) != me) return false;
+    static const char *const names[] = { "taxi", "cabbie", "zebra", "kaufman", "ambulan", "firetruk", "police", "enforcer",
+                                         "fbiranch", "vicechee", "predator", "hunter", "rhino", "barracks", "polmav", "pizzaboy" };
+    const char *m = ModelName(ModelIndex(PedVehicle(me)));
+    for (const char *n : names) if (_stricmp(m, n) == 0) return true;
+    return false;
+}
+
+static bool g_sideMission;
+bool GuestSideMission() { return g_sideMission; }
+
 static char __fastcall h_ProcessOneCommand(void *script)
 {
     int ip = Field<int>(script, 0x10);
     uint16_t op = *(uint16_t *)(ScriptSpace() + ip) & 0x7FFF;
+    if (!g_cfg.host && op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85) && g_sideMission) {
+        g_sideMission = false;
+        Log("script : fin de la mission secondaire (%.8s)", (char *)script + 8);
+    }
+    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && InSideMissionVehicle()) {
+        g_sideMission = true;
+        Log("script : l'invite lance une mission secondaire (par %.8s)", (char *)script + 8);
+        return o_ProcessOneCommand(script);
+    }
     if (!g_cfg.host && op == OP_START_MISSION) {
         static uint32_t lastLog;
         Field<int>(script, 0x10) = ip + 2;

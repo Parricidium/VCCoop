@@ -14,7 +14,8 @@
 
 using namespace game;
 
-enum { RL_DAMAGE_PED = 10, RL_DAMAGE_PLAYER = 11, RL_DAMAGE_PVP = 12, RL_FIGHT_REACT = 13, RL_FIGHT_REACT_PED = 14 };
+enum { RL_DAMAGE_PED = 10, RL_DAMAGE_PLAYER = 11, RL_DAMAGE_PVP = 12, RL_FIGHT_REACT = 13, RL_FIGHT_REACT_PED = 14,
+       RL_PROJECTILE = 15 };
 
 #pragma pack(push, 1)
 struct RlDamagePed { uint8_t type, attacker, dir; uint32_t hostHandle; int32_t weapon, piece; float damage; };
@@ -26,6 +27,9 @@ struct RlDamagePvp { uint8_t type, attacker, victim, dir; int32_t weapon, piece;
 struct RlFightReact { uint8_t type, attacker, victim, kind, a, b, c; int32_t p0, p1; };
 // Meme chose quand un invite frappe la copie d'un personnage de l'hote : la reaction est jouee chez l'hote.
 struct RlFightReactPed { uint8_t type, attacker, kind, a, b, c; uint32_t hostHandle; int32_t p0, p1; };
+// Grenade, cocktail Molotov, roquette... lances par un joueur : rejoues depuis son Tommy chez les autres, avec la
+// position et la vitesse exactes du projectile chez lui.
+struct RlProjectile { uint8_t type, player; int16_t weapon; float power, pos[3], speed[3]; };
 #pragma pack(pop)
 
 typedef bool(__fastcall *InflictDamage_t)(void *ped, void *edx, void *damager, int weapon, float damage, int piece, uint8_t dir);
@@ -49,7 +53,7 @@ uint8_t LocalShotCount() { return g_localShots; }
 
 // Armes a balles seulement (colt 17 .. fusil laser 29, M60 32, minigun 33) : grenades, roquettes, lance-flammes
 // exploseraient localement et divergeraient d'une machine a l'autre.
-static bool CosmeticWeapon(int w) { return (w >= 17 && w <= 29) || w == 32 || w == 33; }
+static bool CosmeticWeapon(int w) { return (w >= 17 && w <= 29) || w == 31 || w == 32 || w == 33; }   // 31 : lance-flammes
 
 void PuppetShoot(void *ped, int weapon)
 {
@@ -186,6 +190,55 @@ static void __fastcall h_SetFall(void *ped, void *edx, int timeout, int anim, in
     o_SetFall(ped, edx, timeout, anim, unk);
 }
 
+// --- Projectiles (CProjectileInfo::AddProjectile 0x5C7250) : objets en vol ms_apProjectile[32] en 0x94B708 ;
+// en 0x7DB888, gaProjectileInfo[32] (0x1C octets : arme, lanceur, minuterie, en service, derniere position +0x10).
+typedef bool(__cdecl *AddProjectile_t)(void *source, int weapon, float x, float y, float z, float power);
+static AddProjectile_t o_AddProjectile;
+static bool g_replayingProjectile;
+static void **Projectiles() { return (void **)0x94B708; }
+static float *ProjectileLastPos(int i) { return (float *)(0x7DB888 + i * 0x1C + 0x10); }
+
+static bool __cdecl h_AddProjectile(void *source, int weapon, float x, float y, float z, float power)
+{
+    void *before[32];
+    memcpy(before, Projectiles(), sizeof(before));
+    bool ok = o_AddProjectile(source, weapon, x, y, z, power);
+    if (!ok || g_replayingProjectile || GameState() != GS_PLAYING || g_localId < 0) return ok;
+    void *me = FindPlayerPed();
+    if (!source || (source != me && !(me && InVehicle(me) && source == PedVehicle(me)))) return ok;
+    for (int i = 0; i < 32; i++) {
+        void *p = Projectiles()[i];
+        if (!p || p == before[i]) continue;
+        RlProjectile r = { RL_PROJECTILE, (uint8_t)g_localId, (int16_t)weapon, power,
+                           { Pos(p).x, Pos(p).y, Pos(p).z }, { MoveSpeed(p).x, MoveSpeed(p).y, MoveSpeed(p).z } };
+        NetSendReliable(&r, sizeof(r));
+        if (g_cfg.logScripts) Log("combat : projectile %d lance", weapon);
+        break;
+    }
+    return ok;
+}
+
+static void ReplayProjectile(const RlProjectile &r)
+{
+    void *thrower = PuppetPed(r.player);
+    if (!thrower || !o_AddProjectile) return;
+    void *before[32];
+    memcpy(before, Projectiles(), sizeof(before));
+    g_replayingProjectile = true;
+    bool ok = o_AddProjectile(thrower, r.weapon, r.pos[0], r.pos[1], r.pos[2], r.power);
+    g_replayingProjectile = false;
+    if (!ok) return;
+    for (int i = 0; i < 32; i++) {
+        void *p = Projectiles()[i];
+        if (!p || p == before[i]) continue;
+        Pos(p) = { r.pos[0], r.pos[1], r.pos[2] };
+        MoveSpeed(p) = { r.speed[0], r.speed[1], r.speed[2] };
+        memcpy(ProjectileLastPos(i), r.pos, 12);   // sinon le test de collision part de l'ancienne position
+        break;
+    }
+    if (g_cfg.logScripts) Log("combat : projectile %d du joueur %d rejoue", r.weapon, r.player);
+}
+
 // Autotest : ce que fait CPed::FightHitPed quand le joueur local frappe victim (parade puis degats).
 void TestMeleeHit(void *victim)
 {
@@ -200,6 +253,13 @@ void TestMeleeHit(void *victim)
 
 void CombatOnReliable(int from, const uint8_t *data, int len)
 {
+    if (data[0] == RL_PROJECTILE && len >= (int)sizeof(RlProjectile)) {
+        const RlProjectile &r = *(const RlProjectile *)data;
+        if (g_cfg.host)   // on fait suivre aux autres invites
+            for (int i = 1; i < MAX_PLAYERS; i++) if (i != r.player && g_players[i].connected) NetSendReliableTo(i, &r, sizeof(r));
+        if (r.player != g_localId) ReplayProjectile(r);
+        return;
+    }
     if (data[0] == RL_FIGHT_REACT_PED && g_cfg.host && len >= (int)sizeof(RlFightReactPed)) {
         const RlFightReactPed &r = *(const RlFightReactPed *)data;
         void *ped = PedFromHandle(r.hostHandle);
@@ -277,6 +337,8 @@ void InstallCombatHooks()
     o_FightHitPed = (FightHitPed_t)MakeDetour(0x527800, hitPro, sizeof(hitPro), (void *)h_FightHitPed);
     o_FightDefend = (FightDefend_t)MakeDetour(0x52A340, defendPro, sizeof(defendPro), (void *)h_FightDefend);
     o_SetFall = (SetFall_t)MakeDetour(0x4FD9F0, fallPro, sizeof(fallPro), (void *)h_SetFall);
+    static const uint8_t projPro[] = { 0x53, 0x56, 0x57, 0x55, 0xD9, 0x05, 0xCC, 0xD1, 0x69, 0x00 };
+    o_AddProjectile = (AddProjectile_t)MakeDetour(0x5C7250, projPro, sizeof(projPro), (void *)h_AddProjectile);
 
     static const uint8_t firePro[] = { 0x53, 0x56, 0x57, 0x55, 0x83, 0xEC, 0x28 };
     if (memcmp((void *)0x5D45E0, firePro, sizeof(firePro)) == 0) {
