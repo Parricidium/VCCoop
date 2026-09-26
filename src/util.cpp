@@ -20,6 +20,13 @@ const char *GameDir()
 void LogInit(const char *path)
 {
     InitializeCriticalSection(&g_logLock);
+    // Le journal de la partie precedente est garde (vccoop-precedent.log) : apres un plantage, on relance souvent
+    // le jeu avant de penser a envoyer le journal.
+    char prev[MAX_PATH];
+    lstrcpynA(prev, path, MAX_PATH - 16);
+    char *dot = strrchr(prev, '.');
+    if (dot) lstrcpyA(dot, "-precedent.log");
+    MoveFileExA(path, prev, MOVEFILE_REPLACE_EXISTING);
     g_log = fopen(path, "w");
 }
 
