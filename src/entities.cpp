@@ -17,7 +17,7 @@
 
 using namespace game;
 
-enum { MAX_GHOSTS = 96, MAX_SENT = 96 };
+enum { MAX_GHOSTS = 160, MAX_SENT = 160 };
 
 // --- Nos personnages deja annonces (pour signaler leur disparition) ---
 static uint32_t g_sent[MAX_SENT];

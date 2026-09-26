@@ -164,6 +164,9 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
         // assise, on le reinstalle a sa place (sinon il etait traine sous la moto, couche).
         pp.anims.count = 0;
         void *veh = PedVehicle(ped);
+        // Ses tirs en drive-by (le jeu tire depuis le vehicule quand le tireur est a bord).
+        for (int n = 0; pp.lastShots != s.shots && n < 3; n++) { pp.lastShots++; PuppetShoot(ped, s.weapon); }
+        pp.lastShots = s.shots;
         if (PedState(ped) != PED_DRIVING || !Field<void *>(ped, 0x1F8)) {
             static uint32_t lastFix;
             if (GetTickCount() - lastFix > 300) {
@@ -273,11 +276,13 @@ static void UpdatePuppets(bool inGame)
 
 // Invite : le fondu de l'ecran suit celui de l'hote (les fondus de mission, et ceux que son script principal fait
 // hors mission). Notre propre traitement du fondu est coupe pour ne pas lutter.
+static uint32_t g_localDownUntil;   // invite : mort / arrete (le fondu de l'hote n'est pas impose pendant ce temps)
+
 static void FollowHostFade(bool inGame)
 {
     if (g_cfg.host || !inGame || g_localId <= 0) return;
     const NetPlayer &h = g_players[0];
-    if (!h.connected || !h.state.inGame) return;
+    if (!h.connected || !h.state.inGame || GetTickCount() < g_localDownUntil) return;
     float f = h.state.fade;
     if (f < 0.0f) f = 0.0f;
     if (f > 255.0f) f = 255.0f;
@@ -390,6 +395,7 @@ static void GatherToHost(bool inGame)
         uint8_t *info = (uint8_t *)0x94AD28;   // CWorld::Players[0] ; m_nPlayerState +0xCC (1 mort, 2 arrete)
         int wb = *(int *)(info + 0xCC);
         bool down = me && (Health(me) <= 0.0f || PedState(me) == 54 || PedState(me) == 55 || wb == 1 || wb == 2);
+        if (down) g_localDownUntil = GetTickCount() + 4000;
         if (down && !wasDown) {
             Log("coop : %s", wb == 2 ? "arrete" : "mort");
             // Garder armes et argent : les "sortie gratuite" de l'hopital et de la prison (m_bGetOutOfJailFree +0x145,

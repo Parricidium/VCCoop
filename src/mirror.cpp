@@ -118,7 +118,7 @@ static const OpSig g_ops[] = {
 
 MirrorPoint g_lastObjective, g_lastContact;
 
-enum { RL_SCRIPT_CMD = 1, RL_MISSION_END = 2, RL_MISSION_START = 3, RL_GLOBALS = 4 };
+enum { RL_SCRIPT_CMD = 1, RL_MISSION_END = 2, RL_MISSION_START = 3, RL_GLOBALS = 4, RL_NEW_GAME = 5 };
 
 // Variables globales du script principal : ScriptSpace [8, 0x8620) (le GOTO du debut de main.scm les enjambe).
 // Les missions y posent leurs drapeaux (mission reussie, compteurs, deblocages) que le script principal lit pour
@@ -688,11 +688,31 @@ static void MissionEnd(bool gather, int mission)
     Log("miroir : fin de la mission %d chez l'hote (regroupement %d)", mission, gather);
 }
 
+// Hote : nouvelle partie lancee (menu pause) alors que des invites jouent : ils recommencent aussi, sinon ils
+// gardaient l'ancien monde avec les variables de la nouvelle partie par-dessus.
+void MirrorHostNewGame()
+{
+    uint8_t b = RL_NEW_GAME;
+    NetSendReliable(&b, 1);
+    for (int i = 1; i < MAX_PLAYERS; i++) g_synced[i] = false;
+    Log("miroir : nouvelle partie de l'hote annoncee aux invites");
+}
+
 static void OnReliable(int from, const uint8_t *data, int len)
 {
     if (len < 1) return;
     if (data[0] >= 10) { CombatOnReliable(from, data, len); return; }   // combat.cpp
     if (g_cfg.host) return;
+    if (data[0] == RL_NEW_GAME) {
+        g_qHead = g_qTail = 0;   // ce qui restait de l'ancienne partie
+        if (GameState() == GS_PLAYING) {
+            MenuWantToLoad() = 0;
+            MenuFirstTime() = 0;
+            MenuWantToRestart() = 1;
+            Log("miroir : l'hote recommence une nouvelle partie, nous aussi");
+        }
+        return;
+    }
     int next = (g_qTail + 1) % QUEUE_SIZE;
     if (next == g_qHead) { Log("miroir : file pleine"); return; }
     Pending &p = g_queue[g_qTail];

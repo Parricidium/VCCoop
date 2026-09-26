@@ -31,7 +31,8 @@ static bool InSideMissionVehicle()
 {
     void *me = FindPlayerPed();
     if (!me || !InVehicle(me) || !PedVehicle(me) || VehDriver(PedVehicle(me)) != me) return false;
-    static const char *const names[] = { "taxi", "cabbie", "zebra", "kaufman", "ambulan", "firetruk", "police", "enforcer",
+    // (pas "kaufman" : les missions d'histoire de Kaufman Cabs se lancent au volant d'un taxi Kaufman)
+    static const char *const names[] = { "taxi", "cabbie", "zebra", "ambulan", "firetruk", "police", "enforcer",
                                          "fbiranch", "vicechee", "predator", "hunter", "rhino", "barracks", "polmav", "pizzaboy" };
     const char *m = ModelName(ModelIndex(PedVehicle(me)));
     for (const char *n : names) if (_stricmp(m, n) == 0) return true;

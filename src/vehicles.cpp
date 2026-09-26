@@ -30,6 +30,8 @@ struct NetVehicle {
     Track track;        // etats recus, pour l'interpolation
     uint32_t lastDamageSync;
     bool blown;         // copie deja explosee (EXPLODE_CAR une seule fois)
+    uint32_t hostHandle;   // reference de pool chez l'hote (traduction des commandes de mission), meme si un invite l'a reprise
+    uint32_t idleSince;    // proprietaire d'une copie : depuis quand elle est vide et immobile
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
 static uint32_t g_vehCounter;
@@ -68,7 +70,7 @@ static void Unbind(NetVehicle &e)
 bool GuestVehicleForHost(uint32_t host, uint32_t &guest)
 {
     for (auto &e : g_vehs)
-        if (e.used && e.owner == 0 && e.haveState && e.state.poolHandle == host && e.veh) {
+        if (e.used && e.hostHandle == host && e.veh) {
             guest = VehicleHandle(e.veh);
             return true;
         }
@@ -247,6 +249,19 @@ static void ApplyState(NetVehicle &e)
 
 static void DeleteCopy(NetVehicle &e);
 
+static bool AnyPlayerNear(const Vec3 &p, float r)
+{
+    void *me = FindPlayerPed();
+    if (me) { float dx = Pos(me).x - p.x, dy = Pos(me).y - p.y; if (dx * dx + dy * dy < r * r) return true; }
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const NetPlayer &n = g_players[i];
+        if (i == g_localId || !n.connected || !n.state.inGame) continue;
+        float dx = n.state.pos[0] - p.x, dy = n.state.pos[1] - p.y;
+        if (dx * dx + dy * dy < r * r) return true;
+    }
+    return false;
+}
+
 static void OnVehicle(const MsgVehicle &m)
 {
     if (m.owner == g_localId) return;
@@ -261,6 +276,7 @@ static void OnVehicle(const MsgVehicle &m)
     if (e->owner == g_localId && e->veh && e->owner != m.owner)
         Log("vehicules : %08X repris par le joueur %d", m.id, m.owner);
     e->owner = m.owner;
+    if (m.owner == 0) e->hostHandle = m.poolHandle;
     e->state = m;
     e->haveState = true;
     e->lastRecv = GetTickCount();
@@ -469,6 +485,8 @@ void VehiclesFrame(bool inGame)
 
     for (auto &e : g_vehs) {
         if (!e.used) continue;
+        // Plus d'etat depuis 10 s (le proprietaire l'a oublie, ou son message de retrait s'est perdu) : on la retire.
+        if (e.owner != g_localId && e.haveState && now - e.lastRecv > 10000) { DeleteCopy(e); e.used = false; continue; }
         if (e.owner == g_localId) {
             if (!e.veh) {   // detruit chez nous : on previent les autres
                 MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
@@ -489,6 +507,18 @@ void VehiclesFrame(bool inGame)
                 // Sans nous au volant : 20 fois par seconde s'il bouge, 1 fois sinon.
                 Vec3 v = MoveSpeed(e.veh);
                 bool moving = v.x * v.x + v.y * v.y + v.z * v.z > 0.0001f || VehDriver(e.veh);
+                // Copie reprise puis abandonnee : vide, immobile depuis une minute et loin de tout le monde, on la
+                // rend (sinon chaque voiture empruntee restait pour toujours et la table se remplissait).
+                if (moving || !e.ours) e.idleSince = 0;
+                else if (!e.idleSince) e.idleSince = now;
+                else if (now - e.idleSince > 60000 && !AnyPlayerNear(Pos(e.veh), 150.0f)) {
+                    MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
+                    NetSendToAll(&r, sizeof(r));
+                    DeleteCopy(e);
+                    e.used = false;
+                    Log("vehicules : copie %08X abandonnee, rendue", e.id);
+                    continue;
+                }
                 if (now - e.lastSend >= (moving ? 50u : 1000u)) SendVehicle(e);
             }
             continue;
