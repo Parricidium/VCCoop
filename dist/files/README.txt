@@ -78,7 +78,7 @@ stretching, and the HUD keeps its proportions. Settings in vccoop.ini
 
 CUSTOM INTERFACE
 ----------------
-Menu text is white with a pink outline, smaller and sharper (StyleMenus,
+Menu text is near-black (1b1b1b) with a pink outline, smaller and sharper (StyleMenus,
 CouleurTexteMenus, CouleurContourMenus, TailleTexteMenus in vccoop.ini). Menu
 background, logo and loading screens: put your images in VCCoop\interface
 (fond_menu.png, logo.png, chargement1.jpg, chargement2.jpg... 1920x1080 or

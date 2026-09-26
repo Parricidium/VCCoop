@@ -84,7 +84,7 @@ deformation, et le HUD garde ses proportions. Reglages dans vccoop.ini
 
 INTERFACE PERSONNALISEE
 -----------------------
-Texte des menus blanc a contour rose, plus petit et plus net (reglages
+Texte des menus gris tres fonce (1b1b1b) a contour rose, plus petit et plus net (reglages
 StyleMenus, CouleurTexteMenus, CouleurContourMenus, TailleTexteMenus dans
 vccoop.ini). Fond des menus, logo et ecrans de chargement : deposez vos
 images dans VCCoop\interface (noms et tailles dans le LISEZMOI de ce dossier).
