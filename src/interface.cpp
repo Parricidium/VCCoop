@@ -1,5 +1,5 @@
 // Interface personnalisee des menus :
-//  - texte des menus blanc a contour rose (StyleMenus, CouleurTexteMenus, CouleurContourMenus) et plus petit
+//  - texte des menus gris tres fonce (1b1b1b) a contour rose (StyleMenus, CouleurTexteMenus, CouleurContourMenus) et plus petit
 //    (TailleTexteMenus, en %) : la police du jeu est une image de 32 points par lettre, agrandie a 40-50 points
 //    en 1080p (floue) ; plus petite, elle reste nette ;
 //  - images prises dans VCCoop\interface (png, jpg ou bmp, a n'importe quelle taille) : fond_menu (tout l'ecran,
@@ -26,7 +26,7 @@ using namespace game;
 
 // --- Reglages ---
 static bool g_style = true;
-static uint8_t g_fill[3] = { 255, 255, 255 }, g_edge[3] = { 255, 150, 225 };
+static uint8_t g_fill[3] = { 27, 27, 27 }, g_edge[3] = { 255, 150, 225 };
 static float g_textScale = 0.8f;
 
 static void ParseColor(const char *s, uint8_t *out)
@@ -40,7 +40,7 @@ static void LoadSettings()
     char ini[MAX_PATH], buf[64];
     wsprintfA(ini, "%svccoop.ini", GameDir());
     g_style = GetPrivateProfileIntA("VCCoop", "StyleMenus", 1, ini) != 0;
-    GetPrivateProfileStringA("VCCoop", "CouleurTexteMenus", "255,255,255", buf, sizeof(buf), ini);
+    GetPrivateProfileStringA("VCCoop", "CouleurTexteMenus", "27,27,27", buf, sizeof(buf), ini);
     ParseColor(buf, g_fill);
     GetPrivateProfileStringA("VCCoop", "CouleurContourMenus", "255,150,225", buf, sizeof(buf), ini);
     ParseColor(buf, g_edge);
@@ -347,7 +347,7 @@ static void StyledPrint(float x, float y, const wchar_t *s)
         static const int dirs[8][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } };
         for (auto &d : dirs) { o_PrintString(x + d[0] * ox, ty + d[1] * o, s); DrawFonts(); }
         col[0] = g_fill[0]; col[1] = g_fill[1]; col[2] = g_fill[2];
-        if (dim) { col[0] = (uint8_t)(col[0] * 3 / 5); col[1] = (uint8_t)(col[1] * 3 / 5); col[2] = (uint8_t)(col[2] * 3 / 5); }
+        if (dim) for (int i = 0; i < 3; i++) col[i] = (uint8_t)((col[i] + 128) / 2);   // eteint : vers le gris (texte clair ou fonce)
         o_PrintString(x, ty, s);
         DrawFonts();
         memcpy(col, saved, 4);
@@ -393,6 +393,6 @@ void InstallInterface()
     PatchDrawCall(0x4A6A7E, 0x578710, (void *)h_DrawSplash);
     static const uintptr_t quads[] = { 0x4A2831, 0x4A292B, 0x4A2A34, 0x4A2DB9, 0x4A2EB3, 0x4A2FC2, 0x4A30D1 };
     for (uintptr_t a : quads) PatchDrawCall(a, 0x578520, (void *)h_FrameQuad);
-    Log("interface : texte des menus %s, taille %d%%, dossier %S", g_style ? "blanc a contour" : "d'origine",
+    Log("interface : texte des menus %s, taille %d%%, dossier %S", g_style ? "a contour" : "d'origine",
         (int)(g_textScale * 100 + 0.5f), Folder().c_str());
 }
