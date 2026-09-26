@@ -45,8 +45,12 @@ JOUER
   "Nouvelle partie" ou "Charger une partie". Les invites (COOP > Rejoindre)
   attendent dans le salon et suivent l'hote tout seuls des qu'il est en jeu
   (meme sauvegarde, ou nouvelle partie).
-- Distance d'affichage (menu COOP, 100 a 400 %) : details, passants et
-  vehicules visibles plus loin (DistanceAffichage=200 par defaut).
+- Menu COOP : Creer une partie / Rejoindre / Pseudo / Options. Options >
+  Options coop (adresse, tir ami, argent partage, pseudos, garder ses armes)
+  et Options video (distance d'affichage 100 a 400 %, anticrenelage 2x a 8x
+  pris au prochain lancement, filtrage anisotrope). Les options video se
+  reglent avant de creer / rejoindre, ou en jeu par Echap > COOP ; l'hote a
+  "Options coop" dans le salon et en jeu.
 - Tab (maintenu) : liste des joueurs (sante, gilet, ping, distance).
 - B : poser un point de rendez-vous la ou on regarde (visible par tous, dans
   sa couleur) ; B a nouveau pour le retirer.
