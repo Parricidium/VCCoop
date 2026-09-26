@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <stdlib.h>
 
 static FILE *g_log;
 static CRITICAL_SECTION g_logLock;
@@ -17,30 +18,55 @@ const char *GameDir()
     return g_gameDir;
 }
 
+// Chaque partie a aussi son journal dans le dossier logs (vccoop-AAAA-MM-JJ_HH-MM-SS.log), garde : apres un
+// plantage, on relance souvent le jeu avant de penser a envoyer le journal. Les 50 plus recents sont conserves.
+static FILE *g_logKept;
+
+static int CompareNames(const void *a, const void *b) { return strcmp((const char *)a, (const char *)b); }
+
+static void OpenKeptLog()
+{
+    char dir[MAX_PATH], path[MAX_PATH], pattern[MAX_PATH];
+    wsprintfA(dir, "%slogs", GameDir());
+    CreateDirectoryA(dir, NULL);
+    // Menage : les noms horodates se trient dans l'ordre chronologique ; on ne garde que les 49 derniers (+ celui-ci).
+    wsprintfA(pattern, "%s\\vccoop-*.log", dir);
+    static char names[512][64];
+    int n = 0;
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do { if (n < 512) lstrcpynA(names[n++], fd.cFileName, 64); } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    qsort(names, n, sizeof(names[0]), CompareNames);
+    for (int i = 0; i + 49 < n; i++) { wsprintfA(path, "%s\\%s", dir, names[i]); DeleteFileA(path); }
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    wsprintfA(path, "%s\\vccoop-%04d-%02d-%02d_%02d-%02d-%02d.log", dir, t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    g_logKept = fopen(path, "w");
+}
+
 void LogInit(const char *path)
 {
     InitializeCriticalSection(&g_logLock);
-    // Le journal de la partie precedente est garde (vccoop-precedent.log) : apres un plantage, on relance souvent
-    // le jeu avant de penser a envoyer le journal.
-    char prev[MAX_PATH];
-    lstrcpynA(prev, path, MAX_PATH - 16);
-    char *dot = strrchr(prev, '.');
-    if (dot) lstrcpyA(dot, "-precedent.log");
-    MoveFileExA(path, prev, MOVEFILE_REPLACE_EXISTING);
-    g_log = fopen(path, "w");
+    g_log = fopen(path, "w");   // vccoop.log, a cote du jeu : la partie en cours
+    OpenKeptLog();
 }
 
 void Log(const char *fmt, ...)
 {
-    if (!g_log) return;
+    if (!g_log && !g_logKept) return;
     EnterCriticalSection(&g_logLock);
-    fprintf(g_log, "[%8lu] ", GetTickCount());
+    char line[2048];
+    int n = wsprintfA(line, "[%8lu] ", GetTickCount());
     va_list ap;
     va_start(ap, fmt);
-    vfprintf(g_log, fmt, ap);
+    _vsnprintf(line + n, sizeof(line) - n - 1, fmt, ap);
     va_end(ap);
-    fputc('\n', g_log);
-    fflush(g_log);
+    line[sizeof(line) - 1] = 0;
+    FILE *files[2] = { g_log, g_logKept };
+    for (FILE *f : files) if (f) { fputs(line, f); fputc('\n', f); fflush(f); }
     LeaveCriticalSection(&g_logLock);
 }
 

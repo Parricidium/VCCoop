@@ -88,7 +88,8 @@ KNOWN LIMITS (test build)
   8 (reserved for co-op: its previous content is replaced). A guest who joins
   later gets it too. The host's story progress then reaches the guests
   mission after mission.
-- If something goes wrong, vccoop.log (in the game folder) helps.
+- If something goes wrong, vccoop.log (in the game folder) helps; each
+  session's log is also kept in the logs folder (last 50).
 
 OTHER MODS (.asi)
 -----------------
