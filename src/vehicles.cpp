@@ -27,6 +27,7 @@ struct NetVehicle {
     bool ambient;       // hote : voiture de la circulation partagee (retiree quand plus aucun invite n'est pres)
     MsgVehicle state;   // dernier etat recu (vehicules distants)
     Track track;        // etats recus, pour l'interpolation
+    uint32_t lastDamageSync;
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
 static uint32_t g_vehCounter;
@@ -109,6 +110,7 @@ static void SendVehicle(NetVehicle &e)
     m.poolHandle = VehicleHandle(v);
     m.time = GetTickCount();
     // Station : celle qu'ecoute le conducteur (cMusicManager 0x980038, station en cours +0x3984), sinon celle du vehicule.
+    if (m.vclass == VCLASS_CAR) memcpy(m.damage, (uint8_t *)v + 0x2A0, sizeof(m.damage));
     m.radio = drv && drv == FindPlayerPed() ? (uint8_t)*(int *)(0x980038 + 0x3984) : Field<uint8_t>(v, 0x23C);
     // Rotation des roues (par 1/50 s) : calculee par le jeu au rendu (CAutomobile / CBike::PreRender).
     float step = TimeStep() > 0.01f ? TimeStep() : 1.0f;
@@ -140,10 +142,53 @@ static void *CreateCopy(const MsgVehicle &m)
                              m.right[0] * m.fwd[1] - m.right[1] * m.fwd[0] };
     Pos(v) = { m.pos[0], m.pos[1], m.pos[2] };
     SetEntityStatus(v, STATUS_ABANDONED);
+    Field<uint8_t>(v, 0x53) |= 0x08;   // bCollisionProof : ses degats sont ceux du proprietaire (SyncDamage)
     WorldAdd(v);
     Log("vehicules : copie de %08X (modele %d, classe %d, couleurs %d/%d -> %d/%d) creee", m.id, m.model, m.vclass,
         m.color1, m.color2, Field<uint8_t>(v, 0x1A0), Field<uint8_t>(v, 0x1A1));
     return v;
+}
+
+// --- Degats visibles (voitures) : la copie montre ceux du proprietaire ---
+// CDamageManager (+0x2A0) : portes (6), ailes / pare-chocs / pare-brise (7 panneaux, 4 bits chacun en +0x14),
+// phares (+0x10), pneus, moteur. Chaque piece est redessinee par CAutomobile::SetDoorDamage / SetPanelDamage /
+// SetBumperDamage (noeuds du modele, comme dans CAutomobile::VehicleDamage). Si la copie a des degats que le
+// proprietaire n'a pas (reparee au Pay'n'Spray, ou abimee ici), on la repare (CAutomobile::Fix) et on reapplique.
+static int DoorStatus(const uint8_t *dm, int d) { return ((int(__thiscall *)(const void *, int))0x5A9810)(dm, d); }
+static int PanelStatus(const uint8_t *dm, int p) { return (*(const uint32_t *)(dm + 0x14) >> (p * 4)) & 0xF; }
+static int WheelStatus(const uint8_t *dm, int w) { return ((int(__thiscall *)(const void *, int))0x5A9830)(dm, w); }
+static int EngineStatus(const uint8_t *dm) { return ((int(__thiscall *)(const void *))0x5A97E0)(dm); }
+
+static void SyncDamage(void *v, const uint8_t *od)
+{
+    uint8_t *dm = (uint8_t *)v + 0x2A0;
+    if (!memcmp(dm, od, 24)) return;
+    static const int doorNode[6] = { 0x11, 0x12, 0x0F, 0x0B, 0x10, 0x0C };
+    static const int panelNode[5] = { 0x0D, 0x09, 0x0E, 0x0A, 0x13 };
+    bool fix = false;
+    for (int d = 0; d < 6; d++) fix |= DoorStatus(dm, d) != 0 && DoorStatus(od, d) == 0;
+    for (int p = 0; p < 7; p++) fix |= PanelStatus(dm, p) != 0 && PanelStatus(od, p) == 0;
+    if (fix) ((void(__thiscall *)(void *))0x588530)(v);   // CAutomobile::Fix
+    for (int d = 0; d < 6; d++) {
+        int s = DoorStatus(od, d);
+        if (s == DoorStatus(dm, d)) continue;
+        ((void(__thiscall *)(void *, int, int))0x5A9820)(dm, d, s);                              // SetDoorStatus
+        ((void(__thiscall *)(void *, int, int, bool))0x59B150)(v, doorNode[d], d, true);         // sans piece volante
+    }
+    for (int p = 0; p < 7; p++) {
+        int s = PanelStatus(od, p);
+        if (s == PanelStatus(dm, p)) continue;
+        uint32_t &bits = *(uint32_t *)(dm + 0x14);
+        bits = (bits & ~(0xFu << (p * 4))) | ((uint32_t)s << (p * 4));
+        if (p < 5) ((void(__thiscall *)(void *, int, int, bool))0x59B2A0)(v, panelNode[p], p, false);
+        else ((void(__thiscall *)(void *, int, int, bool))0x59B370)(v, p == 5 ? 7 : 8, p, true);   // pare-chocs
+    }
+    *(uint32_t *)(dm + 0x10) = *(const uint32_t *)(od + 0x10);   // phares
+    for (int w = 0; w < 4; w++) ((void(__thiscall *)(void *, int, int))0x5A9840)(dm, w, WheelStatus(od, w));
+    ((void(__thiscall *)(void *, int))0x5A97F0)(dm, EngineStatus(od));
+    if (g_cfg.logScripts)
+        Log("vehicules : degats copies (reparee %d) : capot %d, coffre %d, panneaux %08X -> %08X, identique %d", fix,
+            DoorStatus(dm, 0), DoorStatus(dm, 1), *(const uint32_t *)(od + 0x14), *(uint32_t *)(dm + 0x14), !memcmp(dm, od, 24));
 }
 
 static void ApplyState(NetVehicle &e)
@@ -154,6 +199,12 @@ static void ApplyState(NetVehicle &e)
     Field<uint8_t>(v, 0x1A0) = m.color1;   // SET_CAR_COLOUR peut les changer en cours de route
     Field<uint8_t>(v, 0x1A1) = m.color2;
     VehHealth(v) = m.health;
+    // Degats : ceux du proprietaire (2 fois par seconde au plus, une reparation + reapplication coute un peu).
+    Field<uint8_t>(v, 0x53) |= 0x08;   // bCollisionProof : pas de degats de choc chez nous pour une copie
+    if (m.vclass == VCLASS_CAR && VehClass(v) == VCLASS_CAR && GetTickCount() - e.lastDamageSync > 500) {
+        e.lastDamageSync = GetTickCount();
+        SyncDamage(v, m.damage);
+    }
     // Radio : celle que le conducteur a choisie (ou eteinte). Passager : on l'impose a notre musique, comme
     // SET_RADIO_CHANNEL (041E) des missions.
     Field<uint8_t>(v, 0x23C) = m.radio;
@@ -285,6 +336,7 @@ void VehiclesFrame(bool inGame)
             }
         } else if (e->owner != g_localId) {
             e->owner = (uint8_t)g_localId;
+            Field<uint8_t>(myVeh, 0x53) &= ~0x08;   // c'etait une copie : elle peut de nouveau s'abimer
             Log("vehicules : je reprends %08X", e->id);
         }
         if (e && now - e->lastSend >= 33) SendVehicle(*e);

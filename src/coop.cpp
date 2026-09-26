@@ -126,12 +126,21 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     void *ped = pp.ped;
     void *want = s.inVehicle ? NetVehicleById(s.vehicleId) : NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;
-    if (cur && (cur != want || SeatOf(cur, ped) != s.seat)) {
+    // Passager : n'importe quelle place de passager convient (chaque machine range ses passagers a sa facon).
+    if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (s.seat == 0))) {
         Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
         WarpOutOfVehicle(ped, &at);
         pp.lastMoveState = -1;
         Log("coop : Tommy %d descend du vehicule", s.id);
         cur = NULL;
+    }
+    // Hote : un personnage de l'IA a pris le volant de la voiture que ce joueur conduit (le proprietaire revenu
+    // chercher sa voiture...) : on le fait descendre, c'est le joueur qui conduit.
+    if (want && !cur && s.seat == 0 && VehDriver(want) && !IsPuppet(VehDriver(want)) && VehDriver(want) != FindPlayerPed()) {
+        void *npc = VehDriver(want);
+        WarpOutOfVehicle(npc, NULL);
+        ((void(__thiscall *)(void *))0x521720)(npc);   // CPed::ClearObjective
+        Log("coop : un personnage conduisait la voiture de %s, il descend", s.name);
     }
     if (want && !cur && WarpIntoSeat(ped, want, s.seat)) {
         Log("coop : Tommy %d monte dans %08X (place %d)", s.id, s.vehicleId, s.seat);
@@ -462,6 +471,27 @@ static void ShareWanted(bool inGame)
     }
 }
 
+// Hote : un personnage de l'IA qui veut prendre le volant d'une voiture conduite par un autre joueur (son Tommy
+// chez nous) y renonce ; sinon il s'asseyait "par-dessus" lui. (Objectif +0x164 : 0x12 = monter au volant ;
+// vehicule vise +0x170.) Pour les places passager, le jeu le fait deja attendre devant la portiere si c'est plein.
+static void KeepAIOffPlayerCars()
+{
+    static uint32_t last;
+    if (!g_cfg.host || GetTickCount() - last < 250) return;
+    last = GetTickCount();
+    Pool *pp = PedPool();
+    void *me = FindPlayerPed();
+    for (int i = 0; i < pp->size; i++) {
+        if (pp->flags[i] & 0x80) continue;
+        void *ped = pp->objects + i * PED_POOL_ENTRY;
+        if (ped == me || IsPuppet(ped) || Field<int>(ped, 0x164) != 0x12) continue;
+        void *car = Field<void *>(ped, 0x170);
+        if (!car || !VehDriver(car) || !IsPuppet(VehDriver(car))) continue;
+        ((void(__thiscall *)(void *))0x521720)(ped);   // CPed::ClearObjective
+        Log("coop : un personnage renonce a la voiture conduite par un joueur");
+    }
+}
+
 static bool OtherPlayersConnected()
 {
     for (int i = 0; i < MAX_PLAYERS; i++) if (i != g_localId && g_players[i].connected) return true;
@@ -604,6 +634,7 @@ void CoopFrame()
     if (inGame) PassengerKey();
     PlayersFrame(inGame);
     ShareWanted(inGame);
+    if (inGame) KeepAIOffPlayerCars();
     if (inGame) PassengerShooting();
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
