@@ -446,6 +446,7 @@ static void GatherToHost(bool inGame)
     SetHeadingMatrix(ped, hh);   // regarde dans la meme direction que l'hote
     Heading(ped) = HeadingGoal(ped) = hh;
     AreaCode(ped) = h.state.area;
+    MirrorFollowHostArea(h.state.area);   // pose dans l'interieur ou il est (ou dehors)
     MirrorLocal(0x0373, 0, NULL);   // SET_CAMERA_BEHIND_PLAYER
     gathered = true;
     Log("coop : pose a cote de l'hote (%.1f %.1f %.1f)", Pos(ped).x, Pos(ped).y, Pos(ped).z);

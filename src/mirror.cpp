@@ -404,11 +404,34 @@ static bool Translate(char kind, uint32_t host, uint32_t &guest)
 }
 
 // Rejoue une commande ; faux si une reference n'a pas encore d'equivalent local (on reessaiera).
+// Zone visible (SET_AREA_VISIBLE 04BB : interieur ou ville ; les batiments des autres zones sont decharges) :
+// chez l'invite, seulement s'il est emmene avec l'hote (teleportation de la mission juste avant ou juste apres).
+// Resté dehors, il perdait sa ville quand l'hote entrait dans l'hotel, et la gardait perdue si c'etait le script
+// principal de l'hote (non reproduit) qui remettait la ville.
+static void Local(uint16_t op, int n, const int32_t *vals);
+static int g_pendingArea = -1;
+static uint32_t g_pendingAreaAt, g_lastTeleportAt;
+static void SetArea(int area)
+{
+    if (*(int *)0x978810 == area) return;   // CGame::currArea
+    int32_t v[1] = { area };
+    Local(0x04BB, 1, v);
+    Log("miroir : zone visible %d (avec l'hote)", area);
+}
+void MirrorFollowHostArea(int area) { SetArea(area); }   // coop.cpp : regroupement pres de l'hote
+
 static bool Execute(const uint8_t *d, int len, bool force)
 {
     uint16_t op;
     memcpy(&op, d + 1, 2);
     int n = d[3], at = 4;
+    if (op == 0x04BB && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v' && !force) {
+        int32_t area;
+        memcpy(&area, d + 5, 4);
+        if (GetTickCount() - g_lastTeleportAt < 2000) SetArea(area);
+        else { g_pendingArea = area; g_pendingAreaAt = GetTickCount(); }
+        return true;
+    }
     uint8_t *ss = ScriptSpace();
     int w = SCRATCH;
     memcpy(ss + w, &op, 2); w += 2;
@@ -449,6 +472,11 @@ static bool Execute(const uint8_t *d, int len, bool force)
     memset(g_script + 0x30, 0, 16 * 4);
     Field<int>(g_script, 0x10) = SCRATCH;
     CallOriginalProcessOneCommand(g_script);
+    if (op == 0x0055) {   // teleporte avec l'hote : sa zone visible (recue juste avant) s'applique
+        g_lastTeleportAt = GetTickCount();
+        if (g_pendingArea >= 0 && GetTickCount() - g_pendingAreaAt < 5000) SetArea(g_pendingArea);
+        g_pendingArea = -1;
+    }
 
     for (int i = 0; i < outCount; i++) {
         uint32_t g = Field<uint32_t>(g_script, 0x30 + i * 4);

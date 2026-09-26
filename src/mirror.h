@@ -12,6 +12,7 @@ void MirrorMissionStart();
 void MirrorPlayerJoined(int peer);
 void MirrorGuestsGetHostSave();      // hote : tous les invites vont charger sa sauvegarde   // hote : envoie l'etat de l'histoire a un nouvel invite
 void RequestGather();
+void MirrorFollowHostArea(int area);   // invite : prend la zone visible de l'hote (il est pose a cote de lui)
 void MirrorLocal(uint16_t op, int n, const int32_t *vals);   // invite : execute une commande de script chez soi
 struct MirrorPoint { float x, y, z; int serial; };
 extern MirrorPoint g_lastObjective, g_lastContact;   // hote : derniers marqueurs poses par les missions   // coop.cpp : l'invite se replacera a cote de l'hote
