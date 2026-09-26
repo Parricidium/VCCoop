@@ -310,7 +310,10 @@ static void SendLocalState(bool inGame)
         s.heading = Heading(ped);
         s.health = Health(ped);
         s.armour = Armour(ped);
-        s.area = AreaCode(ped);
+        // La zone ou l'on est, c'est CGame::currArea (celle dont le jeu affiche les batiments), pas le code du
+        // Tommy : apres une cinematique, le script remet dehors avec SET_AREA_VISIBLE 0 sans toucher au personnage,
+        // qui gardait "hotel" ; un invite pose a cote de l'hote au retour prenait cette zone et perdait la ville.
+        s.area = (uint8_t)*(int *)0x978810;
         s.moveState = (uint8_t)MoveState(ped);
         s.pedState = (uint8_t)PedState(ped);
         s.fade = CamFade();
