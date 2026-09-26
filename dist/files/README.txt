@@ -42,8 +42,12 @@ PLAY
 - COOP > Host a game: lobby with the connected players, then "New game" or
   "Load a game". Guests (COOP > Join) wait in the lobby and follow the host
   by themselves once he is in game (same save, or new game).
-- Draw distance (COOP menu, 100 to 400 %): details, pedestrians and vehicles
-  visible farther away (DistanceAffichage=200 by default).
+- COOP menu: Host / Join / Nickname / Options. Options > Coop options
+  (address, friendly fire, shared money, names, keep weapons) and Video
+  options (draw distance 100 to 400 %, anti-aliasing 2x to 8x taken at the
+  next launch, anisotropic filtering). Video options are set before hosting /
+  joining, or in game with Esc > COOP; the host has "Coop options" in the
+  lobby and in game.
 - Tab (hold): player list (health, armour, ping, distance).
 - B: set a meeting point where you look (everyone sees it, in your colour);
   B again removes it.
