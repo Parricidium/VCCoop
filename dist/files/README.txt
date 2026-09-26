@@ -42,8 +42,8 @@ PLAY
 - COOP > Host a game: lobby with the connected players, then "New game" or
   "Load a game". Guests (COOP > Join) wait in the lobby and follow the host
   by themselves once he is in game (same save, or new game).
-- COOP menu: Host / Join / Nickname / Options. Options > Coop options
-  (address, friendly fire, shared money, names, keep weapons) and Video
+- COOP menu: Host / Join (host's address, then Connect) / Nickname / Options.
+  Options > Coop options (friendly fire, shared money, names, keep weapons) and Video
   options (draw distance 100 to 400 %, anti-aliasing 2x to 8x taken at the
   next launch, anisotropic filtering). Video options are set before hosting /
   joining, or in game with Esc > COOP; the host has "Coop options" in the
