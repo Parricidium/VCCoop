@@ -13,7 +13,7 @@ void (*g_onState)(const MsgState &s);
 void (*g_onVehicle)(const MsgVehicle &v);
 void (*g_onVehRemove)(uint32_t id);
 void (*g_onPed)(const MsgPed &p);
-void (*g_onPedRemove)(uint32_t handle);
+void (*g_onPedRemove)(uint8_t owner, uint32_t handle);
 
 // Messages "d'entite" : traites localement et, chez l'hote, relayes aux autres invites.
 static bool HandleEntityMsg(const uint8_t *buf, int len)
@@ -24,6 +24,16 @@ static bool HandleEntityMsg(const uint8_t *buf, int len)
     }
     if (buf[0] == MSG_VEH_REMOVE && len >= (int)sizeof(MsgVehRemove)) {
         if (g_onVehRemove) g_onVehRemove(((const MsgVehRemove *)buf)->id);
+        return true;
+    }
+    // Personnages : de l'hote (ses passants, ses personnages de mission) ou d'un invite (sa police).
+    if (buf[0] == MSG_PED && len >= (int)sizeof(MsgPed)) {
+        if (g_onPed) g_onPed(*(const MsgPed *)buf);
+        return true;
+    }
+    if (buf[0] == MSG_PED_REMOVE && len >= (int)sizeof(MsgPedRemove)) {
+        const MsgPedRemove *r = (const MsgPedRemove *)buf;
+        if (g_onPedRemove) g_onPedRemove(r->owner, r->handle);
         return true;
     }
     return false;
@@ -321,13 +331,13 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         HandleEntityMsg(buf, len);
         break;
     case MSG_PED:
-        if (len >= (int)sizeof(MsgPed) && g_onPed) g_onPed(*(const MsgPed *)buf);
+        HandleEntityMsg(buf, len);
         break;
     case MSG_MARKER:
         OnMarker(buf, len);
         break;
     case MSG_PED_REMOVE:
-        if (len >= (int)sizeof(MsgPedRemove) && g_onPedRemove) g_onPedRemove(((const MsgPedRemove *)buf)->handle);
+        HandleEntityMsg(buf, len);
         break;
     case MSG_BYE:
         if (len >= (int)sizeof(MsgBye) && ((const MsgBye *)buf)->id < MAX_PLAYERS)

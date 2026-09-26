@@ -9,6 +9,7 @@
 #include "mirror.h"
 #include "seats.h"
 #include "interp.h"
+#include "population.h"
 #include <math.h>
 #include <string.h>
 
@@ -378,6 +379,26 @@ void VehiclesFrame(bool inGame)
         }
     }
 
+    // Invite recherche : ses vehicules de police (qui ne poursuivent que lui) partent chez les autres.
+    if (!g_cfg.host && g_localId > 0 && LocalWanted()) {
+        static uint32_t lastLawScan;
+        if (now - lastLawScan > 250) {
+            lastLawScan = now;
+            Pool *pool = VehiclePool();
+            for (int i = 0; i < pool->size; i++) {
+                if (pool->flags[i] & 0x80) continue;
+                void *v = pool->objects + i * VEHICLE_POOL_ENTRY;
+                uint8_t by = Field<uint8_t>(v, 0x1F8);
+                if ((by != 1 && by != 3) || FindByPtr(v) || !IsLawVehicle(v)) continue;
+                NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
+                if (!e) break;
+                e->owner = (uint8_t)g_localId;
+                e->ambient = true;
+                Bind(*e, v);
+            }
+        }
+    }
+
     for (auto &e : g_vehs) {
         if (!e.used) continue;
         if (e.owner == g_localId) {
@@ -388,7 +409,8 @@ void VehiclesFrame(bool inGame)
                 continue;
             }
             // Circulation partagee : plus aucun invite assez pres -> on la retire chez eux (on la garde ici).
-            if (e.ambient && e.veh != myVeh && !NearAnyGuest(&Pos(e.veh).x, AreaCode(e.veh), AMBIENT_SHARE_M + 40.0f)) {
+            bool keepShared = g_cfg.host ? NearAnyGuest(&Pos(e.veh).x, AreaCode(e.veh), AMBIENT_SHARE_M + 40.0f) : LocalWanted();
+            if (e.ambient && e.veh != myVeh && !keepShared) {
                 MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
                 NetSendToAll(&r, sizeof(r));
                 Unbind(e);

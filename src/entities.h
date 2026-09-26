@@ -5,7 +5,8 @@
 void EntitiesInit();
 void EntitiesFrame(bool inGame);
 bool IsGhostPed(void *ped);     // copie d'un personnage de l'hote (invite)
-bool GhostHostHandle(void *ped, uint32_t &host);   // reference du personnage chez l'hote
+bool GhostHostHandle(void *ped, uint32_t &host);   // reference du personnage chez l'hote (copie d'un perso de l'hote)
+bool GhostOwner(void *ped, uint8_t &owner, uint32_t &handle);   // copie : son proprietaire et sa reference chez lui
 int PuppetPlayer(void *ped);    // numero du joueur dont c'est le Tommy, -1 sinon (coop.cpp)
 bool IsPuppetVehicle(void *veh); // vehicule conduit par le Tommy d'un autre joueur (coop.cpp)
 bool IsPuppet(void *ped);       // Tommy d'un autre joueur (coop.cpp)

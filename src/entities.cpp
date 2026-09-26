@@ -1,5 +1,6 @@
-// Personnages de mission : l'hote fait foi. Il envoie l'etat de chaque personnage cree par un script
-// (CharCreatedBy == mission) ; chaque invite en garde une copie qui suit cet etat.
+// Personnages partages. L'hote envoie ses personnages de mission (partout) et ses passants (pres des invites) ; un
+// invite recherche envoie sa propre police (elle ne poursuit que lui, cf. population.cpp). Chaque autre joueur en
+// garde une copie ("ghost") qui suit l'etat recu ; une copie est reperee par (proprietaire, reference de pool).
 #include "util.h"
 #include "vccoop.h"
 #include "net.h"
@@ -18,11 +19,13 @@ using namespace game;
 
 enum { MAX_GHOSTS = 96, MAX_SENT = 96 };
 
-// --- Hote : personnages de mission deja annonces (pour signaler leur disparition) ---
+// --- Nos personnages deja annonces (pour signaler leur disparition) ---
 static uint32_t g_sent[MAX_SENT];
 static int g_sentCount;
 
-static void HostScan()
+bool IsGhostPed(void *ped);
+
+static void ScanOwnPeds()
 {
     static uint32_t last;
     uint32_t now = GetTickCount();
@@ -36,10 +39,15 @@ static void HostScan()
     for (int i = 0; i < pool->size; i++) {
         if (pool->flags[i] & 0x80) continue;
         void *ped = pool->objects + i * PED_POOL_ENTRY;
-        if (ped == player || IsPuppet(ped)) continue;
-        // Personnages de mission partout ; passants seulement pres d'un invite (population partagee).
-        if (CharCreatedBy(ped) != PED_CHAR_MISSION &&
-            !(CharCreatedBy(ped) == 1 && NearAnyGuest(&Pos(ped).x, AreaCode(ped), (float)AMBIENT_SHARE_M))) continue;
+        if (ped == player || IsPuppet(ped) || IsGhostPed(ped)) continue;
+        if (g_cfg.host) {
+            // Personnages de mission partout ; passants seulement pres d'un invite (population partagee).
+            if (CharCreatedBy(ped) != PED_CHAR_MISSION &&
+                !(CharCreatedBy(ped) == 1 && NearAnyGuest(&Pos(ped).x, AreaCode(ped), (float)AMBIENT_SHARE_M))) continue;
+        } else {
+            // Invite : seulement sa police, tant qu'il est recherche.
+            if (CharCreatedBy(ped) != 1 || !IsLawPed(ped) || !LocalWanted()) continue;
+        }
         MsgPed m = {};
         m.type = MSG_PED;
         m.handle = PedHandle(ped);
@@ -54,6 +62,7 @@ static void HostScan()
         m.pedState = (uint8_t)PedState(ped);
         m.pedType = (uint8_t)PedType(ped);
         m.time = now;
+        m.owner = (uint8_t)g_localId;
         if (InVehicle(ped)) m.anims[0].id = m.anims[1].id = -1;
         else CollectAnimSlots(ped, m.anims, 2);
         m.area = AreaCode(ped);
@@ -63,7 +72,7 @@ static void HostScan()
             int seat = SeatOf(PedVehicle(ped), ped);
             m.seat = (uint8_t)(seat < 0 ? 0 : seat);
         }
-        NetSendToGuests(&m, sizeof(m));
+        NetSendToAll(&m, sizeof(m));   // hote : a tous les invites ; invite : a l'hote, qui relaie
         if (seenCount < MAX_SENT) seen[seenCount++] = m.handle;
     }
     // Ceux qui ont disparu depuis le dernier passage.
@@ -71,17 +80,18 @@ static void HostScan()
         bool still = false;
         for (int j = 0; j < seenCount && !still; j++) still = seen[j] == g_sent[i];
         if (!still) {
-            MsgPedRemove r = { MSG_PED_REMOVE, g_sent[i] };
-            NetSendToGuests(&r, sizeof(r));
+            MsgPedRemove r = { MSG_PED_REMOVE, g_sent[i], (uint8_t)g_localId };
+            NetSendToAll(&r, sizeof(r));
         }
     }
     memcpy(g_sent, seen, seenCount * sizeof(uint32_t));
     g_sentCount = seenCount;
 }
 
-// --- Invite : copies ---
+// --- Copies des personnages des autres ---
 struct Ghost {
     bool used;
+    uint8_t owner;
     uint32_t handle;
     void *ped;
     MsgPed state;
@@ -93,9 +103,9 @@ struct Ghost {
 };
 static Ghost g_ghosts[MAX_GHOSTS];
 
-static Ghost *FindGhost(uint32_t handle)
+static Ghost *FindGhost(uint8_t owner, uint32_t handle)
 {
-    for (auto &g : g_ghosts) if (g.used && g.handle == handle) return &g;
+    for (auto &g : g_ghosts) if (g.used && g.owner == owner && g.handle == handle) return &g;
     return NULL;
 }
 
@@ -109,16 +119,22 @@ bool GuestPedForHost(uint32_t host, uint32_t &guest)
         guest = PedHandle(p);
         return true;
     }
-    Ghost *g = FindGhost(host);
+    Ghost *g = FindGhost(0, host);
     if (!g || !g->ped) return false;
     guest = PedHandle(g->ped);
     return true;
 }
 
+bool GhostOwner(void *ped, uint8_t &owner, uint32_t &handle)
+{
+    for (auto &g : g_ghosts) if (g.used && g.ped == ped) { owner = g.owner; handle = g.handle; return true; }
+    return false;
+}
+
 bool GhostHostHandle(void *ped, uint32_t &host)
 {
-    for (auto &g : g_ghosts) if (g.used && g.ped == ped) { host = g.handle; return true; }
-    return false;
+    uint8_t owner;
+    return GhostOwner(ped, owner, host) && owner == 0;
 }
 
 bool IsGhostPed(void *ped)
@@ -160,7 +176,9 @@ static void CreateGhost(Ghost &g)
     if (!EnsureModel(m)) return;
     void *ped = PedAlloc();
     if (!ped) return;
-    CivilianPedCtor(ped, m.pedType, m.model);
+    // Une copie de policier reste un simple passant (type civil) habille en policier : de type "police", le jeu la
+    // prendrait pour un de ses vrais policiers (poursuites, compte des agents...).
+    CivilianPedCtor(ped, m.pedType == 6 ? PEDTYPE_CIVMALE : m.pedType, m.model);
     CharCreatedBy(ped) = PED_CHAR_MISSION;
     Field<uint8_t>(ped, 0x14E) &= ~0x02;   // ne reagit pas aux menaces
     Field<uint8_t>(ped, 0x53) |= 0x1E;     // invulnerable (les degats passeront par l'hote)
@@ -219,15 +237,16 @@ static void UpdateGhost(Ghost &g)
 
 static void OnPed(const MsgPed &m)
 {
-    if (GameState() != GS_PLAYING) return;
-    Ghost *g = FindGhost(m.handle);
+    if (GameState() != GS_PLAYING || m.owner == g_localId || m.owner >= MAX_PLAYERS) return;
+    Ghost *g = FindGhost(m.owner, m.handle);
     if (!g) {
-        for (auto &x : g_ghosts) if (!x.used) { memset(&x, 0, sizeof(x)); x.used = true; x.handle = m.handle; g = &x; break; }
+        for (auto &x : g_ghosts)
+            if (!x.used) { memset(&x, 0, sizeof(x)); x.used = true; x.owner = m.owner; x.handle = m.handle; g = &x; break; }
         if (!g) return;
     }
     g->state = m;
     g->lastRecv = GetTickCount();
-    ClockSample(0, m.time);
+    ClockSample(m.owner, m.time);
     Snap n = {};
     n.t = m.time;
     for (int k = 0; k < 3; k++) { n.pos[k] = m.pos[k]; n.vel[k] = m.speed[k]; }
@@ -238,11 +257,10 @@ static void OnPed(const MsgPed &m)
 // Apres la physique : les copies a pied (et vivantes) sont placees a leur position interpolee.
 void GhostsAfterProcess()
 {
-    if (g_cfg.host) return;
     for (auto &g : g_ghosts) {
         if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.state.vehicleId) continue;
         Snap n;
-        if (!TrackSample(g.track, 0, n, true)) continue;
+        if (!TrackSample(g.track, g.owner, n, true)) continue;
         float jx = n.pos[0] - Pos(g.ped).x, jy = n.pos[1] - Pos(g.ped).y, jz = n.pos[2] - Pos(g.ped).z;
         if (jx * jx + jy * jy + jz * jz > 400.0f) Teleport(g.ped, { n.pos[0], n.pos[1], n.pos[2] });
         Pos(g.ped) = { n.pos[0], n.pos[1], n.pos[2] };
@@ -252,11 +270,11 @@ void GhostsAfterProcess()
     }
 }
 
-static void OnPedRemove(uint32_t handle)
+static void OnPedRemove(uint8_t owner, uint32_t handle)
 {
-    Ghost *g = FindGhost(handle);
+    Ghost *g = FindGhost(owner, handle);
     if (g) {
-        Log("entites : personnage %08X disparu chez l'hote", handle);
+        Log("entites : personnage %08X disparu chez le joueur %d", handle, owner);
         DestroyGhost(*g);
     }
 }
@@ -355,12 +373,12 @@ void EntitiesFrame(bool inGame)
         g_sentCount = 0;
         return;
     }
-    if (g_cfg.host) { HostScan(); return; }
-    if (!GuestSideMission()) DedupeScriptEntities();   // sa mission cree ses propres personnages et vehicules
+    ScanOwnPeds();   // hote : ses personnages ; invite : sa police s'il est recherche
+    if (!g_cfg.host && !GuestSideMission()) DedupeScriptEntities();   // sa mission cree ses propres personnages et vehicules
     uint32_t now = GetTickCount();
     for (auto &g : g_ghosts) {
         if (!g.used) continue;
-        if (now - g.lastRecv > 5000) { DestroyGhost(g); continue; }   // l'hote ne l'envoie plus
+        if (now - g.lastRecv > 5000 || !g_players[g.owner].connected) { DestroyGhost(g); continue; }   // plus envoye
         if (!g.ped) CreateGhost(g);
         if (g.ped) UpdateGhost(g);
     }

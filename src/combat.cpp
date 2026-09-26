@@ -19,7 +19,7 @@ enum { RL_DAMAGE_PED = 10, RL_DAMAGE_PLAYER = 11, RL_DAMAGE_PVP = 12, RL_FIGHT_R
        RL_PROJECTILE = 15 };
 
 #pragma pack(push, 1)
-struct RlDamagePed { uint8_t type, attacker, dir; uint32_t hostHandle; int32_t weapon, piece; float damage; };
+struct RlDamagePed { uint8_t type, attacker, dir; uint32_t hostHandle; int32_t weapon, piece; float damage; uint8_t owner; };
 struct RlDamagePlayer { uint8_t type, dir; uint32_t npcHandle; int32_t weapon, piece; float damage; };
 // Un joueur en touche un autre (tir ami) : part chez la victime (par l'hote si besoin), qui subit le coup chez elle.
 struct RlDamagePvp { uint8_t type, attacker, victim, dir; int32_t weapon, piece; float damage; };
@@ -27,11 +27,13 @@ struct RlDamagePvp { uint8_t type, attacker, victim, dir; int32_t weapon, piece;
 // chez la victime. kind 0 : defend(a, b, c) ; kind 1 : fall(p0, p1, a).
 struct RlFightReact { uint8_t type, attacker, victim, kind, a, b, c; int32_t p0, p1; };
 // Meme chose quand un invite frappe la copie d'un personnage de l'hote : la reaction est jouee chez l'hote.
-struct RlFightReactPed { uint8_t type, attacker, kind, a, b, c; uint32_t hostHandle; int32_t p0, p1; };
+struct RlFightReactPed { uint8_t type, attacker, kind, a, b, c; uint32_t hostHandle; int32_t p0, p1; uint8_t owner; };
 // Grenade, cocktail Molotov, roquette... lances par un joueur : rejoues depuis son Tommy chez les autres, avec la
 // position et la vitesse exactes du projectile chez lui.
 struct RlProjectile { uint8_t type, player; int16_t weapon; float power, pos[3], speed[3]; };
 #pragma pack(pop)
+
+static void SendToOwner(uint8_t owner, const void *d, int len);   // plus bas
 
 typedef bool(__fastcall *InflictDamage_t)(void *ped, void *edx, void *damager, int weapon, float damage, int piece, uint8_t dir);
 static InflictDamage_t o_InflictDamage;   // trampoline : FLD d'origine (6 octets) puis jmp 0x525B26
@@ -96,16 +98,19 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
         }
         return false;
     }
-    if (!g_cfg.host) {
-        uint32_t host;
-        if (GhostHostHandle(ped, host)) {
-            // Seuls nos propres coups comptent (le reste est deja simule chez l'hote).
+    // Copie du personnage d'un autre joueur (passant de l'hote, policier d'un invite) : le coup compte chez lui.
+    {
+        uint8_t owner;
+        uint32_t handle;
+        if (GhostOwner(ped, owner, handle)) {
             if (damager == me || (damager && damager == PedVehicle(me))) {
-                RlDamagePed d = { RL_DAMAGE_PED, (uint8_t)g_localId, dir, host, weapon, piece, damage };
-                NetSendReliable(&d, sizeof(d));
+                RlDamagePed d = { RL_DAMAGE_PED, (uint8_t)g_localId, dir, handle, weapon, piece, damage, owner };
+                SendToOwner(owner, &d, sizeof(d));
             }
             return false;
         }
+    }
+    if (!g_cfg.host) {
         if (IsPuppet(ped)) return false;
     } else {
         int pid = PuppetPlayer(ped);
@@ -140,12 +145,19 @@ static void *g_pvpVictim;   // Tommy distant en train d'etre frappe (pendant Fig
 static bool g_pvpByPlayer;
 static void *g_ghostVictim;   // invite : copie d'un personnage de l'hote que nous frappons
 
+// Vers le proprietaire d'une copie : l'hote l'envoie directement, un invite passe par l'hote (qui fait suivre).
+static void SendToOwner(uint8_t owner, const void *d, int len)
+{
+    if (g_cfg.host) NetSendReliableTo(owner, d, len); else NetSendReliable(d, len);
+}
+
 static void SendGhostReact(void *ghost, uint8_t kind, int a, int b, int c, int p0, int p1)
 {
-    uint32_t host;
-    if (!GhostHostHandle(ghost, host)) return;
-    RlFightReactPed r = { RL_FIGHT_REACT_PED, (uint8_t)g_localId, kind, (uint8_t)a, (uint8_t)b, (uint8_t)c, host, p0, p1 };
-    NetSendReliable(&r, sizeof(r));
+    uint8_t owner;
+    uint32_t handle;
+    if (!GhostOwner(ghost, owner, handle)) return;
+    RlFightReactPed r = { RL_FIGHT_REACT_PED, (uint8_t)g_localId, kind, (uint8_t)a, (uint8_t)b, (uint8_t)c, handle, p0, p1, owner };
+    SendToOwner(owner, &r, sizeof(r));
 }
 
 static void SendFightReact(void *puppet, uint8_t kind, int a, int b, int c, int p0, int p1)
@@ -162,7 +174,7 @@ static void __fastcall h_FightHitPed(void *ped, void *edx, void *victim, void *a
     void *me = FindPlayerPed();
     bool pvp = GameState() == GS_PLAYING && victim && IsPuppet(victim) && (ped == me || (g_cfg.host && !IsPuppet(ped)));
     if (pvp) { g_pvpVictim = victim; g_pvpByPlayer = ped == me; }
-    bool ghost = GameState() == GS_PLAYING && !g_cfg.host && ped == me && victim && IsGhostPed(victim);
+    bool ghost = GameState() == GS_PLAYING && ped == me && victim && IsGhostPed(victim);
     if (ghost) g_ghostVictim = victim;
     o_FightHitPed(ped, edx, victim, a, b, piece);
     if (pvp) g_pvpVictim = NULL;
@@ -175,7 +187,7 @@ static void __fastcall h_FightDefend(void *ped, void *edx, int dir, int level, i
         if (ped == g_pvpVictim) SendFightReact(ped, 0, dir, level, unk, 0, 0);
         return;
     }
-    if (GameState() == GS_PLAYING && !g_cfg.host && IsGhostPed(ped)) {
+    if (GameState() == GS_PLAYING && IsGhostPed(ped)) {
         if (ped == g_ghostVictim) SendGhostReact(ped, 0, dir, level, unk, 0, 0);
         return;
     }
@@ -188,7 +200,7 @@ static void __fastcall h_SetFall(void *ped, void *edx, int timeout, int anim, in
         if (ped == g_pvpVictim) SendFightReact(ped, 1, unk, 0, 0, timeout, anim);
         return;
     }
-    if (GameState() == GS_PLAYING && !g_cfg.host && IsGhostPed(ped)) {
+    if (GameState() == GS_PLAYING && IsGhostPed(ped)) {
         if (ped == g_ghostVictim) SendGhostReact(ped, 1, unk, 0, 0, timeout, anim);
         return;
     }
@@ -317,8 +329,12 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         if (r.player != g_localId) ReplayProjectile(r);
         return;
     }
-    if (data[0] == RL_FIGHT_REACT_PED && g_cfg.host && len >= (int)sizeof(RlFightReactPed)) {
+    if (data[0] == RL_FIGHT_REACT_PED && len >= (int)sizeof(RlFightReactPed)) {
         const RlFightReactPed &r = *(const RlFightReactPed *)data;
+        if (r.owner != g_localId) {   // hote : pour un invite, on fait suivre
+            if (g_cfg.host && r.owner < MAX_PLAYERS) NetSendReliableTo(r.owner, &r, sizeof(r));
+            return;
+        }
         void *ped = PedFromHandle(r.hostHandle);
         if (!ped || InVehicle(ped) || !o_FightDefend || !o_SetFall) return;
         if (r.kind == 0) o_FightDefend(ped, NULL, r.a, r.b, r.c);
@@ -340,11 +356,16 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         return;
     }
     if (data[0] >= 20) { SaveShareOnReliable(from, data, len); return; }   // saveshare.cpp
-    if (data[0] == RL_DAMAGE_PED && g_cfg.host && len >= (int)sizeof(RlDamagePed)) {
+    if (data[0] == RL_DAMAGE_PED && len >= (int)sizeof(RlDamagePed)) {
         const RlDamagePed &d = *(const RlDamagePed *)data;
+        if (d.owner != g_localId) {   // hote : un invite frappe la police d'un autre invite, on fait suivre
+            if (g_cfg.host && d.owner < MAX_PLAYERS) NetSendReliableTo(d.owner, &d, sizeof(d));
+            return;
+        }
         void *ped = PedFromHandle(d.hostHandle);
         if (!ped) return;
-        void *attacker = PuppetPed(from);
+        (void)from;
+        void *attacker = PuppetPed(d.attacker);
         ApplyDamage(ped, attacker, d.weapon, d.damage, d.piece, d.dir);
         if (g_cfg.logScripts) Log("combat : joueur %d touche %08X (%.0f, arme %d) -> sante %.0f", from, d.hostHandle, d.damage, d.weapon, Health(ped));
     } else if (data[0] == RL_DAMAGE_PVP && len >= (int)sizeof(RlDamagePvp)) {
