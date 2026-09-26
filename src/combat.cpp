@@ -34,6 +34,7 @@ struct RlProjectile { uint8_t type, player; int16_t weapon; float power, pos[3],
 #pragma pack(pop)
 
 static void SendToOwner(uint8_t owner, const void *d, int len);   // plus bas
+int WantedLevel(void *ped);   // coop.cpp
 
 typedef bool(__fastcall *InflictDamage_t)(void *ped, void *edx, void *damager, int weapon, float damage, int piece, uint8_t dir);
 static InflictDamage_t o_InflictDamage;   // trampoline : FLD d'origine (6 octets) puis jmp 0x525B26
@@ -411,8 +412,31 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         if (!ped) return;
         (void)from;
         void *attacker = PuppetPed(d.attacker);
+        bool wasAlive = Health(ped) > 0.0f, cop = PedType(ped) == 6;
         ApplyDamage(ped, attacker, d.weapon, d.damage, d.piece, d.dir);
         if (g_cfg.logScripts) Log("combat : joueur %d touche %08X (%.0f, arme %d) -> sante %.0f", from, d.hostHandle, d.damage, d.weapon, Health(ped));
+        // Le jeu n'enregistre pas de crime pour un coup porte par un pantin : on donne les etoiles nous-memes (elles
+        // sont partagees ensuite). Passant tue : 1 etoile, 3 en deux minutes : 2 ; policier touche : 2, tue : 3.
+        if (g_cfg.host) {
+            static uint32_t kills[8];
+            static int killAt;
+            uint32_t now = GetTickCount();
+            bool killed = wasAlive && Health(ped) <= 0.0f;
+            int want = 0;
+            if (cop) want = killed ? 3 : 2;
+            else if (killed) {
+                kills[killAt++ % 8] = now;
+                int recent = 0;
+                for (uint32_t t : kills) if (t && now - t < 120000) recent++;
+                want = recent >= 3 ? 2 : 1;
+            }
+            void *me = FindPlayerPed();
+            if (want && me && WantedLevel(me) < want) {
+                int32_t a[2] = { 0, want };
+                MirrorLocal(0x010E, 2, a);   // ALTER_WANTED_LEVEL_NO_DROP
+                Log("police : recherche %d (crime du joueur %d sur un personnage de l'hote)", want, from);
+            }
+        }
     } else if (data[0] == RL_DAMAGE_PVP && len >= (int)sizeof(RlDamagePvp)) {
         const RlDamagePvp &d = *(const RlDamagePvp *)data;
         if (d.victim != g_localId) {   // hote : un invite en touche un autre, on fait suivre

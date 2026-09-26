@@ -83,10 +83,11 @@ static void HostWatchLoad()
             fclose(f);
         } else Log("sauvegarde : impossible de lire %s", path);
     } else if (restarting && !wasRestarting && !loading) {
-        // Nouvelle partie : plus de sauvegarde a partager.
+        // Nouvelle partie : plus de sauvegarde a partager ; les invites en jeu recommencent avec nous.
         free(g_hostSave);
         g_hostSave = NULL;
         g_hostSaveLen = 0;
+        if (GameState() == GS_PLAYING) MirrorHostNewGame();
     }
     wasLoading = loading;
     wasRestarting = restarting;

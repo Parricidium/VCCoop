@@ -8,6 +8,7 @@ void MirrorFrame(bool inGame);
 bool MirrorBefore(void *script, int ip, uint16_t op);
 void MirrorAfter(void *script);
 void MirrorMissionEnd();
+void MirrorHostNewGame();   // hote : nouvelle partie lancee depuis le menu pause
 void MirrorMissionStart(int mission);   // numero de la mission (0 = INITIAL : ses objets et marqueurs sont permanents)
 void MirrorOnTimers(const uint8_t *buf, int len);   // invite : valeurs des minuteurs de mission de l'hote
 void MirrorPlayerJoined(int peer);
