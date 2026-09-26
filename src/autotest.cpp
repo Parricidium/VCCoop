@@ -241,6 +241,16 @@ void AutotestFrame()
         static uint32_t boardedAt;
         if (boarded && withF && frame - boardedAt == 30) Log("autotest : a bord=%d (place %d)", InVehicle(FindPlayerPed()),
             InVehicle(FindPlayerPed()) && PedVehicle(FindPlayerPed()) ? SeatOf(PedVehicle(FindPlayerPed()), FindPlayerPed()) : -1);
+        // Tir en passager : Uzi en main, on tire a gauche pendant 2 s.
+        if (boarded && withF && frame - boardedAt == 40) {
+            void *me = FindPlayerPed();
+            int model = *(int *)(0x782A14 + 23 * 0x64 + 0x54);
+            if (!HasModelLoaded(model)) { RequestModel(model, 1); ((void(__cdecl *)(bool))0x40B5F0)(false); }
+            GiveWeapon(me, 23, 200); SetCurrentWeapon(me, 23);
+            Log("autotest : Uzi en main, tirs %u", (unsigned)LocalShotCount());
+        }
+        if (boarded && withF) g_testPassengerFire = frame - boardedAt > 60 && frame - boardedAt < 120;
+        if (boarded && withF && frame - boardedAt == 125) Log("autotest : tirs apres 2 s : %u", (unsigned)LocalShotCount());
         if (boarded && !left && frame - boardedAt > 180) {
             left = true;
             Log("autotest : touche %s (descendre)", withF ? "F" : "G");
@@ -425,8 +435,31 @@ void AutotestFrame()
         } else {
             // Triangle (monter) a t=0 ; accelere (croix) de 3 s a 7 s ; Triangle (descendre) a 10 s.
             uint32_t t = frame - runStart;
-            if (t == 1 || t == 300) { Press(PAD_TRIANGLE, 255); Log("autotest : triangle (%s)", t == 1 ? "monter" : "descendre"); }
+            // TestDistance=N (vccoop.ini) : on part a N m sur le cote du vehicule le plus proche.
+            if (t == 1) {
+                char ini[MAX_PATH];
+                wsprintfA(ini, "%svccoop.ini", GameDir());
+                int dist = GetPrivateProfileIntA("VCCoop", "TestDistance", 0, ini);
+                Pool *vp = VehiclePool();
+                void *best = NULL;
+                float bd = 1e9f;
+                for (int i = 0; i < vp->size && dist != 0; i++) {
+                    if (vp->flags[i] & 0x80) continue;
+                    void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+                    float dx = Pos(v).x - Pos(ped).x, dy = Pos(v).y - Pos(ped).y, d = dx * dx + dy * dy;
+                    if (d < bd) { bd = d; best = v; }
+                }
+                if (best) {
+                    Vec3 r = Field<Vec3>(best, 0x04);
+                    Pos(ped) = { Pos(best).x - r.x * dist, Pos(best).y - r.y * dist, Pos(best).z + 0.5f };
+                    Log("autotest : place a %d m du vehicule", dist);
+                }
+            }
+            if (t == 5 || t == 300) { Press(PAD_TRIANGLE, 255); Log("autotest : triangle (%s)", t == 5 ? "monter" : "descendre"); }
             if (t >= 90 && t < 210) Press(PAD_CROSS, 255);
+            if (t % 15 == 0 && t < 300)
+                Log("autotest : t=%u etat %d, deplacement %d, en vehicule %d, objectif %d, pas %.3f", t, PedState(ped), MoveState(ped),
+                    InVehicle(ped), Field<int>(ped, 0x164), TimeStep());
         }
     }
 }

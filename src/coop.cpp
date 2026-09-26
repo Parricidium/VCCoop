@@ -598,6 +598,7 @@ void CoopFrame()
     if (inGame) PassengerKey();
     PlayersFrame(inGame);
     ShareWanted(inGame);
+    if (inGame) PassengerShooting();
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
     MirrorFrame(inGame);

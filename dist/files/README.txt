@@ -39,6 +39,19 @@ PLAY
 - F7: choose your outfit (Tommy's, story characters, any pedestrian).
   Left / Right to browse, Enter to keep, Backspace to cancel. It is kept for
   the next sessions; missions that dress Tommy replace it, as in single player.
+- Tab (hold): player list (health, armour, ping, distance).
+- B: set a meeting point where you look (everyone sees it, in your colour);
+  B again removes it.
+- Passenger: look left / right and fire, like the driver (pistols, SMGs).
+- The radio is the driver's (chosen station, or off).
+- Side missions (taxi, ambulance, fire truck, vigilante, pizza): a guest can
+  play them on their side in the right vehicle.
+- Mission money goes to everyone (ArgentPartage), police stars are shared
+  (RecherchePartagee).
+- A guest who dies or is busted respawns at the nearest hospital / police
+  station, keeping weapons and money (GarderArmes).
+- Network drop: the guest reconnects by itself, without reloading.
+- COOP menu: friendly fire, shared money, names, keep weapons.
 - Players can hurt each other (punches, bullets, cars): set TirAmi=0 in the
   host's vccoop.ini to prevent it.
 
