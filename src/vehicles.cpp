@@ -199,6 +199,8 @@ void VehiclesAfterProcess()
         const MsgVehicle &m = e.state;
         Snap n;
         if (!TrackSample(e.track, m.owner, n)) continue;
+        float jx = n.pos[0] - Pos(v).x, jy = n.pos[1] - Pos(v).y, jz = n.pos[2] - Pos(v).z;
+        if (jx * jx + jy * jy + jz * jz > 400.0f) Teleport(v, { n.pos[0], n.pos[1], n.pos[2] });   // grand ecart : secteurs a jour
         Pos(v) = { n.pos[0], n.pos[1], n.pos[2] };
         Field<Vec3>(v, 0x04) = { n.right[0], n.right[1], n.right[2] };
         Field<Vec3>(v, 0x14) = { n.fwd[0], n.fwd[1], n.fwd[2] };

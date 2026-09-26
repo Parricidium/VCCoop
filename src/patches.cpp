@@ -19,8 +19,28 @@ static void __cdecl FocusBackMenu()
     if (!CoopNetworkStarted()) *(bool *)(0x869630 + 0x12) = true;
 }
 
+// CPhysical::ProcessCollisionSectorList (0x4B1070) parcourt les listes d'entites d'un secteur ; une entree sans
+// entite y faisait planter (lecture de [0+0x51], vu chez JD a l'arrivee d'un invite, 26/09, pas reproduit). Garde-fou :
+// l'entree est sautee comme une entite sans collision (AL = 1, suite en 0x4B3830).
+static void GuardSectorList()
+{
+    static const uint8_t orig[] = { 0x8B, 0x4C, 0x24, 0x34, 0x89, 0x84, 0x24, 0x84, 0x00, 0x00, 0x00, 0x8A, 0x49, 0x51 };
+    if (!Expect(0x4B1190, "entite nulle dans un secteur", orig, sizeof(orig))) return;
+    uint8_t *s = (uint8_t *)VirtualAlloc(NULL, 64, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    int n = 0;
+    memcpy(s + n, orig, 11); n += 11;                       // mov ecx,[esp+34] ; mov [esp+84],eax
+    s[n++] = 0x85; s[n++] = 0xC9;                          // test ecx,ecx
+    s[n++] = 0x75; s[n++] = 0x07;                          // jnz +7
+    s[n++] = 0xB0; s[n++] = 0x01;                          // mov al,1
+    s[n++] = 0xE9; *(int32_t *)(s + n) = (int32_t)(0x4B3830 - ((uintptr_t)s + n + 4)); n += 4;
+    s[n++] = 0x8A; s[n++] = 0x49; s[n++] = 0x51;           // mov cl,[ecx+51]
+    s[n++] = 0xE9; *(int32_t *)(s + n) = (int32_t)(0x4B119E - ((uintptr_t)s + n + 4)); n += 4;
+    PatchJump(0x4B1190, s, sizeof(orig));
+}
+
 void InstallGamePatches()
 {
+    GuardSectorList();
     static const uint8_t focusMenu[] = { 0xC6, 0x05, 0x42, 0x96, 0x86, 0x00, 0x01 };
     if (Expect(0x4A4FFC, "menu au retour du focus", focusMenu, sizeof(focusMenu)))
         PatchCall(0x4A4FFC, (void *)FocusBackMenu, sizeof(focusMenu));
