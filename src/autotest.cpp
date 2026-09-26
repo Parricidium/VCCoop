@@ -266,6 +266,20 @@ void AutotestFrame()
         }
         return;
     }
+    if (_stricmp(g_cfg.autotest, "midi") == 0) {   // horloge a 12 h (ombres du soleil), puis on regarde
+        static bool done;
+        if (!done && frame - controlSince > 30) {
+            done = true;
+            int32_t t[2] = { 16, 30 };
+            MirrorLocal(0x00C0, 2, t);
+            float xyz[3] = { 260.0f, -1290.0f, 12.0f };   // devant l'hotel Ocean View, cote plage : en plein soleil
+            int32_t p[4] = { 0 };
+            memcpy(p + 1, xyz, 12);
+            MirrorLocal(0x0055, 4, p);
+            Log("autotest : 16 h 30, devant l'hotel");
+        }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "porte") == 0) {
         static void *car;
         static int lastState = -1;

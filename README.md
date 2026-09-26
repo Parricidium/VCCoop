@@ -65,7 +65,7 @@ Start `gta-vc.exe` normally. Main menu > **COOP**:
 | **Host a game** | Opens the lobby with the list of connected players. **New game** or **Load a game**: the guests follow you by themselves (your save is sent to them). |
 | **Join** | **Address** (the host's IP: Enter, type, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
 | **Nickname** | Your name, set before hosting or joining. |
-| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering. Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
+| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows. Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` go straight to hosting / joining. Without COOP the
 game stays single player. **Esc > COOP** in game shows the same page.
@@ -117,7 +117,10 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   21:9, 32:9) with a wider field of view, HUD and menus in proportion (`Fenetre`, `GrandEcran`).
 - **Video options** (all local, `0` = original rendering): draw distance (`DistanceAffichage`, 100 to
   400 %), anti-aliasing (`Anticrenelage`, MSAA 2x/4x/8x), anisotropic filtering 16x + trilinear
-  (`FiltrageAnisotrope`).
+  (`FiltrageAnisotrope`), **sun shadows** (`OmbresSoleil`): a 2048² shadow map rendered from the sun every
+  frame (300 m around the camera) and compared per pixel — buildings, palms, vehicles and characters cast real
+  shadows that move with the time of day, foliage cut out by its texture. Done on the game's own Direct3D 8
+  device with hand-assembled vs_1_1 / ps_1_4 shaders, so no wrapper and no extra DLL.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -243,7 +246,7 @@ Lancer `gta-vc.exe` normalement. Menu principal > **COOP** :
 | **Créer une partie** | Ouvre le salon avec la liste des joueurs connectés. **Nouvelle partie** ou **Charger une partie** : les invités suivent tout seuls (la sauvegarde leur est envoyée). |
 | **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
 | **Pseudo** | Votre nom, à régler avant de créer ou rejoindre. |
-| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope. Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
+| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil. Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` vont droit à l'hébergement / la connexion. Sans
 passer par COOP, le jeu reste en solo. **Échap > COOP** en jeu montre la même page.
@@ -296,7 +299,11 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   21:9, 32:9) avec un champ de vision élargi, HUD et menus en proportion (`Fenetre`, `GrandEcran`).
 - **Options vidéo** (toutes locales, `0` = rendu d'origine) : distance d'affichage
   (`DistanceAffichage`, 100 à 400 %), anticrénelage (`Anticrenelage`, MSAA 2x/4x/8x), filtrage
-  anisotrope 16x + trilinéaire (`FiltrageAnisotrope`).
+  anisotrope 16x + trilinéaire (`FiltrageAnisotrope`), **ombres du soleil** (`OmbresSoleil`) : une carte
+  d'ombre 2048² rendue depuis le soleil à chaque image (300 m autour de la caméra) et comparée par pixel ;
+  bâtiments, palmiers, véhicules et personnages projettent de vraies ombres qui suivent l'heure, feuillages
+  découpés par leur texture. Fait sur le périphérique Direct3D 8 du jeu avec des shaders vs_1_1 / ps_1_4
+  assemblés à la main : ni wrapper, ni DLL supplémentaire.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont

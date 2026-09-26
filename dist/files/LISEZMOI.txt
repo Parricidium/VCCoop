@@ -49,7 +49,9 @@ JOUER
   connecter) / Pseudo / Options. Options > Options coop (tir ami, argent
   partage, pseudos, garder ses armes)
   et Options video (distance d'affichage 100 a 400 %, anticrenelage 2x a 8x
-  pris au prochain lancement, filtrage anisotrope). Les options video se
+  pris au prochain lancement, filtrage anisotrope, ombres du soleil : les
+  batiments, palmiers, vehicules et personnages projettent de vraies ombres
+  selon l'heure). Les options video se
   reglent avant de creer / rejoindre, ou en jeu par Echap > COOP ; l'hote a
   "Options coop" dans le salon et en jeu.
 - Tab (maintenu) : liste des joueurs (sante, gilet, ping, distance).
