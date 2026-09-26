@@ -26,7 +26,7 @@ using namespace game;
 
 // --- Reglages ---
 static bool g_style = true;
-static uint8_t g_fill[3] = { 27, 27, 27 }, g_edge[3] = { 255, 150, 225 };
+static uint8_t g_fill[3] = { 27, 27, 27 }, g_edge[3] = { 255, 150, 225 }, g_select[3] = { 245, 245, 245 };
 static float g_textScale = 0.8f;
 
 static void ParseColor(const char *s, uint8_t *out)
@@ -44,6 +44,8 @@ static void LoadSettings()
     ParseColor(buf, g_fill);
     GetPrivateProfileStringA("VCCoop", "CouleurContourMenus", "255,150,225", buf, sizeof(buf), ini);
     ParseColor(buf, g_edge);
+    GetPrivateProfileStringA("VCCoop", "CouleurSelectionMenus", "245,245,245", buf, sizeof(buf), ini);
+    ParseColor(buf, g_select);
     int size = GetPrivateProfileIntA("VCCoop", "TailleTexteMenus", 80, ini);
     if (size < 40) size = 40;
     if (size > 150) size = 150;
@@ -393,6 +395,26 @@ void InstallInterface()
     PatchDrawCall(0x4A6A7E, 0x578710, (void *)h_DrawSplash);
     static const uintptr_t quads[] = { 0x4A2831, 0x4A292B, 0x4A2A34, 0x4A2DB9, 0x4A2EB3, 0x4A2FC2, 0x4A30D1 };
     for (uintptr_t a : quads) PatchDrawCall(a, 0x578520, (void *)h_FrameQuad);
+    // Barre de selection (vert 25,130,70 du jeu) : couleur ecrite en dur avant CRGBA::CRGBA (0x541570), dans
+    // CMenuManager::DrawStandardMenus : push 0xFF ; push 0x46 (6A) ; push 0x82 (68, 4 octets) ; push 0x19 (6A) ; call.
+    // CRGBA ne garde que l'octet bas de chaque argument : un push 6A F5 donne bien 0xF5.
+    if (g_style) {
+        static const uintptr_t bars[] = { 0x49F321, 0x49F7E0, 0x49F9C9 };
+        static const uint8_t orig[] = { 0x6A, 0x46, 0x68, 0x82, 0x00, 0x00, 0x00, 0x6A, 0x19 };
+        for (uintptr_t call : bars) {
+            uintptr_t at = call - sizeof(orig);
+            if (memcmp((void *)at, orig, sizeof(orig)) || !PatchDrawCall(call, 0x541570, (void *)0x541570)) {
+                Log("interface : couleur de selection inattendue en %06X", (unsigned)call);
+                continue;
+            }
+            uint8_t b[sizeof(orig)];
+            memcpy(b, orig, sizeof(b));
+            b[1] = g_select[2];
+            *(uint32_t *)(b + 3) = g_select[1];
+            b[8] = g_select[0];
+            Patch(at, b, sizeof(b));
+        }
+    }
     Log("interface : texte des menus %s, taille %d%%, dossier %S", g_style ? "a contour" : "d'origine",
         (int)(g_textScale * 100 + 0.5f), Folder().c_str());
 }
