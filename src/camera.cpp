@@ -38,9 +38,18 @@ typedef HRESULT(__stdcall *CreateDevice_t)(void *di, const GUID &guid, void **de
 static GetState_t o_GetState;
 static CreateDevice_t o_CreateDevice;
 
+// Apres un Alt+Tab (ou une perte du premier plan), DirectInput rend DIERR_INPUTLOST / DIERR_NOTACQUIRED et la souris
+// restait morte : on reprend le peripherique (Acquire, vtable 7) et on relit.
 static HRESULT __stdcall h_GetState(void *dev, DWORD size, void *data)
 {
     HRESULT hr = o_GetState(dev, size, data);
+    if (hr == (HRESULT)0x8007001E || hr == (HRESULT)0x8007000C || hr == (HRESULT)0x80070005) {
+        typedef HRESULT(__stdcall *Acquire_t)(void *);
+        HRESULT ha = ((Acquire_t)(*(void ***)dev)[7])(dev);
+        if (SUCCEEDED(ha)) hr = o_GetState(dev, size, data);
+        static uint32_t lastLog;
+        if (GetTickCount() - lastLog > 2000) { lastLog = GetTickCount(); Log("souris : perdue (%08X), reprise -> %08X / %08X", (unsigned)hr, (unsigned)ha, (unsigned)hr); }
+    }
     if (SUCCEEDED(hr) && data && (size == 16 || size == 20)) {
         uint8_t &rmb = ((uint8_t *)data)[13];
         g_realRmb = (rmb & 0x80) != 0;
