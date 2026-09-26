@@ -30,7 +30,23 @@ static void RemovePed(void *ped) { ((void(__cdecl *)(void *))0x53B160)(ped); }  
 // --- Generateurs saute en mode partage ---
 typedef void(__cdecl *GenCars_t)();
 static GenCars_t o_GenerateRandomCars;
-static void __cdecl h_GenerateRandomCars() { if (!g_shared) o_GenerateRandomCars(); }
+// Recherche par la police : la police de l'hote ne poursuit que lui (son joueur) ; l'invite garde donc la
+// generation de vehicules de son jeu, qui fait venir SA police. Le reste de ce qu'elle cree (circulation) est
+// retire aussitot par CleanLocalPopulation, les forces de l'ordre sont gardees.
+static bool Wanted() { void *me = FindPlayerPed(); void *w = me ? Field<void *>(me, 0x5F4) : NULL; return w && Field<int>(w, 0x20) > 0; }
+static void __cdecl h_GenerateRandomCars() { if (!g_shared || Wanted()) o_GenerateRandomCars(); }
+
+// Forces de l'ordre (policiers, SWAT, FBI, armee : type de personnage 6) et leurs vehicules.
+static bool LawPed(void *ped) { return ped && PedType(ped) == 6; }
+static bool LawVehicle(void *v)
+{
+    if (LawPed(VehDriver(v))) return true;
+    for (int i = 0; i < 8; i++) if (LawPed(VehPassenger(v, i))) return true;
+    static const char *const names[] = { "police", "enforcer", "fbiranch", "vicechee", "predator", "hunter", "rhino", "barracks", "polmav", "fbicar" };
+    const char *m = ModelName(ModelIndex(v));
+    for (const char *n : names) if (_stricmp(m, n) == 0) return true;
+    return false;
+}
 
 typedef void(__fastcall *CarGen_t)(void *gen, void *edx);
 static CarGen_t o_CarGenProcess;
@@ -47,13 +63,13 @@ void InstallPopulation()
 // Une entite ambiante locale peut-elle etre retiree ? (jamais ce qu'un joueur ou le reseau utilise)
 static bool LocalAmbientPed(void *ped, void *me)
 {
-    return ped != me && CharCreatedBy(ped) == 1 && !IsGhostPed(ped) && !IsPuppet(ped) && !InVehicle(ped);
+    return ped != me && CharCreatedBy(ped) == 1 && !IsGhostPed(ped) && !IsPuppet(ped) && !InVehicle(ped) && !(LawPed(ped) && Wanted());
 }
 
 static bool LocalAmbientVehicle(void *v, void *me)
 {
     uint8_t by = Field<uint8_t>(v, 0x1F8);
-    if ((by != VEH_RANDOM && by != VEH_PARKED) || NetVehicleId(v) || PedVehicle(me) == v) return false;
+    if ((by != VEH_RANDOM && by != VEH_PARKED) || NetVehicleId(v) || PedVehicle(me) == v || (LawVehicle(v) && Wanted())) return false;
     void *drv = VehDriver(v);
     if (drv && (drv == me || IsPuppet(drv) || IsGhostPed(drv))) return false;
     for (int i = 0; i < 8; i++) {
@@ -123,13 +139,13 @@ void PopulationFrame(bool inGame)
     static uint32_t lastStat;
     if (g_cfg.logScripts && GetTickCount() - lastStat > 10000) {
         lastStat = GetTickCount();
-        int localPeds = 0, ghosts = 0, localCars = 0, copies = 0;
+        int localPeds = 0, ghosts = 0, localCars = 0, copies = 0, law = 0;
         Pool *pp = PedPool();
         for (int i = 0; i < pp->size; i++) {
             if (pp->flags[i] & 0x80) continue;
             void *ped = pp->objects + i * PED_POOL_ENTRY;
             if (IsGhostPed(ped)) ghosts++;
-            else if (CharCreatedBy(ped) == 1) localPeds++;
+            else if (CharCreatedBy(ped) == 1) { localPeds++; if (LawPed(ped)) law++; }
         }
         Pool *vp = VehiclePool();
         for (int i = 0; i < vp->size; i++) {
@@ -138,8 +154,8 @@ void PopulationFrame(bool inGame)
             if (NetVehicleId(v)) copies++;
             else if (Field<uint8_t>(v, 0x1F8) == 1 || Field<uint8_t>(v, 0x1F8) == 3) localCars++;
         }
-        Log("population (%s) : passants locaux %d, copies de l'hote %d ; voitures locales %d, reseau %d",
-            g_shared ? "partagee" : "locale", localPeds, ghosts, localCars, copies);
+        Log("population (%s) : passants locaux %d (dont police %d), copies de l'hote %d ; voitures locales %d, reseau %d",
+            g_shared ? "partagee" : "locale", localPeds, law, ghosts, localCars, copies);
     }
     if (!g_shared) return;
     if (PedDensity() != 0.0f) { g_savedPedDensity = PedDensity(); PedDensity() = 0.0f; }   // une mission a pu la changer
