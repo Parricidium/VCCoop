@@ -447,6 +447,7 @@ static void SetArea(int area)
     if (*(int *)0x978810 == area) return;   // CGame::currArea
     int32_t v[1] = { area };
     Local(0x04BB, 1, v);
+    if (void *me = FindPlayerPed()) AreaCode(me) = (uint8_t)area;   // notre Tommy dans la meme zone que la ville affichee
     Log("miroir : zone visible %d (avec l'hote)", area);
 }
 void MirrorFollowHostArea(int area) { SetArea(area); }   // coop.cpp : regroupement pres de l'hote
