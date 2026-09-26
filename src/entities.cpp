@@ -197,7 +197,7 @@ static void UpdateGhost(Ghost &g)
 
     void *want = m.vehicleId ? NetVehicleById(m.vehicleId) : NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;
-    if (cur && (cur != want || SeatOf(cur, ped) != m.seat)) {
+    if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (m.seat == 0))) {
         Vec3 at = { m.pos[0], m.pos[1], m.pos[2] };
         WarpOutOfVehicle(ped, &at);
         cur = NULL;

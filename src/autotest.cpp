@@ -97,6 +97,17 @@ void AutotestFrame()
                 }
         }
         if (drive && frame - drive > 60 && frame - drive < 180) Press(PAD_CROSS, 255);
+        // Degats (verif. de leur synchro) : capot arrache, pare-brise et pare-chocs avant casses.
+        if (drive && frame - drive == 30 && InVehicle(ped) && PedVehicle(ped)) {
+            void *v = PedVehicle(ped);
+            uint8_t *dm = (uint8_t *)v + 0x2A0;
+            ((void(__thiscall *)(void *, int, int))0x5A9820)(dm, 0, 3);
+            ((void(__thiscall *)(void *, int, int, bool))0x59B150)(v, 0x11, 0, false);
+            *(uint32_t *)(dm + 0x14) |= (3u << 16) | (3u << 20);
+            ((void(__thiscall *)(void *, int, int, bool))0x59B2A0)(v, 0x13, 4, true);
+            ((void(__thiscall *)(void *, int, int, bool))0x59B370)(v, 7, 5, false);
+            Log("autotest : ma voiture est cassee (capot, pare-brise, pare-chocs)");
+        }
         return;
     }
     if (_stricmp(g_cfg.autotest, "bagarre") == 0) {

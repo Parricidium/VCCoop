@@ -22,7 +22,12 @@ bool WarpIntoSeat(void *ped, void *veh, int seat)
         Objective(ped) = objective == OBJECTIVE_ENTER_CAR_AS_DRIVER ? OBJECTIVE_NONE : objective;
         if (VehDriver(veh) != ped) SetDriver(veh, ped);
     } else {
+        // Plus de place (m_nNumPassengers +0x1CC, m_nMaxPassengers +0x1D0) : on ne touche a rien. (Avant, l'etat
+        // "conduite" restait pose sur un personnage reste dehors : plantage chez un invite qui voulait monter dans
+        // une 2 places ou etaient deja l'hote et une passagere de mission.)
+        if (Field<uint8_t>(veh, 0x1CC) >= Field<uint8_t>(veh, 0x1D0)) return false;
         // Comme CREATE_CHAR_AS_PASSENGER : etat "conduite", vehicule reference, place de passager, animations.
+        int oldState = PedState(ped);
         PedState(ped) = PED_DRIVING;
         PedVehicle(ped) = veh;
         RegisterReference(veh, &PedVehicle(ped));
@@ -31,6 +36,7 @@ bool WarpIntoSeat(void *ped, void *veh, int seat)
             InVehicle(ped) = false;
             CleanUpOldReference(veh, &PedVehicle(ped));
             PedVehicle(ped) = NULL;
+            PedState(ped) = oldState;
             return false;
         }
         Field<uint8_t>(ped, 0x51) &= ~0x01;   // bUsesCollision

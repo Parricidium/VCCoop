@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 5 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 6 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -79,6 +79,7 @@ struct MsgVehicle {
     uint32_t time;           // GetTickCount de l'envoi
     float wheelSpin[4];      // rotation des roues par 1/50 s (moto : avant, arriere)
     uint8_t radio;           // station de radio (m_nRadioStation +0x23C) : celle du conducteur pour tout le monde
+    uint8_t damage[24];      // voitures : CDamageManager (+0x2A0) du proprietaire (portes, ailes, phares, pneus...)
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 
