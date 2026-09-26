@@ -40,8 +40,39 @@ static CreateDevice_t o_CreateDevice;
 
 // Apres un Alt+Tab (ou une perte du premier plan), DirectInput rend DIERR_INPUTLOST / DIERR_NOTACQUIRED et la souris
 // restait morte : on reprend le peripherique (Acquire, vtable 7) et on relit.
+static uint32_t g_mouseReads;   // lectures de la souris par le jeu (diagnostic)
+
+// Retour au premier plan (Alt+Tab) : le peripherique souris est relache puis repris explicitement, et on verifie que
+// le jeu la lit encore ; sinon on le dit dans le journal (drapeau "au premier plan" du jeu 0x6D59FC, peripherique
+// 0x813D3C).
+void MouseFocusFrame()
+{
+    static bool wasFocus;
+    static uint32_t lastCheck, readsAtCheck;
+    bool focus = GameHasFocus();
+    void *dev = *(void **)0x813D3C;
+    uint32_t now = GetTickCount();
+    if (focus && !wasFocus && dev) {
+        void **vt = *(void ***)dev;
+        HRESULT hu = ((HRESULT(__stdcall *)(void *))vt[8])(dev);   // Unacquire
+        HRESULT ha = ((HRESULT(__stdcall *)(void *))vt[7])(dev);   // Acquire
+        Log("souris : premier plan retrouve, relachee %08X, reprise %08X, jeu actif %d", (unsigned)hu, (unsigned)ha, *(int *)0x6D59FC);
+        if (!*(int *)0x6D59FC) { *(int *)0x6D59FC = 1; Log("souris : le jeu se croyait en arriere-plan, corrige"); }
+        lastCheck = now;
+        readsAtCheck = g_mouseReads;
+    }
+    if (focus && GameState() == GS_PLAYING && now - lastCheck > 5000) {
+        if (g_mouseReads == readsAtCheck)
+            Log("souris : pas lue par le jeu depuis 5 s (peripherique %p, jeu actif %d, menu %d)", dev, *(int *)0x6D59FC, (int)*(char *)0x869668);
+        lastCheck = now;
+        readsAtCheck = g_mouseReads;
+    }
+    wasFocus = focus;
+}
+
 static HRESULT __stdcall h_GetState(void *dev, DWORD size, void *data)
 {
+    g_mouseReads++;
     HRESULT hr = o_GetState(dev, size, data);
     if (hr == (HRESULT)0x8007001E || hr == (HRESULT)0x8007000C || hr == (HRESULT)0x80070005) {
         typedef HRESULT(__stdcall *Acquire_t)(void *);
