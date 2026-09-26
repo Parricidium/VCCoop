@@ -93,16 +93,21 @@ void HookIm2D();
 void UpdateHudScale()
 {
     HookIm2D();
-    static float applied = -1.0f;
+    static float applied[2] = { -1.0f, -1.0f };
     float v = 1.0f / 640.0f;
     if (Widescreen()) v *= (4.0f / 3.0f) / ScreenAspect();
-    if (v == applied) return;
-    for (uintptr_t a : kHudScaleX) {
-        if (*(float *)a != applied && applied >= 0.0f) continue;   // pas a nous : on n'y touche pas
-        Patch(a, &v, sizeof(v));
+    for (int i = 0; i < 2; i++) {
+        // Carte du menu pause : dessinee avec les points du radar, puis tout le menu est resserre (Squeeze) ; le radar
+        // garde donc l'echelle d'origine pendant les menus, sinon ses icones etaient resserrees deux fois et ne
+        // suivaient plus la carte quand on la deplacait.
+        float want = (i == 1 && MenuSqueezeActive()) ? 1.0f / 640.0f : v;
+        if (want == applied[i]) continue;
+        uintptr_t a = kHudScaleX[i];
+        if (applied[i] >= 0.0f && *(float *)a != applied[i]) continue;   // pas a nous : on n'y touche pas
+        Patch(a, &want, sizeof(want));
+        if (applied[i] < 0.0f) Log("affichage : echelle horizontale de l'interface %.6f (format %.3f)", want, ScreenAspect());
+        applied[i] = want;
     }
-    applied = v;
-    Log("affichage : echelle horizontale de l'interface %.6f (format %.3f)", v, ScreenAspect());
 }
 
 // --- Menus en grand ecran ---

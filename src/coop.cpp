@@ -157,7 +157,23 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     AreaCode(ped) = s.area;
     HoldWeapon(ped, s.weapon);
     (void)np;
-    if (UpdatePuppetVehicle(pp, s)) { pp.anims.count = 0; return; }
+    if (UpdatePuppetVehicle(pp, s)) {
+        // Chez lui il est assis : ce que notre jeu lui fait subir (ejecte d'un coup de coude par le motard qui reprend
+        // sa moto, tire dehors...) ne compte pas. Si on le retrouve hors de l'etat "conduite" ou sans son animation
+        // assise, on le reinstalle a sa place (sinon il etait traine sous la moto, couche).
+        pp.anims.count = 0;
+        void *veh = PedVehicle(ped);
+        if (PedState(ped) != PED_DRIVING || !Field<void *>(ped, 0x1F8)) {
+            static uint32_t lastFix;
+            if (GetTickCount() - lastFix > 300) {
+                lastFix = GetTickCount();
+                Vec3 at = Pos(veh);
+                WarpOutOfVehicle(ped, &at);
+                if (WarpIntoSeat(ped, veh, s.seat)) Log("coop : Tommy %d remis a sa place (le jeu l'en avait deloge)", s.id);
+            }
+        }
+        return;
+    }
     // Position et cap : places apres la physique, par interpolation (PuppetsAfterProcess).
     // En vehicule mais sans copie locale (pas encore creee, ou passager) : cache en attendant.
     uint8_t &flags = Field<uint8_t>(ped, 0x52);

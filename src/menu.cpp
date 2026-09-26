@@ -47,6 +47,8 @@ static uint32_t g_joinSince;
 bool CoopNetworkStarted() { return g_netStarted; }
 void MenuRequestPage(int page) { g_pendingPage = page; }
 void MenuRequestSelect(int entry) { g_pendingSelect = entry; }
+static bool g_pendingBack;
+void MenuRequestBack() { g_pendingBack = true; }   // autotest : comme Echap
 int MenuCurrentPage() { return CurrentPage(); }
 
 void CoopStartNetwork()
@@ -197,6 +199,7 @@ static void __fastcall h_Buttons(void *menu, void *edx, int down, int up, int se
     }
     if (g_pendingPage >= 0) { int p = g_pendingPage; g_pendingPage = -1; SwitchToNewScreen(p); return; }
     if (g_pendingSelect >= 0) { *(int *)(Menu() + 0x30) = g_pendingSelect; g_pendingSelect = -1; select = 1; }
+    if (g_pendingBack) { g_pendingBack = false; back = 1; }
     if ((char)select && CurrentPage() == PAGE_COOP) {
         int action = Screens()[PAGE_COOP].entries[CurrentEntry()].action;
         if (action >= ACT_CREATE) { OnCoopAction(action); return; }
@@ -320,6 +323,17 @@ static bool FreePage33()
     uint8_t never = 0x7F;
     Patch(0x4A3815, &never, 1);
     PatchCall(0x4A3D09, (void *)PickOpeningPageStub, sizeof(mov33));
+    // Les ecrans du jeu qui "reviennent" a 33 (stats, briefing, carte, options, audio, affichage, langue, quitter...)
+    // voulaient dire "retour a la page d'ouverture" : ils visent maintenant 127, que la conversion (0x4A3815, ci-dessus)
+    // change en menu principal (29) ou en pause (32). Sinon Echap depuis la pause ramenait au menu principal du jeu
+    // (JOUER / COOP / OPTIONS...) sans jamais revenir a la partie.
+    int fixed = 0;
+    for (int p = 0; p < PAGE_COOP; p++) {
+        MenuScreen &s = Screens()[p];
+        if (s.prevPage == PAGE_COOP) { s.prevPage = 0x7F; fixed++; }
+        for (MenuEntry &e : s.entries) if (e.label[0] && e.target == PAGE_COOP) { e.target = 0x7F; fixed++; }
+    }
+    Log("menu : %d retours vers la page d'ouverture corriges", fixed);
     return true;
 }
 
@@ -339,12 +353,19 @@ void InstallMenu()
     coop.target = PAGE_COOP;
     coop.align = mm.entries[2].align;
     mm.entries[1] = coop;
+    // Menu pause (32) : Reprendre / ... / Briefing / COOP / Options / Quitter (reglages accessibles en partie).
+    MenuScreen &pause = Screens()[32];
+    if (!strcmp(pause.entries[5].label, "FEP_OPT") && !pause.entries[7].label[0]) {
+        memmove(&pause.entries[6], &pause.entries[5], 2 * sizeof(MenuEntry));
+        pause.entries[5] = coop;
+        pause.entries[5].align = pause.entries[6].align;
+    }
 
     // Ecran COOP (33, vide dans le jeu).
     MenuScreen &c = Screens()[PAGE_COOP];
     memset(&c, 0, sizeof(c));
     memcpy(c.name, "VCC_TIT", 8);
-    c.prevPage = PAGE_MAIN;
+    c.prevPage = 0x7F;   // retour : menu principal ou pause, selon qu'on est en partie
     c.parentEntry = 1;
     const struct { uint16_t act; const char *label; } items[] = {
         { ACT_CREATE, "VCC_CRE" }, { ACT_JOIN, "VCC_JOI" }, { ACT_ADDRESS, "VCC_IP" }, { ACT_NICK, "VCC_PSE" },
@@ -355,7 +376,7 @@ void InstallMenu()
         MenuEntry &e = c.entries[i];
         e.action = items[i].act;
         lstrcpynA(e.label, items[i].label, 8);
-        e.target = PAGE_MAIN;
+        e.target = 0x7F;   // "Retour" : page d ouverture (principal ou pause)
         e.align = 3;   // centre
     }
     c.entries[0].x = 320;

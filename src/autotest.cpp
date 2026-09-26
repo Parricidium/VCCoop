@@ -176,6 +176,25 @@ void AutotestFrame()
         if (armed == 31 && t % 120 < 40) Press(PAD_CIRCLE, 255);
         return;
     }
+    if (_stricmp(g_cfg.autotest, "menucarte") == 0) {   // pause -> carte, et on y reste (captures)
+        static int step;
+        static uint32_t at;
+        uint32_t now = GetTickCount();
+        if (step == 0 && frame - controlSince > 60) { *(bool *)(0x869630 + 0x12) = true; step = 1; at = now; }
+        else if (step == 1 && now - at > 1500) { MenuRequestPage(6); step = 2; Log("autotest : carte"); }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "menuretour") == 0) {   // pause -> stats -> Echap -> Echap : de retour en jeu ?
+        static int step;
+        static uint32_t at;
+        uint32_t now = GetTickCount();
+        if (step == 0 && frame - controlSince > 60) { *(bool *)(0x869630 + 0x12) = true; step = 1; at = now; Log("autotest : menu pause"); }
+        else if (step == 1 && now - at > 1500) { Log("autotest : page %d, vers les options", MenuCurrentPage()); MenuRequestPage(27); step = 2; at = now; }
+        else if (step == 2 && now - at > 1500) { Log("autotest : page %d, Echap", MenuCurrentPage()); MenuRequestBack(); step = 3; at = now; }
+        else if (step == 3 && now - at > 1500) { Log("autotest : page %d, Reprendre", MenuCurrentPage()); MenuRequestSelect(0); step = 4; at = now; }
+        else if (step == 4 && now - at > 1500) { Log("autotest : menu actif %d, page %d", MenuActive(), MenuCurrentPage()); step = 5; }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "recherche") == 0) {   // (invite) 2 etoiles au bout de 5 s de jeu
         static bool done;
         void *w = Field<void *>(FindPlayerPed(), 0x5F4);
