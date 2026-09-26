@@ -24,6 +24,8 @@ struct Config {
     bool shareWanted;   // RecherchePartagee=1 : etoiles de police communes
     bool shareMoney;    // ArgentPartage=1 (hote) : l'argent donne par les missions va aussi aux invites
     int drawDistance;   // DistanceAffichage=200 (en %) : detail, passants et vehicules visibles plus loin
+    int msaa;           // Anticrenelage=4 : 0, 2, 4 ou 8 echantillons (au prochain lancement)
+    bool aniso;         // FiltrageAnisotrope=1 : textures nettes au loin (16x, trilineaire)
     bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
     float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;

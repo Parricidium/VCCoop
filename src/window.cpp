@@ -20,7 +20,7 @@ struct D3DPRESENT_PARAMETERS8 {
     UINT FullScreen_PresentationInterval;
 };
 enum { D3DFMT_X8R8G8B8 = 22, D3DFMT_A8R8G8B8 = 21 };
-enum { VT_D3D_CREATEDEVICE = 15, VT_DEV_RESET = 14, VT_DEV_PRESENT = 15 };
+enum { VT_D3D_CREATEDEVICE = 15, VT_D3D_CHECKMSAA = 11, VT_DEV_RESET = 14, VT_DEV_PRESENT = 15, VT_DEV_SETTSS = 63 };
 
 typedef void *(WINAPI *Direct3DCreate8_t)(UINT);
 typedef HRESULT(WINAPI *CreateDevice_t)(void *, UINT, UINT, HWND, DWORD, D3DPRESENT_PARAMETERS8 *, void **);
@@ -33,6 +33,46 @@ static struct { void **vt; CreateDevice_t orig; } g_d3dVt[4];
 static int g_d3dVtCount;
 static Reset_t o_Reset;
 static Present_t o_Present;
+
+// --- Rendu : anticrenelage (multisampling du tampon d'image) et filtrage anisotrope ---
+// Le jeu n'en propose aucun. Le multisampling se decide a la creation du peripherique (au lancement) ; le
+// filtrage se force a chaque reglage de texture (SetTextureStageState : MINFILTER 6, MAGFILTER 5, MIPFILTER 7,
+// MAXANISOTROPY 21 ; LINEAR 2, ANISOTROPIC 3).
+static UINT g_msaaChosen;
+typedef HRESULT(WINAPI *CheckMsaa_t)(void *, UINT, UINT, UINT, BOOL, UINT);
+typedef HRESULT(WINAPI *SetTss_t)(void *, DWORD, DWORD, DWORD);
+static SetTss_t o_SetTss;
+
+static void ChooseMsaa(void *d3d, UINT adapter, UINT type, D3DPRESENT_PARAMETERS8 *pp)
+{
+    g_msaaChosen = 0;
+    if (g_cfg.msaa < 2) return;
+    CheckMsaa_t check = (CheckMsaa_t)(*(void ***)d3d)[VT_D3D_CHECKMSAA];
+    for (UINT s = (UINT)(g_cfg.msaa > 8 ? 8 : g_cfg.msaa); s >= 2; s /= 2) {
+        if (SUCCEEDED(check(d3d, adapter, type, pp->BackBufferFormat, pp->Windowed, s)) &&
+            (!pp->EnableAutoDepthStencil || SUCCEEDED(check(d3d, adapter, type, pp->AutoDepthStencilFormat, pp->Windowed, s)))) {
+            g_msaaChosen = s;
+            break;
+        }
+    }
+    Log("rendu : anticrenelage demande %dx, obtenu %ux", g_cfg.msaa, g_msaaChosen);
+}
+
+static void ApplyMsaa(D3DPRESENT_PARAMETERS8 *pp)
+{
+    if (!g_msaaChosen) return;
+    pp->MultiSampleType = g_msaaChosen;
+    pp->SwapEffect = 1;   // D3DSWAPEFFECT_DISCARD, obligatoire avec le multisampling
+}
+
+static HRESULT WINAPI h_SetTss(void *dev, DWORD stage, DWORD state, DWORD value)
+{
+    if (g_cfg.aniso) {
+        if (state == 6 && value == 2) { o_SetTss(dev, stage, 21, 16); value = 3; }   // MINFILTER lineaire -> anisotrope 16x
+        else if (state == 7 && value == 0) value = 2;                                   // MIPFILTER aucun -> lineaire (trilineaire)
+    }
+    return o_SetTss(dev, stage, state, value);
+}
 static HWND g_hwnd;
 static HWND g_prevForeground;   // fenetre qui avait le premier plan au lancement (instances de test)
 
@@ -149,6 +189,7 @@ static HRESULT WINAPI h_Present(void *dev, const RECT *src, const RECT *dst, HWN
 static HRESULT WINAPI h_Reset(void *dev, D3DPRESENT_PARAMETERS8 *pp)
 {
     MakeWindowed(pp);
+    ApplyMsaa(pp);
     HRESULT hr = o_Reset(dev, pp);
     Log("Reset %ux%u fenetre=%d -> 0x%08lX", pp->BackBufferWidth, pp->BackBufferHeight, pp->Windowed, hr);
     FitWindow(g_hwnd, pp->BackBufferWidth, pp->BackBufferHeight);
@@ -164,7 +205,15 @@ static HRESULT WINAPI h_CreateDevice(void *d3d, UINT adapter, UINT type, HWND fo
     for (int i = 0; i < g_d3dVtCount; i++)
         if (g_d3dVt[i].vt == *(void ***)d3d) orig = g_d3dVt[i].orig;
     if (!orig) return E_FAIL;
+    ChooseMsaa(d3d, adapter, type, pp);
+    ApplyMsaa(pp);
     HRESULT hr = orig(d3d, adapter, type, focus, flags, pp, out);
+    if (FAILED(hr) && g_msaaChosen) {   // refus : sans anticrenelage
+        Log("rendu : peripherique refuse avec anticrenelage (0x%08lX), sans", hr);
+        g_msaaChosen = 0;
+        pp->MultiSampleType = 0;
+        hr = orig(d3d, adapter, type, focus, flags, pp, out);
+    }
     Log("CreateDevice %ux%u fmt=%u fenetre=%d -> 0x%08lX", pp->BackBufferWidth, pp->BackBufferHeight,
         pp->BackBufferFormat, pp->Windowed, hr);
     if (SUCCEEDED(hr) && *out) {
@@ -172,6 +221,7 @@ static HRESULT WINAPI h_CreateDevice(void *d3d, UINT adapter, UINT type, HWND fo
         if (!o_Reset) {
             o_Reset = (Reset_t)PatchPointer(&vt[VT_DEV_RESET], (void *)h_Reset);
             o_Present = (Present_t)PatchPointer(&vt[VT_DEV_PRESENT], (void *)h_Present);
+            o_SetTss = (SetTss_t)PatchPointer(&vt[VT_DEV_SETTSS], (void *)h_SetTss);
         }
         FitWindow(g_hwnd, pp->BackBufferWidth, pp->BackBufferHeight);
     }
