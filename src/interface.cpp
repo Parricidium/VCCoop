@@ -27,6 +27,8 @@ using namespace game;
 // --- Reglages ---
 static bool g_style = true;
 static uint8_t g_fill[3] = { 27, 27, 27 }, g_edge[3] = { 255, 150, 225 }, g_select[3] = { 245, 245, 245 };
+// Pages de sauvegardes (charger 8, supprimer 9, sauvegarder 15) : texte blanc sur le fond, barre de selection rose.
+static uint8_t g_saveText[3] = { 255, 255, 255 }, g_saveSelect[3] = { 255, 150, 225 };
 static float g_textScale = 0.8f;
 
 static void ParseColor(const char *s, uint8_t *out)
@@ -46,6 +48,10 @@ static void LoadSettings()
     ParseColor(buf, g_edge);
     GetPrivateProfileStringA("VCCoop", "CouleurSelectionMenus", "245,245,245", buf, sizeof(buf), ini);
     ParseColor(buf, g_select);
+    GetPrivateProfileStringA("VCCoop", "CouleurTexteSauvegardes", "255,255,255", buf, sizeof(buf), ini);
+    ParseColor(buf, g_saveText);
+    GetPrivateProfileStringA("VCCoop", "CouleurSelectionSauvegardes", "255,150,225", buf, sizeof(buf), ini);
+    ParseColor(buf, g_saveSelect);
     int size = GetPrivateProfileIntA("VCCoop", "TailleTexteMenus", 80, ini);
     if (size < 40) size = 40;
     if (size > 150) size = 150;
@@ -306,7 +312,7 @@ void InterfaceFrame()
 // --- Texte ---
 // CFont::Details : couleur 0x97F820, echelle 0x97F824 / 0x97F828, fond 0x97F83B, ombre 0x97F860 (position),
 // 0x97F862 (couleur). CFont::PrintString (0x551040) met le texte en attente ; CFont::DrawFonts (0x550250) l'affiche.
-static bool g_inFrontEnd;
+static bool g_inFrontEnd, g_savePage;
 typedef void(__cdecl *PrintString_t)(float x, float y, const wchar_t *s);
 static PrintString_t o_PrintString;
 static void DrawFonts() { ((void(__cdecl *)())0x550250)(); }
@@ -332,6 +338,9 @@ static void StyledPrint(float x, float y, const wchar_t *s)
     bool pink = saved[0] == 255 && saved[1] == 150 && saved[2] == 225;
     bool dim = saved[0] == 0xC3 && saved[1] == 0x5A && saved[2] == 0xA5;
     bool shadowPass = saved[0] == 0x1E && saved[1] == 0x1E && saved[2] == 0x1E;
+    // Liste des sauvegardes : ecrite en noir par le jeu ; en blanc, avec un contour de la couleur du texte des menus.
+    bool saveList = g_savePage && saved[0] == 0 && saved[1] == 0 && saved[2] == 0;
+    const uint8_t *fill = saveList ? g_saveText : g_fill, *edge = saveList ? g_fill : g_edge;
     if (g_style && shadowPass) return;   // ombre dessinee a la main par le menu : le contour la remplace
 
     // Plus petit, a la meme place : le haut descend de la moitie de la hauteur gagnee (lettres ~18 points x echelle).
@@ -339,16 +348,16 @@ static void StyledPrint(float x, float y, const wchar_t *s)
     sy = osy * g_textScale;
     float ty = y + (1.0f - g_textScale) * osy * 9.0f;
 
-    if (g_style && (pink || dim) && !*(bool *)0x97F83B) {
+    if (g_style && (pink || dim || saveList) && !*(bool *)0x97F83B) {
         float o = ScreenH() / 450.0f;   // 2,4 points en 1080p
         if (o < 1.0f) o = 1.0f;
         float ox = MenuSqueezeActive() ? o / MenuSqueezeFactor() : o;   // le texte est resserre ensuite
         shadow = 0;
-        col[0] = g_edge[0]; col[1] = g_edge[1]; col[2] = g_edge[2];
+        col[0] = edge[0]; col[1] = edge[1]; col[2] = edge[2];
         if (dim) { col[0] /= 2; col[1] /= 2; col[2] /= 2; }
         static const int dirs[8][2] = { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 }, { -1, -1 }, { 1, -1 }, { -1, 1 }, { 1, 1 } };
         for (auto &d : dirs) { o_PrintString(x + d[0] * ox, ty + d[1] * o, s); DrawFonts(); }
-        col[0] = g_fill[0]; col[1] = g_fill[1]; col[2] = g_fill[2];
+        col[0] = fill[0]; col[1] = fill[1]; col[2] = fill[2];
         if (dim) for (int i = 0; i < 3; i++) col[i] = (uint8_t)((col[i] + 128) / 2);   // eteint : vers le gris (texte clair ou fonce)
         o_PrintString(x, ty, s);
         DrawFonts();
@@ -369,6 +378,45 @@ static void __fastcall h_DrawFrontEnd(void *menu, void *edx, char arg)
     g_inFrontEnd = true;
     o_DrawFrontEnd(menu, edx, arg);
     g_inFrontEnd = false;
+}
+
+// Barre de selection (vert 25,130,70 du jeu) : couleur ecrite en dur avant CRGBA::CRGBA (0x541570), dans
+// CMenuManager::DrawStandardMenus : push 0xFF ; push 0x46 (6A) ; push 0x82 (68, 4 octets) ; push 0x19 (6A) ; call.
+// CRGBA ne garde que l'octet bas de chaque argument : un push 6A F5 donne bien 0xF5. Reecrite selon la page.
+static const uintptr_t kBars[] = { 0x49F321, 0x49F7E0, 0x49F9C9 };
+static const uint8_t kBarOrig[] = { 0x6A, 0x46, 0x68, 0x82, 0x00, 0x00, 0x00, 0x6A, 0x19 };
+static bool g_barsOk;
+
+static void SetBarColor(const uint8_t *c)
+{
+    static uint8_t cur[3] = { 25, 130, 70 };
+    if (!g_barsOk || !memcmp(cur, c, 3)) return;
+    memcpy(cur, c, 3);
+    for (uintptr_t call : kBars) {
+        uint8_t b[sizeof(kBarOrig)];
+        memcpy(b, kBarOrig, sizeof(b));
+        b[1] = c[2];
+        *(uint32_t *)(b + 3) = c[1];
+        b[8] = c[0];
+        Patch(call - sizeof(b), b, sizeof(b));
+    }
+}
+
+// CMenuManager::DrawStandardMenus (0x49DF40), appele pour la page affichee (et l'ancienne pendant un fondu).
+static void __fastcall h_DrawStandardMenus(void *menu, void *, char arg)
+{
+    int page = *(int *)((uint8_t *)menu + 0xF8);
+    g_savePage = page == 8 || page == 9 || page == 15;
+    if (g_style) SetBarColor(g_savePage ? g_saveSelect : g_select);
+    ((void(__thiscall *)(void *, char))0x49DF40)(menu, arg);
+    g_savePage = false;
+}
+
+// Cadre bleu de la liste des sauvegardes (0x49E1B5) : retire, la liste s'affiche directement sur le fond.
+static void __cdecl h_SaveListBox(float x1, float y1, float x2, float y2, float x3, float y3, float x4, float y4, const uint8_t *color)
+{
+    if (g_style) return;
+    ((void(__cdecl *)(float, float, float, float, float, float, float, float, const uint8_t *))0x578520)(x1, y1, x2, y2, x3, y3, x4, y4, color);
 }
 
 static bool PatchDrawCall(uintptr_t at, uintptr_t expected, void *hook)
@@ -395,26 +443,17 @@ void InstallInterface()
     PatchDrawCall(0x4A6A7E, 0x578710, (void *)h_DrawSplash);
     static const uintptr_t quads[] = { 0x4A2831, 0x4A292B, 0x4A2A34, 0x4A2DB9, 0x4A2EB3, 0x4A2FC2, 0x4A30D1 };
     for (uintptr_t a : quads) PatchDrawCall(a, 0x578520, (void *)h_FrameQuad);
-    // Barre de selection (vert 25,130,70 du jeu) : couleur ecrite en dur avant CRGBA::CRGBA (0x541570), dans
-    // CMenuManager::DrawStandardMenus : push 0xFF ; push 0x46 (6A) ; push 0x82 (68, 4 octets) ; push 0x19 (6A) ; call.
-    // CRGBA ne garde que l'octet bas de chaque argument : un push 6A F5 donne bien 0xF5.
-    if (g_style) {
-        static const uintptr_t bars[] = { 0x49F321, 0x49F7E0, 0x49F9C9 };
-        static const uint8_t orig[] = { 0x6A, 0x46, 0x68, 0x82, 0x00, 0x00, 0x00, 0x6A, 0x19 };
-        for (uintptr_t call : bars) {
-            uintptr_t at = call - sizeof(orig);
-            if (memcmp((void *)at, orig, sizeof(orig)) || !PatchDrawCall(call, 0x541570, (void *)0x541570)) {
-                Log("interface : couleur de selection inattendue en %06X", (unsigned)call);
-                continue;
-            }
-            uint8_t b[sizeof(orig)];
-            memcpy(b, orig, sizeof(b));
-            b[1] = g_select[2];
-            *(uint32_t *)(b + 3) = g_select[1];
-            b[8] = g_select[0];
-            Patch(at, b, sizeof(b));
+    g_barsOk = true;
+    for (uintptr_t call : kBars) {
+        uint8_t *p = (uint8_t *)call;
+        if (memcmp(p - sizeof(kBarOrig), kBarOrig, sizeof(kBarOrig)) || p[0] != 0xE8 || call + 5 + *(int32_t *)(p + 1) != 0x541570) {
+            Log("interface : couleur de selection inattendue en %06X", (unsigned)call);
+            g_barsOk = false;
         }
     }
+    PatchDrawCall(0x4A325E, 0x49DF40, (void *)h_DrawStandardMenus);
+    PatchDrawCall(0x4A32AD, 0x49DF40, (void *)h_DrawStandardMenus);
+    PatchDrawCall(0x49E1B5, 0x578520, (void *)h_SaveListBox);
     Log("interface : texte des menus %s, taille %d%%, dossier %S", g_style ? "a contour" : "d'origine",
         (int)(g_textScale * 100 + 0.5f), Folder().c_str());
 }
