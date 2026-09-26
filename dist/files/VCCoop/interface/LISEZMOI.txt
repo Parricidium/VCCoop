@@ -33,4 +33,5 @@ Remarques
 - Evitez les tres gros fichiers : chaque image prend 8 a 16 Mo de memoire
   pendant qu'elle est affichee.
 - Le texte des menus (couleur, contour, taille) se regle dans vccoop.ini :
-  StyleMenus, CouleurTexteMenus, CouleurContourMenus, TailleTexteMenus.
+  StyleMenus, CouleurTexteMenus, CouleurContourMenus, CouleurSelectionMenus,
+  TailleTexteMenus.
