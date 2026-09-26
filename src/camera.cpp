@@ -62,7 +62,7 @@ static void __fastcall h_CamProcess(void *cam, void *edx)
         g_orbit = true;
         g_lastMove = now;
         g_yaw -= mx * 0.005f * g_cfg.camSensitivity;
-        g_pitch += my * 0.004f * g_cfg.camSensitivity;
+        g_pitch -= my * 0.004f * g_cfg.camSensitivity;   // souris vers le haut : la camera regarde plus haut (retour de JD)
         if (g_pitch < -0.25f) g_pitch = -0.25f;
         if (g_pitch > 1.2f) g_pitch = 1.2f;
     }
