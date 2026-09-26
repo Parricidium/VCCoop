@@ -129,9 +129,13 @@ static Im2DVertex g_squeezed[8192];
 bool MenuSqueezeActive() { return Widescreen() && *(char *)0x869668; }   // m_bMenuActive
 float MenuSqueezeFactor() { return (4.0f / 3.0f) / ScreenAspect(); }
 
+// Pause du resserrement : images de l'interface personnalisee dessinees sur tout l'ecran (interface.cpp).
+static bool g_squeezeSuspended;
+void SuspendMenuSqueeze(bool on) { g_squeezeSuspended = on; }
+
 static Im2DVertex *Squeeze(Im2DVertex *v, int n)
 {
-    if (!MenuSqueezeActive() || n <= 0 || n > 8192) return v;
+    if (g_squeezeSuspended || !MenuSqueezeActive() || n <= 0 || n > 8192) return v;
     float cx = *(int *)0x9B48DC * 0.5f, f = MenuSqueezeFactor();
     for (int i = 0; i < n; i++) { g_squeezed[i] = v[i]; g_squeezed[i].x = cx + (v[i].x - cx) * f; }
     return g_squeezed;

@@ -1,0 +1,36 @@
+IMAGES DE L'INTERFACE VCCOOP
+============================
+
+Deposez ici vos images : le mod les charge a leur vraie taille (pas les
+512x512 du jeu) et les affiche sans les deformer. Formats : png, jpg ou bmp.
+Sans image, c'est celle du jeu qui s'affiche.
+
+fond_menu.png (ou .jpg)
+    Fond des menus (menu principal et pause), sur tout l'ecran.
+    Taille conseillee : 1920x1080 (ecran 1080p) ou 2560x1440 (ecran 1440p),
+    au format 16:9. Sur un ecran d'un autre format (21:9, 16:10...), l'image
+    est agrandie jusqu'a couvrir l'ecran et le surplus est coupe : gardez
+    l'important vers le centre. Plusieurs fonds (fond_menu1, fond_menu2...) :
+    un est tire au hasard a chaque lancement.
+
+logo.png
+    Logo en haut a gauche des menus, a la place du logo Vice City.
+    PNG avec transparence. Taille conseillee : 512x512 (carre) ; un logo plus
+    large marche aussi (jusqu'a 3 fois plus large que haut, par ex. 1024x512).
+    Il est affiche a la hauteur du logo d'origine.
+
+chargement1.jpg, chargement2.jpg, ...
+    Ecrans de chargement, sur tout l'ecran (memes regles que le fond).
+    Taille conseillee : 1920x1080 (ou 2560x1440). Autant d'images que vous
+    voulez : elles tournent dans un ordre tire au hasard, une par chargement.
+    La barre de progression du jeu reste dessinee en bas : evitez d'y mettre
+    un texte important.
+
+Remarques
+- Au-dela de 2048 points, l'image est reduite a 2048 (limite de la carte en
+  Direct3D 8) : 2560x1440 garde donc une meilleure nettete que 1920x1080
+  seulement sur un ecran 1440p.
+- Evitez les tres gros fichiers : chaque image prend 8 a 16 Mo de memoire
+  pendant qu'elle est affichee.
+- Le texte des menus (couleur, contour, taille) se regle dans vccoop.ini :
+  StyleMenus, CouleurTexteMenus, CouleurContourMenus, TailleTexteMenus.

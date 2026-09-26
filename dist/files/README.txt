@@ -76,6 +76,14 @@ in your screen's real aspect ratio (16:9, 21:9, 32:9): a wider view with no
 stretching, and the HUD keeps its proportions. Settings in vccoop.ini
 (Fenetre, GrandEcran). Menus keep their proportions, centred.
 
+CUSTOM INTERFACE
+----------------
+Menu text is white with a pink outline, smaller and sharper (StyleMenus,
+CouleurTexteMenus, CouleurContourMenus, TailleTexteMenus in vccoop.ini). Menu
+background, logo and loading screens: put your images in VCCoop\interface
+(fond_menu.png, logo.png, chargement1.jpg, chargement2.jpg... 1920x1080 or
+2560x1440 for full-screen images, 512x512 transparent PNG for the logo).
+
 KNOWN LIMITS (test build)
 -------------------------
 - Only the host can start missions. "Go there" / "get in that car" goals can
