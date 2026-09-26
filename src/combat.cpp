@@ -10,6 +10,7 @@
 #include "combat.h"
 #include "mirror.h"
 #include "saveshare.h"
+#include "camera.h"
 #include <string.h>
 
 using namespace game;
@@ -110,6 +111,10 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
         int pid = PuppetPlayer(ped);
         if (pid > 0) {
             bool friendly = damager && (damager == me || IsPuppet(damager) || damager == PedVehicle(me));
+            // Seuls les coups d'un personnage (balles, poings, explosions de l'IA) partent chez lui. Chutes, noyade,
+            // chocs de vehicules : son propre jeu les calcule ; renvoyer ceux de son Tommy chez nous le tuait a son
+            // arrivee (chute de 565 points en le deplacant pres de l'hote).
+            if (!damager || !IsPedEntity(damager)) return false;
             if (!friendly) {
                 uint32_t npc = damager && IsPedEntity(damager) ? PedHandle(damager) : 0xFFFFFFFF;
                 RlDamagePlayer d = { RL_DAMAGE_PLAYER, dir, npc, weapon, piece, damage };
@@ -253,7 +258,10 @@ void PassengerShooting()
     void *me = FindPlayerPed();
     if (!me || !InVehicle(me) || !PedVehicle(me)) return;
     void *veh = PedVehicle(me);
-    if (SeatOf(veh, me) <= 0 || VehClass(veh) == VCLASS_BIKE) return;
+    // Visee libre (clic droit, camera.cpp) : conducteur aussi, dans la direction de la camera. Sinon passager seul,
+    // en regardant a gauche / a droite comme le conducteur du jeu.
+    bool freeAim = FreeAimActive();
+    if ((!freeAim && SeatOf(veh, me) <= 0) || VehClass(veh) == VCLASS_BIKE) return;
     uint8_t *slot = (uint8_t *)me + 0x408 + CurrentWeaponSlot(me) * 0x18;
     int type = *(int *)slot;
     uint8_t *info = ((uint8_t *(__cdecl *)(int))0x5D5710)(type);
@@ -261,6 +269,12 @@ void PassengerShooting()
     void *pad = GetPad0();
     bool left = g_testPassengerFire || ((bool(__thiscall *)(void *))0x4AAC90)(pad);
     bool right = !left && ((bool(__thiscall *)(void *))0x4AAC60)(pad);
+    if (freeAim) {   // le cote ou l'on vise (camera active : direction en +0x188 + n * 0x1CC + 0x168)
+        uint8_t *cam = (uint8_t *)0x7E4688 + 0x188 + ((uint8_t *)0x7E4688)[0x76] * 0x1CC;
+        Vec3 f = Field<Vec3>(cam, 0x168), r = Field<Vec3>(veh, 0x04);
+        left = f.x * r.x + f.y * r.y < 0.0f;
+        right = !left;
+    }
     void *clump = Field<void *>(me, 0x4C);
     bool low = (Field<uint8_t>(veh, 0x1FA) >> 3 & 1) != 0;
     int animL = low ? 0x70 : 0x6E, animR = low ? 0x71 : 0x6F;
@@ -271,7 +285,7 @@ void PassengerShooting()
     bool playing = false;
     for (void *a = FirstAssoc(clump); a; a = NextAssoc(a)) playing |= Field<int16_t>(a, 0x2C) == want && Field<float>(a, 0x1C) >= 0.0f;
     if (!playing) BlendAnimation(clump, 0, want, 8.0f);
-    bool fire = g_testPassengerFire || ((bool(__thiscall *)(void *))0x4AAA60)(pad);   // CPad::GetCarGunFired
+    bool fire = g_testPassengerFire || (freeAim ? *(bool *)0x94D788 != 0 : ((bool(__thiscall *)(void *))0x4AAA60)(pad));   // clic gauche / CPad::GetCarGunFired
     uint32_t now = TimeInMs();
     if (!fire || *(uint32_t *)(slot + 0x10) >= now || *(int *)(slot + 0xC) <= 0) return;
     void *driver = VehDriver(veh);

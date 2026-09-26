@@ -23,6 +23,8 @@ struct Config {
     bool friendlyFire;  // TirAmi=1 (hote) : les joueurs peuvent se blesser entre eux
     bool shareWanted;   // RecherchePartagee=1 : etoiles de police communes
     bool shareMoney;    // ArgentPartage=1 (hote) : l'argent donne par les missions va aussi aux invites
+    bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
+    float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;
     bool keepWeapons;   // GarderArmes=1 : un invite mort ou arrete garde armes et argent
     bool respawnAtHost; // ReapparitionHote=1 : il reapparait pres de l'hote (0 par defaut : a l'hopital)     // AfficherPseudos=1 : pseudo au-dessus de la tete des autres joueurs

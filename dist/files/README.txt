@@ -43,6 +43,10 @@ PLAY
 - B: set a meeting point where you look (everyone sees it, in your colour);
   B again removes it.
 - Passenger: look left / right and fire, like the driver (pistols, SMGs).
+- In a vehicle, the mouse orbits the camera around it (it goes back behind
+  after 2.5 s). Right click with a pistol or SMG: aim at the screen centre,
+  left click to fire, as driver or passenger. The mouse no longer steers.
+  CameraLibre=0 for the original camera, SensibiliteCamera=100 (percent).
 - The radio is the driver's (chosen station, or off).
 - Side missions (taxi, ambulance, fire truck, vigilante, pizza): a guest can
   play them on their side in the right vehicle.

@@ -34,6 +34,7 @@
 #include "saveshare.h"
 #include "conditions.h"
 #include "seats.h"
+#include "camera.h"
 #include <math.h>
 #include <string.h>
 
@@ -97,6 +98,20 @@ void AutotestFrame()
                 }
         }
         if (drive && frame - drive > 60 && frame - drive < 180) Press(PAD_CROSS, 255);
+        // Camera libre : la souris (simulee) fait le tour, puis visee et tir a l'Uzi depuis le volant.
+        if (drive) {
+            uint32_t k = frame - drive;
+            g_testMouseX = (k > 40 && k < 160) ? 12.0f : 0.0f;
+            if (k == 170) {
+                int model = *(int *)(0x782A14 + 23 * 0x64 + 0x54);
+                if (!HasModelLoaded(model)) { RequestModel(model, 1); ((void(__cdecl *)(bool))0x40B5F0)(false); }
+                GiveWeapon(ped, 23, 200); SetCurrentWeapon(ped, 23);
+                Log("autotest : Uzi au volant, tirs %u", (unsigned)LocalShotCount());
+            }
+            g_testAim = k > 180 && k < 260;
+            g_testPassengerFire = k > 200 && k < 260;
+            if (k == 265) Log("autotest : tirs en visee libre : %u", (unsigned)LocalShotCount());
+        }
         // Degats (verif. de leur synchro) : capot arrache, pare-brise et pare-chocs avant casses.
         if (drive && frame - drive == 30 && InVehicle(ped) && PedVehicle(ped)) {
             void *v = PedVehicle(ped);
