@@ -10,6 +10,8 @@
 #include "seats.h"
 #include "combat.h"
 #include "interp.h"
+#include "anims.h"
+#include "population.h"
 #include <string.h>
 
 using namespace game;
@@ -52,6 +54,8 @@ static void HostScan()
         m.pedState = (uint8_t)PedState(ped);
         m.pedType = (uint8_t)PedType(ped);
         m.time = now;
+        if (InVehicle(ped)) m.anims[0].id = m.anims[1].id = -1;
+        else CollectAnimSlots(ped, m.anims, 2);
         m.area = AreaCode(ped);
         m.weapon = WeaponTypeInSlot(ped, CurrentWeaponSlot(ped));
         if (InVehicle(ped) && PedVehicle(ped)) {
@@ -85,6 +89,7 @@ struct Ghost {
     int lastMoveState;
     bool dead;
     Track track;
+    AnimMirror anims;
 };
 static Ghost g_ghosts[MAX_GHOSTS];
 
@@ -166,6 +171,7 @@ static void CreateGhost(Ghost &g)
     WorldAdd(ped);
     g.ped = ped;
     g.lastMoveState = -1;
+    g.anims = {};
     RegisterReference(ped, &g.ped);
     Log("entites : copie du personnage %08X (%s) creee", m.handle, m.modelName);
 }
@@ -204,6 +210,9 @@ static void UpdateGhost(Ghost &g)
 
     // Position et cap : apres la physique, par interpolation (GhostsAfterProcess).
     PedState(ped) = 0;   // etat "aucun" : l'IA ne remet pas le deplacement a "immobile" (cf. coop.cpp)
+    // Se battre, tomber, se relever... comme chez l'hote ; nos propres coups n'y font rien (c'est l'hote qui decide).
+    ClearLocalReactions(ped, g.anims);
+    if (ApplyActionAnims(ped, m.anims, 2, g.anims)) return;
     SetMoveStateFn(ped, m.moveState);
     SetMoveAnim(ped);
 }
@@ -250,6 +259,86 @@ static void OnPedRemove(uint32_t handle)
     }
 }
 
+// --- Invite : doublons des scripts du jeu ---
+// Les fils du script principal (bus, vendeurs, Ammu-Nation, club...) tournent aussi chez l'invite et y creent leurs
+// propres personnages et vehicules, en plus des copies de ceux de l'hote : tout apparaissait en double. Les siens
+// sont rendus invisibles et intangibles (pas supprimes : son script s'en sert encore) tant qu'une copie de l'hote
+// les remplace : pour un personnage, une copie du meme modele a moins de 4 m ; pour un vehicule, en population
+// partagee (il voit alors ceux de l'hote). Sans copie a cote (l'hote est loin), ils restent visibles.
+enum { MAX_HIDDEN = 96 };
+static void *g_hidden[MAX_HIDDEN];
+
+static void SetHidden(void *e, bool hide)
+{
+    uint8_t &vis = Field<uint8_t>(e, 0x52), &col = Field<uint8_t>(e, 0x51);
+    if (hide) { vis &= ~0x04; col &= ~0x01; } else { vis |= 0x04; col |= 0x01; }
+}
+
+static bool HideSlot(void *e, bool hide)
+{
+    for (auto &h : g_hidden)
+        if (h == e) {
+            if (!hide) { SetHidden(e, false); CleanUpOldReference(e, &h); h = NULL; }
+            return true;
+        }
+    if (!hide) return false;
+    for (auto &h : g_hidden)
+        if (!h) { h = e; RegisterReference(e, &h); SetHidden(e, true); return true; }
+    return false;
+}
+
+static bool GhostOfModelNear(int model, const Vec3 &p, float r)
+{
+    for (auto &g : g_ghosts) {
+        if (!g.used || !g.ped || ModelIndex(g.ped) != model) continue;
+        float dx = Pos(g.ped).x - p.x, dy = Pos(g.ped).y - p.y, dz = Pos(g.ped).z - p.z;
+        if (dx * dx + dy * dy + dz * dz < r * r) return true;
+    }
+    return false;
+}
+
+static void DedupeScriptEntities()
+{
+    static uint32_t last;
+    if (GetTickCount() - last < 500) return;
+    last = GetTickCount();
+    void *me = FindPlayerPed();
+    void *myVeh = InVehicle(me) ? PedVehicle(me) : NULL;
+    bool shared = PopulationShared();
+    int hiddenPeds = 0, hiddenCars = 0;
+    Pool *vp = VehiclePool();
+    for (int i = 0; i < vp->size; i++) {
+        if (vp->flags[i] & 0x80) continue;
+        void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+        if (Field<uint8_t>(v, 0x1F8) != VEHICLE_MISSION || NetVehicleId(v) || v == myVeh) continue;
+        bool hide = shared;
+        bool wasHidden = HideSlot(v, hide);
+        if (!hide && wasHidden) {
+            if (VehDriver(v)) SetHidden(VehDriver(v), false);
+            for (int k = 0; k < 8; k++) if (VehPassenger(v, k)) SetHidden(VehPassenger(v, k), false);
+        }
+        if (hide) {
+            hiddenCars++;
+            if (VehDriver(v)) SetHidden(VehDriver(v), true);
+            for (int k = 0; k < 8; k++) if (VehPassenger(v, k)) SetHidden(VehPassenger(v, k), true);
+        }
+    }
+    Pool *pp = PedPool();
+    for (int i = 0; i < pp->size; i++) {
+        if (pp->flags[i] & 0x80) continue;
+        void *ped = pp->objects + i * PED_POOL_ENTRY;
+        if (ped == me || CharCreatedBy(ped) != PED_CHAR_MISSION || IsGhostPed(ped) || IsPuppet(ped)) continue;
+        if (InVehicle(ped)) continue;   // traite avec son vehicule
+        bool hide = GhostOfModelNear(ModelIndex(ped), Pos(ped), 4.0f);
+        HideSlot(ped, hide);
+        if (hide) hiddenPeds++;
+    }
+    static int lastPeds = -1, lastCars = -1;
+    if ((hiddenPeds != lastPeds || hiddenCars != lastCars) && g_cfg.logScripts)
+        Log("entites : doublons de nos scripts masques : %d personnages, %d vehicules", hiddenPeds, hiddenCars);
+    lastPeds = hiddenPeds; lastCars = hiddenCars;
+}
+
 void EntitiesInit()
 {
     g_onPed = OnPed;
@@ -259,11 +348,13 @@ void EntitiesInit()
 void EntitiesFrame(bool inGame)
 {
     if (!inGame) {
+        for (auto &h : g_hidden) h = NULL;
         for (auto &g : g_ghosts) if (g.used) { g.ped = NULL; g.used = false; }
         g_sentCount = 0;
         return;
     }
     if (g_cfg.host) { HostScan(); return; }
+    DedupeScriptEntities();
     uint32_t now = GetTickCount();
     for (auto &g : g_ghosts) {
         if (!g.used) continue;

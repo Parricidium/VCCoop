@@ -30,7 +30,11 @@ PLAY
 - Shortcuts are still there: "VCCoop - Heberger.cmd" / "VCCoop - Rejoindre.cmd".
 - The host plays the missions as in single player. Guests are placed next to
   the host at the start and the end of every mission.
-- G key: ride as a passenger in another player's vehicle (or get out).
+- F key (enter vehicle) next to another player's vehicle: you take the first
+  free seat (driver or passenger) instead of pulling them out. As a passenger,
+  F gets you out. The G key does the same.
+- Players can hurt each other (punches, bullets, cars): set TirAmi=0 in the
+  host's vccoop.ini to prevent it.
 
 SHARED WORLD
 ------------
@@ -57,3 +61,11 @@ KNOWN LIMITS (test build)
   later gets it too. The host's story progress then reaches the guests
   mission after mission.
 - If something goes wrong, vccoop.log (in the game folder) helps.
+
+OTHER MODS (.asi)
+-----------------
+VCCoop uses dinput8.dll, the same name as the "Ultimate ASI Loader": don't
+install it, VCCoop loads the .asi files from the game folder, scripts\ and
+plugins\ itself (ChargerASI=0 to turn this off). Avoid mods that already do
+what VCCoop does (widescreen, frame limiter) and mods that change missions:
+the host and the guests must have the same ones.

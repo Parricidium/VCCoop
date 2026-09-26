@@ -12,6 +12,7 @@
 #include "population.h"
 #include "conditions.h"
 #include "interp.h"
+#include "anims.h"
 #include <math.h>
 #include <string.h>
 
@@ -32,9 +33,7 @@ struct Puppet {
     uint8_t lastShots;  // dernier compteur de tirs rejoue
     char outfit[21];    // tenue avec laquelle il a ete cree
     Track track;        // etats recus, pour l'interpolation (interp.cpp)
-    int16_t mirrored[6];   // animations d'action que nous lui avons mises (pour les retirer ensuite)
-    int mirroredCount;
-    bool inAction;         // une animation d'action recue occupe tout le corps
+    AnimMirror anims;   // animations d'action recues, posees sur lui
 };
 
 // La tenue de Tommy est le modele 0, propre a chaque instance : le Tommy d'un autre joueur utilise un
@@ -100,7 +99,7 @@ static void CreatePuppet(Puppet &pp, const MsgState &s)
     WorldAdd(ped);
     pp.ped = ped;
     pp.lastMoveState = -1;
-    pp.mirroredCount = 0;
+    pp.anims = {};
     RegisterReference(ped, &pp.ped);
     if (g_cfg.watchPuppetField) WatchAddress((uintptr_t)ped + g_cfg.watchPuppetField);
     Log("coop : Tommy de %s cree (%p, tenue %s) en %.1f %.1f %.1f", s.name, ped, s.outfit, s.pos[0], s.pos[1], s.pos[2]);
@@ -127,67 +126,6 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     return cur != NULL;
 }
 
-// --- Animations d'action (tout sauf marcher, courir, attendre : ids 0 a 6 des groupes de marche) ---
-static bool Locomotion(int id) { return id >= 0 && id <= 6; }
-static void SetAnimTime(void *assoc, float t) { ((void(__thiscall *)(void *, float))0x401700)(assoc, t); }
-
-static void *FindAnim(void *clump, int id)
-{
-    for (void *a = FirstAssoc(clump); a; a = NextAssoc(a)) if (Field<int16_t>(a, 0x2C) == id) return a;
-    return NULL;
-}
-
-// Les 3 animations d'action les plus visibles du joueur local.
-static void CollectAnims(void *ped, AnimSlot *out)
-{
-    for (int i = 0; i < 3; i++) out[i].id = -1;
-    for (void *a = FirstAssoc(Field<void *>(ped, 0x4C)); a; a = NextAssoc(a)) {
-        int id = Field<int16_t>(a, 0x2C);
-        float blend = Field<float>(a, 0x18);
-        if (Locomotion(id) || blend < 0.05f) continue;
-        AnimSlot n = { (int16_t)id, (uint8_t)Field<int16_t>(a, 0xE), (uint8_t)(blend >= 1.0f ? 255 : blend * 255.0f),
-                       Field<float>(a, 0x20) };
-        for (int i = 0; i < 3; i++) {
-            if (out[i].id >= 0 && out[i].blend >= n.blend) continue;
-            AnimSlot t = out[i]; out[i] = n; n = t;
-            if (n.id < 0) break;
-        }
-    }
-}
-
-// Rejoue sur le Tommy distant les animations d'action recues ; vrai si l'une d'elles remplace la marche.
-static bool MirrorAnims(Puppet &pp, const MsgState &s)
-{
-    void *clump = Field<void *>(pp.ped, 0x4C);
-    bool action = false;
-    for (const AnimSlot &a : s.anims) {
-        if (a.id < 0 || Locomotion(a.id) || !AnimAvailable(a.group, a.id)) continue;
-        void *assoc = FindAnim(clump, a.id);
-        if (!assoc) {
-            assoc = BlendAnimation(clump, a.group, a.id, 8.0f);
-            if (!assoc) continue;
-            SetAnimTime(assoc, a.time);
-            bool known = false;
-            for (int i = 0; i < pp.mirroredCount; i++) known |= pp.mirrored[i] == a.id;
-            if (!known && pp.mirroredCount < 6) pp.mirrored[pp.mirroredCount++] = a.id;
-            if (g_cfg.logScripts) Log("coop : Tommy %d, animation %d (groupe %d) a %.2f s", s.id, a.id, a.group, a.time);
-        } else if (fabsf(Field<float>(assoc, 0x20) - a.time) > 0.3f) {
-            SetAnimTime(assoc, a.time);
-        }
-        if (!(Field<uint16_t>(assoc, 0x2E) & 0x10)) action = true;   // pas "partielle" : tout le corps
-    }
-    // Celles qu'il n'a plus : on les efface en douceur.
-    for (int i = 0; i < pp.mirroredCount;) {
-        bool still = false;
-        for (const AnimSlot &a : s.anims) still |= a.id == pp.mirrored[i];
-        if (still) { i++; continue; }
-        void *assoc = FindAnim(clump, pp.mirrored[i]);
-        if (assoc && Field<float>(assoc, 0x1C) >= 0.0f) Field<float>(assoc, 0x1C) = -8.0f;
-        pp.mirrored[i] = pp.mirrored[--pp.mirroredCount];
-    }
-    return action;
-}
-
 static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
 {
     const MsgState &s = np.state;
@@ -196,7 +134,7 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     AreaCode(ped) = s.area;
     HoldWeapon(ped, s.weapon);
     (void)np;
-    if (UpdatePuppetVehicle(pp, s)) { pp.mirroredCount = 0; return; }
+    if (UpdatePuppetVehicle(pp, s)) { pp.anims.count = 0; return; }
     // Position et cap : places apres la physique, par interpolation (PuppetsAfterProcess).
     // En vehicule mais sans copie locale (pas encore creee, ou passager) : cache en attendant.
     uint8_t &flags = Field<uint8_t>(ped, 0x52);
@@ -212,11 +150,10 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     // le jeu ne fait rien : c'est l'etat recu du reseau qui pilote seul l'animation.
     PedState(ped) = 0;
     // Coup de poing, saut, chute... : tant qu'une telle animation est en cours chez lui, on ne relance pas celle de
-    // marche (elle la ferait disparaitre).
-    if (MirrorAnims(pp, s)) { pp.inAction = true; return; }
-    // Fin de l'action : SetMoveAnim ne fait rien si l'etat de deplacement n'a pas change (memorise en +0x250) ; on
-    // l'oblige a remettre l'animation de marche ou d'attente, sinon le Tommy restait fige.
-    if (pp.inAction) { pp.inAction = false; Field<int>(ped, 0x250) = -1; }
+    // marche (elle la ferait disparaitre). Les reactions que notre jeu lui donne (nos coups) sont effacees : on voit
+    // celles qu'il vit chez lui.
+    ClearLocalReactions(ped, pp.anims);
+    if (ApplyActionAnims(ped, s.anims, 3, pp.anims)) return;
     int before = MoveState(ped);
     SetMoveStateFn(ped, s.moveState);
     SetMoveAnim(ped);
@@ -331,7 +268,7 @@ static void SendLocalState(bool inGame)
         s.aiming = IsAimingGun(ped) ? 1 : 0;
         s.inVehicle = InVehicle(ped) ? 1 : 0;
         s.shared = PopulationShared() ? 1 : 0;
-        if (!s.inVehicle && !s.aiming) CollectAnims(ped, s.anims);
+        if (!s.inVehicle && !s.aiming) CollectAnimSlots(ped, s.anims, 3);
         if (s.inVehicle && PedVehicle(ped)) {
             s.vehicleId = NetVehicleId(PedVehicle(ped));
             int seat = SeatOf(PedVehicle(ped), ped);
@@ -351,7 +288,7 @@ static void SendWorld()
     last = now;
     MsgWorld w = { MSG_WORLD, ClockHours(), ClockMinutes(), (uint8_t)(ClockSeconds() & 0xFF),
                    OldWeather(), NewWeather(), ForcedWeather(), PedHandle(FindPlayerPed()),
-                   CamFade(), (uint8_t)CamFading(), (uint8_t)CamWidescreen() };
+                   CamFade(), (uint8_t)CamFading(), (uint8_t)CamWidescreen(), (uint8_t)g_cfg.friendlyFire };
     NetSendToGuests(&w, sizeof(w));
 }
 
@@ -359,6 +296,7 @@ static void OnWorld(const MsgWorld &w)
 {
     if (GameState() != GS_PLAYING) return;
     g_hostPlayerHandle = w.playerHandle;
+    g_cfg.friendlyFire = w.friendlyFire != 0;   // c'est le reglage de l'hote qui compte
     // L'heure n'est recalee que si elle derive de plus d'une minute (sinon les deux horloges avancent seules).
     int local = ClockHours() * 60 + ClockMinutes(), remote = w.hours * 60 + w.minutes;
     int diff = remote - local;
@@ -422,16 +360,25 @@ static bool OtherPlayersConnected()
     return false;
 }
 
-// Touche G : monter comme passager dans le vehicule d'un autre joueur (a moins de 6 m), ou en descendre.
-// VC ne permet pas de monter en passager ; on installe directement le joueur a une place libre.
-void TogglePassenger()
+// Un autre joueur est-il a bord (au volant ou passager) ?
+static bool PlayerAboard(void *v)
+{
+    if (VehDriver(v) && IsPuppet(VehDriver(v))) return true;
+    for (int i = 0; i < 8; i++) if (VehPassenger(v, i) && IsPuppet(VehPassenger(v, i))) return true;
+    return false;
+}
+
+// Touche F (ou G) : pres d'un vehicule ou se trouve un autre joueur (a moins de 6 m), on s'installe a la premiere
+// place libre (le volant s'il est libre, sinon passager) au lieu de le lui voler ; passager, on en descend.
+// VC ne sait pas faire monter le joueur en passager : on l'installe directement. Vrai si on a fait quelque chose.
+bool TogglePassenger()
 {
     void *me = FindPlayerPed();
-    if (!me) return;
+    if (!me) return false;
     if (InVehicle(me)) {
         void *veh = PedVehicle(me);
-        if (veh && SeatOf(veh, me) > 0) { WarpOutOfVehicle(me, NULL); Log("coop : je descends (passager)"); }
-        return;
+        if (veh && SeatOf(veh, me) > 0) { WarpOutOfVehicle(me, NULL); Log("coop : je descends (passager)"); return true; }
+        return false;
     }
     Pool *pool = VehiclePool();
     void *best = NULL;
@@ -439,12 +386,64 @@ void TogglePassenger()
     for (int i = 0; i < pool->size; i++) {
         if (pool->flags[i] & 0x80) continue;
         void *v = pool->objects + i * VEHICLE_POOL_ENTRY;
-        if (!VehDriver(v) || !IsPuppet(VehDriver(v))) continue;
+        if (!PlayerAboard(v) || EntityStatus(v) == STATUS_WRECKED) continue;
         float dx = Pos(v).x - Pos(me).x, dy = Pos(v).y - Pos(me).y, dz = Pos(v).z - Pos(me).z;
         float d = dx * dx + dy * dy + dz * dz;
         if (d < bestD) { bestD = d; best = v; }
     }
-    if (best && WarpIntoSeat(me, best, 1)) Log("coop : je monte en passager (place %d)", SeatOf(best, me));
+    if (!best) return false;
+    int seat = VehDriver(best) ? 1 : 0;
+    if (WarpIntoSeat(me, best, seat)) Log("coop : je monte a bord (place %d)", SeatOf(best, me));
+    else Log("coop : plus de place dans ce vehicule");
+    return true;   // meme plein : on ne le vole pas a l'autre joueur
+}
+
+// CPad::ExitVehicleJustDown (0x4AA870) et GetExitVehicle (0x4AA8F0), appeles par CPlayerInfo::Process pour monter
+// ou descendre : si la touche sert a monter a bord du vehicule d'un autre joueur, le jeu ne la voit pas (sinon il
+// tirait le conducteur dehors ou nous asseyait dans la copie, et les deux parties se desynchronisaient).
+typedef bool(__fastcall *PadBool_t)(void *pad, void *edx);
+static PadBool_t o_ExitJustDown, o_GetExit;
+static uint32_t g_enterHandledFrame = 0xFFFFFFFF;
+
+static bool EnterExitHandled(void *pad, bool pressed, bool justDown)
+{
+    if (!pressed || pad != (void *)0x7DBCB0 || GameState() != GS_PLAYING || !FindPlayerPed() || !OtherPlayersConnected()) return false;
+    uint32_t f = FrameCounter();
+    if (f - g_enterHandledFrame < 15) return true;   // la meme pression, encore vue les images suivantes
+    if (!justDown) {
+        // Touche maintenue. Passager : le jeu n'a rien prevu (il n'appellera pas ExitVehicleJustDown), on descend
+        // nous-memes a l'appui. A pied : on laisse le jeu demander ExitVehicleJustDown.
+        static uint32_t lastHeld = 0xFFFFFFF0;
+        bool rising = f != lastHeld && f - lastHeld > 1;
+        if (f != lastHeld) lastHeld = f;
+        void *me = FindPlayerPed();
+        if (!InVehicle(me) || !PedVehicle(me) || SeatOf(PedVehicle(me), me) <= 0) return false;
+        if (rising && TogglePassenger()) g_enterHandledFrame = f;
+        return true;
+    }
+    if (!TogglePassenger()) return false;
+    g_enterHandledFrame = f;
+    return true;
+}
+
+static bool __fastcall h_ExitJustDown(void *pad, void *edx)
+{
+    bool r = o_ExitJustDown(pad, edx);
+    return EnterExitHandled(pad, r, true) ? false : r;
+}
+
+static bool __fastcall h_GetExit(void *pad, void *edx)
+{
+    bool r = o_GetExit(pad, edx);
+    return EnterExitHandled(pad, r, false) ? false : r;
+}
+
+void InstallEnterHooks()
+{
+    static const uint8_t justDown[] = { 0x53, 0x89, 0xCB, 0x66, 0x83, 0xBB, 0xF0, 0x00, 0x00, 0x00, 0x00 };
+    static const uint8_t held[] = { 0x66, 0x83, 0xB9, 0xF0, 0x00, 0x00, 0x00, 0x00 };
+    o_ExitJustDown = (PadBool_t)MakeDetour(0x4AA870, justDown, sizeof(justDown), (void *)h_ExitJustDown);
+    o_GetExit = (PadBool_t)MakeDetour(0x4AA8F0, held, sizeof(held), (void *)h_GetExit);
 }
 
 static void PassengerKey()
