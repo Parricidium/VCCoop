@@ -27,13 +27,15 @@ struct Config {
     bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
     float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;
+    bool sharedMods;    // ModsPartages=1 : VCCoop\mods\ charge par le jeu et distribue aux invites (mods.cpp)
     bool keepWeapons;   // GarderArmes=1 : un invite mort ou arrete garde armes et argent
     bool respawnAtHost; // ReapparitionHote=1 : il reapparait pres de l'hote (0 par defaut : a l'hopital)     // AfficherPseudos=1 : pseudo au-dessus de la tete des autres joueurs
     char skin[24];      // Tenue=... : tenue choisie avec F7 (vide : celle du jeu)
     int logOpcodes;
     char traceScript[9];
     int watchPuppetField;   // diagnostic : surveille ce champ du Tommy distant (SurveilleTommy=0x24C)   // diagnostic : trace d'un script nomme    // diagnostic : chaque opcode des scripts de mission
-    char autotest[16];  // instances de test : "passer" / "marche" (pilote la manette 0)    // diagnostic : scripts actifs dans le journal     // instances de test : nouvelle partie directement
+    char autotest[16];
+    int testModel;      // test : modele de la voiture de l'autotest "porte" (TestModele)  // instances de test : "passer" / "marche" (pilote la manette 0)    // diagnostic : scripts actifs dans le journal     // instances de test : nouvelle partie directement
 };
 extern Config g_cfg;
 
@@ -68,6 +70,12 @@ void UpdateHudScale();
 bool MenuSqueezeActive();
 float MenuSqueezeFactor();
 void SuspendMenuSqueeze(bool on);
+
+// mods.cpp : mods partages (modeles remplaces, conduite, couleurs) et leur distribution
+void InstallMods();
+void ModsFrame();
+bool ModsReady();      // invite : mods de l'hote telecharges (ou pas de serveur) ; hote : toujours
+int ModsPercent();
 
 // interface.cpp : texte des menus (blanc a contour, taille) et images de VCCoop\interface
 void InstallInterface();

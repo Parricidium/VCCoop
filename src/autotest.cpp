@@ -271,7 +271,7 @@ void AutotestFrame()
         static int lastState = -1;
         uint32_t t = frame - controlSince;
         void *me = FindPlayerPed();
-        enum { MI_LANDSTAL = 130 };
+        int MI_LANDSTAL = g_cfg.testModel ? g_cfg.testModel : 130;
         if (!car && t > 60 && t < 70) {
             if (!HasModelLoaded(MI_LANDSTAL)) { RequestModel(MI_LANDSTAL, 1); return; }
             void *v = VehicleAlloc();

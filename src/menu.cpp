@@ -145,6 +145,8 @@ static const wchar_t *CoopText(const char *key)
             const char *name = self ? g_cfg.playerName : g_players[i].state.name;
             bool inGame = self ? GameState() == GS_PLAYING : g_players[i].state.inGame != 0;
             wsprintfA(buf, "%s%s - %s", name, i == 0 ? (fr ? " (hote)" : " (host)") : "", inGame ? (fr ? "en jeu" : "in game") : (fr ? "au menu" : "in menu"));
+            int pct = self ? ModsPercent() : g_players[i].state.modsPct;
+            if (i != 0 && pct < 100) wsprintfA(buf + strlen(buf), fr ? " (mods %d%%)" : " (mods %d%%)", pct);
             return Put(11 + want, buf);
         }
         return Put(11 + want, "-");
@@ -155,6 +157,7 @@ static const wchar_t *CoopText(const char *key)
         if (g_localId <= 0 && g_joining) wsprintfA(buf, fr ? "Connexion a %s..." : "Connecting to %s...", g_cfg.address);
         else if (g_localId <= 0) wsprintfA(buf, fr ? "Pas de reponse de %s" : "No answer from %s", g_cfg.address);
         else if (GuestWaitingForSave()) wsprintfA(buf, fr ? "Chargement de la partie de l'hote..." : "Loading the host's game...");
+        else if (!ModsReady()) wsprintfA(buf, fr ? "Mods de l'hote : %d%%" : "Host's mods: %d%%", ModsPercent());
         else if (g_players[0].state.inGame) wsprintfA(buf, fr ? "L'hote est en jeu : on y va" : "The host is in game: joining");
         else wsprintfA(buf, fr ? "En attente de l'hote..." : "Waiting for the host...");
         return Put(17, buf);
@@ -201,8 +204,14 @@ static void OnCoopAction(int action)
     case ACT_CREATE:   // l'hote ouvre son salon (le contenu de l'ecran change au prochain passage)
         if (!g_netStarted) { g_cfg.host = true; CoopStartNetwork(); Log("menu : partie coop creee (salon)"); }
         break;
-    case ACT_NEWGAME: SwitchToNewScreen(PAGE_NEW_GAME); break;    // "Commencer une nouvelle partie ?" du jeu
-    case ACT_LOADGAME: SwitchToNewScreen(PAGE_LOAD_GAME); break;  // liste des sauvegardes : elle partira aux invites
+    case ACT_NEWGAME: case ACT_LOADGAME: {
+        // Un invite telecharge encore les mods : on attend (sinon il jouerait avec d'autres modeles que nous).
+        bool waiting = false;
+        for (int i = 1; i < MAX_PLAYERS; i++) if (g_players[i].connected && g_players[i].state.modsPct < 100) waiting = true;
+        if (waiting) { if (g_onNotice) g_onNotice("un invite telecharge encore les mods", "a guest is still downloading the mods", 0); break; }
+        SwitchToNewScreen(action == ACT_NEWGAME ? PAGE_NEW_GAME : PAGE_LOAD_GAME);   // "Commencer une nouvelle partie ?" / liste des sauvegardes
+        break;
+    }
     case ACT_DRAWDIST: {
         static const int steps[] = { 100, 150, 200, 300, 400 };
         int i = 0;
@@ -305,7 +314,7 @@ void MenuFrame()
     if (!g_cfg.host && g_netStarted && GameState() == GS_FRONTEND && g_localId > 0 && !g_cfg.autoStart) {
         static uint32_t hostInGameSince;
         g_joining = false;
-        if (!g_players[0].state.inGame || GuestWaitingForSave()) hostInGameSince = 0;
+        if (!g_players[0].state.inGame || GuestWaitingForSave() || !ModsReady()) hostInGameSince = 0;
         else if (!hostInGameSince) hostInGameSince = GetTickCount();
         else if (GetTickCount() - hostInGameSince > 2500 && CurrentPage() != PAGE_NEW_GAME && !autoYes) {
             autoYes = true;

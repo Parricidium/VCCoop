@@ -76,6 +76,12 @@ in your screen's real aspect ratio (16:9, 21:9, 32:9): a wider view with no
 stretching, and the HUD keeps its proportions. Settings in vccoop.ini
 (Fenetre, GrandEcran). Menus keep their proportions, centred.
 
+SHARED MODS
+-----------
+Car, weapon and building models (dff/txd) plus handling/carcols lines dropped
+in VCCoop\mods replace the game's and are sent automatically to the guests by
+the host (see VCCoop\mods\LISEZMOI.txt, French). ModsPartages=0 to disable.
+
 CUSTOM INTERFACE
 ----------------
 Menu text is near-black (1b1b1b) with a pink outline, smaller and sharper (StyleMenus,
