@@ -618,6 +618,7 @@ void CoopFrame()
         netStarted = true; g_onWorld = OnWorld; g_onState = OnState; VehiclesInit(); EntitiesInit(); MirrorInit();
         if (g_cfg.netAuto) CoopStartNetwork();
     }
+    InterfaceFrame();
 
     // Instances de test : lance directement une nouvelle partie depuis le menu.
     if (g_cfg.autoStart && !autoStarted && GameState() == GS_FRONTEND) {

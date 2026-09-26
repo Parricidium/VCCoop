@@ -9,14 +9,15 @@ $stage = "$PSScriptRoot\out\VCCoop-$Version"
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item "$root\build\dinput8.dll" $stage
-Copy-Item "$PSScriptRoot\files\*" $stage
+Copy-Item "$PSScriptRoot\files\*" $stage -Recurse
 
 $zip = "$PSScriptRoot\out\VCCoop-$Version.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
 $z = [System.IO.Compression.ZipFile]::Open($zip, 'Create')
-foreach ($f in Get-ChildItem $stage -File) {
-    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $f.FullName, $f.Name) | Out-Null
+foreach ($f in Get-ChildItem $stage -File -Recurse) {
+    $rel = $f.FullName.Substring($stage.Length + 1).Replace('\', '/')
+    [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $f.FullName, $rel) | Out-Null
 }
 $z.Dispose()
 "Ecrit : $zip ($([math]::Round((Get-Item $zip).Length / 1KB)) Ko)"

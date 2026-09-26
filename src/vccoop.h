@@ -67,6 +67,11 @@ void InstallDisplay();
 void UpdateHudScale();
 bool MenuSqueezeActive();
 float MenuSqueezeFactor();
+void SuspendMenuSqueeze(bool on);
+
+// interface.cpp : texte des menus (blanc a contour, taille) et images de VCCoop\interface
+void InstallInterface();
+void InterfaceFrame();   // libere l'image de chargement une fois en jeu
 
 // population.cpp
 void InstallPopulation();
