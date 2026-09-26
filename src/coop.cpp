@@ -13,6 +13,7 @@
 #include "conditions.h"
 #include "interp.h"
 #include "anims.h"
+#include "players.h"
 #include <math.h>
 #include <string.h>
 
@@ -34,18 +35,26 @@ struct Puppet {
     char outfit[21];    // tenue avec laquelle il a ete cree
     Track track;        // etats recus, pour l'interpolation (interp.cpp)
     AnimMirror anims;   // animations d'action recues, posees sur lui
+    int blip;           // son point de couleur sur le radar (-1 : aucun)
 };
 
 // La tenue de Tommy est le modele 0, propre a chaque instance : le Tommy d'un autre joueur utilise un
 // emplacement de personnage special reserve (special18..21 = modeles 126..129 pour les joueurs 0..3),
 // charge avec la tenue de ce joueur.
+// Une tenue de passant (choisie avec F7) est un modele normal : on l'utilise tel quel (le charger dans un emplacement
+// special plante, cf. players.cpp). Renvoie le modele a utiliser, -1 tant qu'il charge.
 enum { MI_PUPPET_BASE = 126 };
-static bool EnsurePuppetModel(int player, const char *outfit)
+static int EnsurePuppetModel(int player, const char *outfit)
 {
+    int regular = RegularPedModel(outfit);
+    if (regular > 0) {
+        if (!HasModelLoaded(regular)) { RequestModel(regular, 1 | 8); return -1; }
+        return regular;
+    }
     int model = MI_PUPPET_BASE + player;
     const char *want = outfit[0] ? outfit : "player";
-    if (_stricmp(ModelName(model), want) != 0) { RequestSpecialModel(model, want, 1 | 8); return false; }
-    return HasModelLoaded(model);
+    if (_stricmp(ModelName(model), want) != 0) { RequestSpecialModel(model, want, 1 | 8); return -1; }
+    return HasModelLoaded(model) ? model : -1;
 }
 static Puppet g_puppets[MAX_PLAYERS];
 
@@ -73,6 +82,7 @@ static void DestroyPuppet(Puppet &pp)
 {
     if (!pp.ped) return;
     void *ped = pp.ped;
+    RemovePlayerBlip(pp.blip);
     CleanUpOldReference(ped, &pp.ped);
     if (InVehicle(ped)) WarpOutOfVehicle(ped, NULL);
     WorldRemove(ped);
@@ -83,10 +93,11 @@ static void DestroyPuppet(Puppet &pp)
 
 static void CreatePuppet(Puppet &pp, const MsgState &s)
 {
-    if (!EnsurePuppetModel(s.id, s.outfit)) return;   // on reessaiera a l'image suivante
+    int model = EnsurePuppetModel(s.id, s.outfit);
+    if (model < 0) return;   // on reessaiera a l'image suivante
     void *ped = PedAlloc();
     if (!ped) { Log("coop : plus de place pour un personnage"); return; }
-    CivilianPedCtor(ped, PEDTYPE_CIVMALE, MI_PUPPET_BASE + s.id);
+    CivilianPedCtor(ped, PEDTYPE_CIVMALE, model);
     lstrcpynA(pp.outfit, s.outfit, sizeof(pp.outfit));
     pp.lastShots = s.shots;
     CharCreatedBy(ped) = PED_CHAR_MISSION;         // jamais retire par la population
@@ -100,6 +111,7 @@ static void CreatePuppet(Puppet &pp, const MsgState &s)
     pp.ped = ped;
     pp.lastMoveState = -1;
     pp.anims = {};
+    pp.blip = AddPlayerBlip(ped, s.id);
     RegisterReference(ped, &pp.ped);
     if (g_cfg.watchPuppetField) WatchAddress((uintptr_t)ped + g_cfg.watchPuppetField);
     Log("coop : Tommy de %s cree (%p, tenue %s) en %.1f %.1f %.1f", s.name, ped, s.outfit, s.pos[0], s.pos[1], s.pos[2]);
@@ -209,13 +221,18 @@ static void UpdatePuppets(bool inGame)
         Puppet &pp = g_puppets[i];
         const NetPlayer &np = g_players[i];
         bool want = inGame && i != g_localId && np.connected && np.state.inGame;
-        if (!want) { if (pp.ped && inGame) DestroyPuppet(pp); if (!inGame) pp.ped = NULL; if (!np.connected) pp.track.Clear(); continue; }
+        if (!want) {
+            if (pp.ped && inGame) DestroyPuppet(pp);
+            if (!inGame) { pp.ped = NULL; pp.blip = -1; }   // le monde (et les marqueurs) ont ete detruits
+            if (!np.connected) pp.track.Clear();
+            continue;
+        }
         // Changement de tenue : on le recree avec la nouvelle.
         if (pp.ped && _stricmp(pp.outfit, np.state.outfit) != 0 && !InVehicle(pp.ped)) {
             Log("coop : %s change de tenue (%s -> %s)", np.state.name, pp.outfit, np.state.outfit);
             DestroyPuppet(pp);
         }
-        if (!pp.ped) CreatePuppet(pp, np.state);
+        if (!pp.ped) { RemovePlayerBlip(pp.blip); CreatePuppet(pp, np.state); }   // detruit par le jeu : son point aussi
         if (pp.ped) UpdatePuppet(pp, np);
     }
 }
@@ -249,8 +266,8 @@ static void SendLocalState(bool inGame)
     s.time = now;
     for (AnimSlot &a : s.anims) a.id = -1;
     lstrcpynA(s.name, g_cfg.playerName, sizeof(s.name));
-    lstrcpynA(s.outfit, ModelName(MI_PLAYER), sizeof(s.outfit));
     void *ped = inGame ? FindPlayerPed() : NULL;
+    lstrcpynA(s.outfit, ped ? PedOutfit(ped) : ModelName(MI_PLAYER), sizeof(s.outfit));
     if (ped) {
         s.inGame = 1;
         Vec3 p = Pos(ped), v = MoveSpeed(ped);
@@ -494,6 +511,7 @@ void CoopFrame()
     PopulationFrame(inGame);
     ConditionsFrame(inGame);
     if (inGame) PassengerKey();
+    PlayersFrame(inGame);
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
     MirrorFrame(inGame);

@@ -33,6 +33,12 @@ PLAY
 - F key (enter vehicle) next to another player's vehicle: you take the first
   free seat (driver or passenger) instead of pulling them out. As a passenger,
   F gets you out. The G key does the same.
+- Each player has a colour (blue = host, orange, green, purple): a dot on the
+  radar and map, and their name above their head (AfficherPseudos=0 in
+  vccoop.ini to hide names).
+- F7: choose your outfit (Tommy's, story characters, any pedestrian).
+  Left / Right to browse, Enter to keep, Backspace to cancel. It is kept for
+  the next sessions; missions that dress Tommy replace it, as in single player.
 - Players can hurt each other (punches, bullets, cars): set TirAmi=0 in the
   host's vccoop.ini to prevent it.
 
