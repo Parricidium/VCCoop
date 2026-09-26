@@ -150,9 +150,12 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         Vec3 ws = want ? MoveSpeed(want) : Vec3{ 0, 0, 0 };
         bool driving = want && (ws.x * ws.x + ws.y * ws.y > 0.01f);
         if (cur) { pp.entering = false; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
-        else if (now - pp.busySince > 6000 || !PedVehicle(ped) || driving) {
+        // Chez lui c'est fini depuis 2 s et notre double n'y est toujours pas : on le pose.
+        else if (now - pp.busySince > 6000 || !PedVehicle(ped) || driving || (s.inVehicle && now - pp.busySince > 3500)) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
+            Vec3 at = Pos(ped);
+            WarpOutOfVehicle(ped, &at);   // remet l'etat et les animations d'aplomb avant de le poser dans la voiture
             Log("coop : Tommy %d : montee animee abandonnee (%s)", s.id, driving ? "la voiture roule deja" : "trop long");
         }
         else return true;
@@ -170,14 +173,18 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     }
     if (!cur && !s.inVehicle && s.enterId) {
         void *veh = NetVehicleById(s.enterId);
-        if (veh) {
+        // Passager : l'IA du jeu refuse de faire monter un personnage en passager d'une voiture conduite par un
+        // joueur (essaye dans les deux sens) : il sera pose a sa place quand il sera assis chez lui.
+        bool passenger = s.enterSeat != 0;
+        if (veh && !passenger) {
             EvictNpcDriver(veh, s);
-            if (!VehDriver(veh)) {
+            bool ok = !VehDriver(veh);
+            if (ok) {
                 int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(veh) };
-                MirrorLocal(0x01D5, 2, a);
+                MirrorLocal(passenger ? 0x01D4 : 0x01D5, 2, a);
                 pp.entering = true;
                 pp.busySince = now;
-                Log("coop : Tommy %d monte dans %08X (animation)", s.id, s.enterId);
+                Log("coop : Tommy %d monte dans %08X (animation, %s)", s.id, s.enterId, passenger ? "passager" : "au volant");
                 return true;
             }
         }
@@ -348,6 +355,10 @@ static void FollowHostFade(bool inGame)
     DrawFadeValue() = (uint8_t)(f + 0.5f);
 }
 
+static void *g_boarding, *g_leaving;
+static uint32_t g_boardingSince, g_leavingSince;
+static int g_boardingSeat;
+
 static void SendLocalState(bool inGame)
 {
     static uint32_t seq, lastSend;
@@ -383,7 +394,10 @@ static void SendLocalState(bool inGame)
         s.shots = LocalShotCount();
         // Montee / descente en cours (animation du jeu) : les autres la jouent sur notre double.
         int st = PedState(ped);
-        if (!InVehicle(ped) && PedVehicle(ped) && EnteringState(st)) s.enterId = NetVehicleId(PedVehicle(ped));
+        if (!InVehicle(ped) && PedVehicle(ped) && EnteringState(st)) {
+            s.enterId = NetVehicleId(PedVehicle(ped));
+            s.enterSeat = (g_boarding == PedVehicle(ped) && g_boardingSeat) || (VehDriver(PedVehicle(ped)) && VehDriver(PedVehicle(ped)) != ped) ? 1 : 0;
+        }
         s.exiting = InVehicle(ped) && ExitingState(st);
         s.aiming = IsAimingGun(ped) ? 1 : 0;
         s.inVehicle = InVehicle(ped) ? 1 : 0;
@@ -597,13 +611,51 @@ static bool PlayerAboard(void *v)
 // Touche F (ou G) : pres d'un vehicule ou se trouve un autre joueur (a moins de 6 m), on s'installe a la premiere
 // place libre (le volant s'il est libre, sinon passager) au lieu de le lui voler ; passager, on en descend.
 // VC ne sait pas faire monter le joueur en passager : on l'installe directement. Vrai si on a fait quelque chose.
+// Montee / descente en passager avec l'animation du jeu : on donne a notre propre Tommy l'objectif des scripts
+// (SET_CHAR_OBJ_ENTER_CAR_AS_PASSENGER 01D4 / LEAVE_CAR 01D3). S'il ne bouge pas (le joueur ne suit pas toujours les
+// objectifs) ou que ca traine, on le pose directement comme avant.
+
+static void BoardingFrame()
+{
+    void *me = FindPlayerPed();
+    uint32_t now = GetTickCount();
+    if (g_boarding && me) {
+        bool in = InVehicle(me) && PedVehicle(me) == g_boarding;
+        bool moving = EnteringState(PedState(me));
+        if (in) { Log("coop : a bord (animation, %u ms)", now - g_boardingSince); g_boarding = NULL; }
+        else if (now - g_boardingSince > 4000 || (now - g_boardingSince > 700 && !moving)) {
+            ((void(__thiscall *)(void *))0x521720)(me);   // CPed::ClearObjective
+            if (WarpIntoSeat(me, g_boarding, g_boardingSeat)) Log("coop : je monte a bord (pose directement, place %d)", SeatOf(g_boarding, me));
+            else Log("coop : plus de place dans ce vehicule");
+            g_boarding = NULL;
+        }
+    }
+    if (g_leaving && me) {
+        if (!InVehicle(me)) { Log("coop : descendu (animation, %u ms)", now - g_leavingSince); g_leaving = NULL; }
+        else if (now - g_leavingSince > 3000 || (now - g_leavingSince > 700 && !ExitingState(PedState(me)))) {
+            ((void(__thiscall *)(void *))0x521720)(me);
+            WarpOutOfVehicle(me, NULL);
+            Log("coop : je descends (pose directement)");
+            g_leaving = NULL;
+        }
+    }
+}
+
 bool TogglePassenger()
 {
     void *me = FindPlayerPed();
     if (!me) return false;
+    if (g_boarding || g_leaving) return true;   // deja en cours
     if (InVehicle(me)) {
         void *veh = PedVehicle(me);
-        if (veh && SeatOf(veh, me) > 0) { WarpOutOfVehicle(me, NULL); Log("coop : je descends (passager)"); return true; }
+        if (veh && SeatOf(veh, me) > 0) {
+            int32_t a[2] = { (int32_t)PedHandle(me), (int32_t)VehicleHandle(veh) };
+            MirrorLocal(0x01D3, 2, a);
+            g_leaving = veh;
+            g_leavingSince = GetTickCount();
+            Log("coop : je descends (passager, animation)");
+            return true;
+        }
         return false;
     }
     Pool *pool = VehiclePool();
@@ -619,8 +671,14 @@ bool TogglePassenger()
     }
     if (!best) return false;
     int seat = VehDriver(best) ? 1 : 0;
-    if (WarpIntoSeat(me, best, seat)) Log("coop : je monte a bord (place %d)", SeatOf(best, me));
-    else Log("coop : plus de place dans ce vehicule");
+    if (seat && Field<uint8_t>(best, 0x1CC) >= Field<uint8_t>(best, 0x1D0)) { Log("coop : plus de place dans ce vehicule"); return true; }
+    int32_t a[2] = { (int32_t)PedHandle(me), (int32_t)VehicleHandle(best) };
+    MirrorLocal(seat ? 0x01D4 : 0x01D5, 2, a);
+    g_boarding = best;
+    RegisterReference(best, &g_boarding);
+    g_boardingSince = GetTickCount();
+    g_boardingSeat = seat;
+    Log("coop : je monte a bord (animation, place %d)", seat);
     return true;   // meme plein : on ne le vole pas a l'autre joueur
 }
 
@@ -720,7 +778,7 @@ void CoopFrame()
     GatherToHost(inGame);
     PopulationFrame(inGame);
     ConditionsFrame(inGame);
-    if (inGame) PassengerKey();
+    if (inGame) { PassengerKey(); BoardingFrame(); }
     PlayersFrame(inGame);
     ShareWanted(inGame);
     if (inGame) KeepAIOffPlayerCars();
