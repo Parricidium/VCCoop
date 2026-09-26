@@ -28,6 +28,47 @@ bool g_testAim;
 
 bool FreeAimActive() { return g_aim; }
 
+// --- Souris a la source (DirectInput) ---
+// Le clic droit sert au jeu a freiner en voiture. En vehicule avec la camera libre, il sert a viser : on garde son
+// etat pour nous (g_realRmb) et on le cache au jeu. IDirectInput8A::CreateDevice (vtable 3) -> pour la souris,
+// IDirectInputDevice8A::GetDeviceState (vtable 9) ; DIMOUSESTATE(2) : boutons en +12.
+static bool g_realRmb;
+typedef HRESULT(__stdcall *GetState_t)(void *dev, DWORD size, void *data);
+typedef HRESULT(__stdcall *CreateDevice_t)(void *di, const GUID &guid, void **dev, void *outer);
+static GetState_t o_GetState;
+static CreateDevice_t o_CreateDevice;
+
+static HRESULT __stdcall h_GetState(void *dev, DWORD size, void *data)
+{
+    HRESULT hr = o_GetState(dev, size, data);
+    if (SUCCEEDED(hr) && data && (size == 16 || size == 20)) {
+        uint8_t &rmb = ((uint8_t *)data)[13];
+        g_realRmb = (rmb & 0x80) != 0;
+        void *me = GameState() == GS_PLAYING ? FindPlayerPed() : NULL;
+        if (g_cfg.freeCam && me && InVehicle(me)) rmb = 0;
+    }
+    return hr;
+}
+
+static HRESULT __stdcall h_CreateDevice(void *di, const GUID &guid, void **dev, void *outer)
+{
+    HRESULT hr = o_CreateDevice(di, guid, dev, outer);
+    static const GUID sysMouse = { 0x6F1D2B60, 0xD5A0, 0x11CF, { 0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };
+    if (SUCCEEDED(hr) && dev && *dev && !memcmp(&guid, &sysMouse, sizeof(GUID)) && !o_GetState) {
+        void **vt = *(void ***)*dev;
+        o_GetState = (GetState_t)PatchPointer(&vt[9], (void *)h_GetState);
+        Log("souris : lue a la source (DirectInput)");
+    }
+    return hr;
+}
+
+void HookDirectInput(void *di)
+{
+    if (o_CreateDevice || !di) return;
+    void **vt = *(void ***)di;
+    o_CreateDevice = (CreateDevice_t)PatchPointer(&vt[3], (void *)h_CreateDevice);
+}
+
 static bool DriveByWeapon(void *ped)
 {
     int type = WeaponTypeInSlot(ped, CurrentWeaponSlot(ped));
@@ -66,7 +107,7 @@ static void __fastcall h_CamProcess(void *cam, void *edx)
         if (g_pitch < -0.25f) g_pitch = -0.25f;
         if (g_pitch > 1.2f) g_pitch = 1.2f;
     }
-    g_aim = (Mouse()[1] || g_testAim) && DriveByWeapon(me);
+    g_aim = (g_realRmb || Mouse()[1] || g_testAim) && DriveByWeapon(me);
     if (g_aim) { g_orbit = true; g_lastMove = now; }
     if (!g_orbit) return;
     if (now - g_lastMove > 2500) {   // plus de souris : retour en douceur derriere le vehicule

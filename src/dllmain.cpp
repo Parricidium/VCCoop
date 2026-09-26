@@ -20,7 +20,9 @@ extern "C" HRESULT WINAPI Proxy_DirectInput8Create(HINSTANCE inst, DWORD ver, co
         lstrcatA(path, "\\dinput8.dll");
         real = (DirectInput8Create_t)GetProcAddress(LoadLibraryA(path), "DirectInput8Create");
     }
-    return real ? real(inst, ver, riid, out, outer) : E_FAIL;
+    HRESULT hr = real ? real(inst, ver, riid, out, outer) : E_FAIL;
+    if (SUCCEEDED(hr) && out && *out) HookDirectInput(*out);   // camera.cpp : clic droit de la souris
+    return hr;
 }
 
 static void LoadConfig()
