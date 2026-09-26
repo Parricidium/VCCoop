@@ -779,6 +779,7 @@ void CoopFrame()
     PopulationFrame(inGame);
     ConditionsFrame(inGame);
     if (inGame) { PassengerKey(); BoardingFrame(); }
+    MouseFocusFrame();
     PlayersFrame(inGame);
     ShareWanted(inGame);
     if (inGame) KeepAIOffPlayerCars();
