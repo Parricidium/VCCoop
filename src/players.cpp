@@ -7,6 +7,7 @@
 #include "entities.h"
 #include "mirror.h"
 #include "players.h"
+#include "camera.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -520,7 +521,8 @@ static void DrawSkinMenu()
 
 static void __cdecl h_Render2dStuff()
 {
-    if (GameState() == GS_PLAYING && FindPlayerPed()) { DrawNametags(); DrawSkinMenu(); DrawNotice(); DrawPlayerList(); }
+    if (GameState() == GS_PLAYING && FindPlayerPed()) { DrawNametags(); DrawSkinMenu(); DrawNotice(); DrawPlayerList();
+        if (FreeAimActive()) { FontSetup(1.0f); FontColor(0xFFFFFFE0); FontPrint(ScreenW() * 0.5f, ScreenH() * 0.5f - ScreenH() * 0.03f, L"+"); } }
     ((void(__cdecl *)())0x4A6190)();
 }
 

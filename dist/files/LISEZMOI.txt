@@ -46,6 +46,11 @@ JOUER
   sa couleur) ; B a nouveau pour le retirer.
 - Passager : regarder a gauche / a droite et tirer, comme le conducteur
   (pistolets, mitraillettes).
+- En vehicule, la souris fait tourner la camera autour (elle revient derriere
+  au bout de 2,5 s). Clic droit avec un pistolet ou une mitraillette : visee
+  au centre de l'ecran, clic gauche pour tirer, conducteur comme passager.
+  La souris ne dirige plus la voiture. CameraLibre=0 pour la camera d'origine,
+  SensibiliteCamera=100 (en %).
 - La radio est celle du conducteur (station choisie ou eteinte).
 - Missions secondaires (taxi, ambulance, pompiers, vigilante, pizzas) : un
   invite peut les jouer de son cote dans le bon vehicule.

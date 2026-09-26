@@ -14,6 +14,7 @@
 #include "interp.h"
 #include "anims.h"
 #include "players.h"
+#include "camera.h"
 
 int WantedLevel(void *ped);   // plus bas : etoiles de recherche
 #include <math.h>
@@ -651,7 +652,7 @@ void CoopFrame()
     PlayersFrame(inGame);
     ShareWanted(inGame);
     if (inGame) KeepAIOffPlayerCars();
-    if (inGame) PassengerShooting();
+    if (inGame) { CameraFrame(); PassengerShooting(); }
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
     MirrorFrame(inGame);
