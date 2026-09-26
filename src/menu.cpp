@@ -29,10 +29,10 @@ static MenuScreen *Screens() { return (MenuScreen *)0x6D8B70; }
 enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
-       ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO };
+       ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
-enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO };
+enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
 static int g_sub, g_subParent;
 enum { PAGE_LOAD_GAME = 8 };
 
@@ -108,15 +108,16 @@ static const wchar_t *CoopText(const char *key)
     char buf[96];
     if (!strcmp(key, "VCC_MM")) return Put(0, "COOP");
     if (!strcmp(key, "VCC_TIT")) return Put(1, g_sub == SUB_OPTIONS ? "Options" : g_sub == SUB_COOP ? (fr ? "Options coop" : "Coop options")
-                                              : g_sub == SUB_VIDEO ? (fr ? "Options video" : "Video options") : "COOP");
+                                              : g_sub == SUB_VIDEO ? (fr ? "Options video" : "Video options") : g_sub == SUB_JOIN ? (fr ? "Rejoindre" : "Join") : "COOP");
+    if (!strcmp(key, "VCC_JP")) return Put(23, fr ? "Rejoindre" : "Join");
     if (!strcmp(key, "VCC_OPT")) return Put(18, "Options");
     if (!strcmp(key, "VCC_OC")) return Put(19, fr ? "Options coop" : "Coop options");
     if (!strcmp(key, "VCC_OV")) return Put(20, fr ? "Options video" : "Video options");
     if (!strcmp(key, "VCC_CRE")) return Put(2, fr ? "Creer une partie" : "Host a game");
     if (!strcmp(key, "VCC_JOI")) {
-        if (g_joining) wsprintfA(buf, fr ? "Rejoindre : connexion..." : "Join: connecting...");
-        else if (g_netStarted && !g_cfg.host && g_localId > 0) wsprintfA(buf, fr ? "Rejoindre : connecte" : "Join: connected");
-        else wsprintfA(buf, fr ? "Rejoindre" : "Join");
+        if (g_joining) wsprintfA(buf, fr ? "Se connecter : connexion..." : "Connect: connecting...");
+        else if (g_netStarted && !g_cfg.host && g_localId > 0) wsprintfA(buf, fr ? "Se connecter : connecte" : "Connect: connected");
+        else wsprintfA(buf, fr ? "Se connecter" : "Connect");
         return Put(3, buf);
     }
     if (!strcmp(key, "VCC_IP")) {
@@ -268,6 +269,7 @@ static void OnCoopAction(int action)
     case ACT_MSAA: g_cfg.msaa = g_cfg.msaa >= 8 ? 0 : g_cfg.msaa < 2 ? 2 : g_cfg.msaa * 2; SaveIni(); break;
     case ACT_ANISO: g_cfg.aniso = !g_cfg.aniso; SaveIni(); break;
     case ACT_OPTIONS: g_subParent = SUB_MAIN; g_sub = SUB_OPTIONS; *(int *)(Menu() + 0x30) = 0; break;
+    case ACT_JOINPAGE: g_subParent = SUB_MAIN; g_sub = SUB_JOIN; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_OPTCOOP: g_subParent = g_sub; g_sub = SUB_COOP; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_OPTVIDEO: g_subParent = g_sub; g_sub = SUB_VIDEO; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_BACKSUB: SubBack(); break;
@@ -312,6 +314,7 @@ static void BuildCoopPage()
     static int lastPage = -1;
     if (CurrentPage() != PAGE_COOP && lastPage == PAGE_COOP) { g_sub = SUB_MAIN; g_subParent = SUB_MAIN; }
     lastPage = CurrentPage();
+    if (g_sub == SUB_JOIN && g_netStarted && !g_cfg.host && g_localId > 0) { g_sub = SUB_MAIN; g_subParent = SUB_MAIN; }   // connecte : le salon
     uint32_t key = (inGame ? 1 : 0) | (lobby ? 2 : 0) | (g_cfg.host ? 4 : 0) | (g_netStarted ? 8 : 0) | (players << 4) | (g_sub << 8);
     if (key == g_layoutKey) return;
     g_layoutKey = key;
@@ -320,14 +323,16 @@ static void BuildCoopPage()
     static const char *const pl[] = { "VCC_P0", "VCC_P1", "VCC_P2", "VCC_P3" };
     if (g_sub == SUB_OPTIONS) {
         items[n++] = { ACT_OPTCOOP, "VCC_OC" }; items[n++] = { ACT_OPTVIDEO, "VCC_OV" };
+    } else if (g_sub == SUB_JOIN) {
+        items[n++] = { ACT_ADDRESS, "VCC_IP" }; items[n++] = { ACT_JOIN, "VCC_JOI" };
     } else if (g_sub == SUB_COOP) {
-        items[n++] = { ACT_ADDRESS, "VCC_IP" }; items[n++] = { ACT_FRIENDLY, "VCC_TA" }; items[n++] = { ACT_MONEY, "VCC_AP" };
+        items[n++] = { ACT_FRIENDLY, "VCC_TA" }; items[n++] = { ACT_MONEY, "VCC_AP" };
         items[n++] = { ACT_NAMES, "VCC_PS2" }; items[n++] = { ACT_WEAPONS, "VCC_GA" };
     } else if (g_sub == SUB_VIDEO) {
         items[n++] = { ACT_DRAWDIST, "VCC_DD" }; items[n++] = { ACT_MSAA, "VCC_AA" }; items[n++] = { ACT_ANISO, "VCC_AF" };
     } else if (!g_netStarted && !inGame) {
         // Accueil : Creer / Rejoindre / Pseudo / Options (coop + video : a regler avant de creer ou rejoindre).
-        items[n++] = { ACT_CREATE, "VCC_CRE" }; items[n++] = { ACT_JOIN, "VCC_JOI" };
+        items[n++] = { ACT_CREATE, "VCC_CRE" }; items[n++] = { ACT_JOINPAGE, "VCC_JP" };
         items[n++] = { ACT_NICK, "VCC_PSE" }; items[n++] = { ACT_OPTIONS, "VCC_OPT" };
     } else {
         for (int i = 0; i < players && i < 4; i++) items[n++] = { ACT_INFO, pl[i] };
@@ -396,7 +401,8 @@ void MenuFrame()
             // Ouvre le champ Adresse, tape "10.0.0.5" (en laissant voir la saisie 3 s), puis Entree.
             static const char *typed = "10.0.0.5";
             static int pos;
-            if (step == 0 && CurrentPage() == PAGE_COOP) { g_pendingSelect = 2; step = 1; since = now; }
+            if (step == 0 && CurrentPage() == PAGE_COOP) { g_pendingSelect = 1; step = 10; since = now; }   // Rejoindre
+            else if (step == 10 && now - since > 1500) { g_pendingSelect = 0; step = 1; since = now; }      // Adresse
             else if (step == 1 && g_edit == EDIT_ADDRESS && typed[pos]) h_WndProc(GameWindow(), WM_CHAR, (unsigned char)typed[pos++], 0);
             else if (step == 1 && !typed[pos] && now - since > 4500) { h_WndProc(GameWindow(), WM_CHAR, 13, 0); step = 2; Log("menu : test, adresse saisie : %s", g_cfg.address); }
             return;
