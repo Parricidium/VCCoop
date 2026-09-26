@@ -39,6 +39,11 @@ PLAY
 - F7: choose your outfit (Tommy's, story characters, any pedestrian).
   Left / Right to browse, Enter to keep, Backspace to cancel. It is kept for
   the next sessions; missions that dress Tommy replace it, as in single player.
+- COOP > Host a game: lobby with the connected players, then "New game" or
+  "Load a game". Guests (COOP > Join) wait in the lobby and follow the host
+  by themselves once he is in game (same save, or new game).
+- Draw distance (COOP menu, 100 to 400 %): details, pedestrians and vehicles
+  visible farther away (DistanceAffichage=200 by default).
 - Tab (hold): player list (health, armour, ping, distance).
 - B: set a meeting point where you look (everyone sees it, in your colour);
   B again removes it.
@@ -61,8 +66,8 @@ PLAY
 
 SHARED WORLD
 ------------
-When a guest is near the host (under 120 m), they see the same pedestrians and
-traffic. Farther away (over 170 m), they get their own city around them.
+When a guest is near the host (under 150 m), they see the same pedestrians and
+traffic. Farther away (over 210 m), they get their own city around them.
 
 DISPLAY
 -------

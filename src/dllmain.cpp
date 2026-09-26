@@ -48,6 +48,7 @@ static void LoadConfig()
     g_cfg.shareMoney = GetPrivateProfileIntA("VCCoop", "ArgentPartage", 1, ini) != 0;
     g_cfg.keepWeapons = GetPrivateProfileIntA("VCCoop", "GarderArmes", 1, ini) != 0;
     g_cfg.respawnAtHost = GetPrivateProfileIntA("VCCoop", "ReapparitionHote", 0, ini) != 0;
+    g_cfg.drawDistance = GetPrivateProfileIntA("VCCoop", "DistanceAffichage", 200, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;
     g_cfg.showNames = GetPrivateProfileIntA("VCCoop", "AfficherPseudos", 1, ini) != 0;

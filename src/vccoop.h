@@ -23,6 +23,7 @@ struct Config {
     bool friendlyFire;  // TirAmi=1 (hote) : les joueurs peuvent se blesser entre eux
     bool shareWanted;   // RecherchePartagee=1 : etoiles de police communes
     bool shareMoney;    // ArgentPartage=1 (hote) : l'argent donne par les missions va aussi aux invites
+    int drawDistance;   // DistanceAffichage=200 (en %) : detail, passants et vehicules visibles plus loin
     bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
     float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;

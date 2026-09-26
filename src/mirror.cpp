@@ -532,7 +532,17 @@ void MirrorInit()
 void MirrorFrame(bool inGame)
 {
     if (g_cfg.host) { if (!inGame) g_activeBlipCount = 0; HostSyncNewcomers(inGame); return; }
-    if (!inGame) { g_blipCount = g_objCount = g_pickupCount = 0; return; }
+    if (!inGame) {
+        g_blipCount = g_objCount = g_pickupCount = 0;
+        // Hors partie (salon, chargement), la presentation des missions de l'hote n'a pas de sens : rejouees d'un coup
+        // a l'arrivee (cameras fixes, textes, sons de l'intro...), elles faisaient planter la camera. On ne garde que
+        // les variables de l'histoire ; l'hote renvoie l'etat complet (et les marqueurs) quand on arrive en partie.
+        int kept = g_qHead;
+        for (int i = g_qHead; i != g_qTail; i = (i + 1) % QUEUE_SIZE)
+            if (g_queue[i].data[0] == RL_GLOBALS) { if (kept != i) g_queue[kept] = g_queue[i]; kept = (kept + 1) % QUEUE_SIZE; }
+        g_qTail = kept;
+        return;
+    }
     uint32_t now = GetTickCount();
     while (g_qHead != g_qTail) {
         Pending &p = g_queue[g_qHead];

@@ -1,5 +1,9 @@
-// Menu COOP dans le vrai menu du jeu : une entree "COOP" dans le menu principal ouvre l'ecran 33 (inutilise
-// par le jeu) avec Creer une partie / Rejoindre / Adresse / Pseudo / Retour.
+// Menu COOP dans le vrai menu du jeu : une entree "COOP" dans le menu principal (et la pause) ouvre l'ecran 33
+// (inutilise par le jeu), dont le contenu est refait selon la situation :
+//  - accueil : Creer une partie / Rejoindre / Adresse / Pseudo / reglages / Retour ;
+//  - salon (reseau demarre, au menu) : joueurs connectes, puis Nouvelle partie / Charger une partie (hote) ou
+//    "en attente de l'hote" (invite), reglages ; l'invite suit l'hote tout seul quand celui-ci entre en jeu ;
+//  - en partie : joueurs, reglages.
 //  - Les textes passent par un crochet de CText::Get (0x584F30) : cles "VCC_..." (FR ou EN selon la langue
 //    du jeu), certaines dynamiques (adresse, pseudo, etat de la connexion).
 //  - Les actions 60+ (inconnues du jeu) sont traitees dans un crochet de CMenuManager::ProcessButtonPresses
@@ -24,7 +28,8 @@ static MenuScreen *Screens() { return (MenuScreen *)0x6D8B70; }
 
 enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
-       ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS };
+       ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST };
+enum { PAGE_LOAD_GAME = 8 };
 
 static uint8_t *Menu() { return (uint8_t *)0x869630; }   // FrontEndMenuManager
 static int CurrentPage() { return *(int *)(Menu() + 0xF8); }
@@ -68,10 +73,13 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "ArgentPartage", g_cfg.shareMoney ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "AfficherPseudos", g_cfg.showNames ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "GarderArmes", g_cfg.keepWeapons ? "1" : "0", ini);
+    char dd[16];
+    wsprintfA(dd, "%d", g_cfg.drawDistance);
+    WritePrivateProfileStringA("VCCoop", "DistanceAffichage", dd, ini);
 }
 
 // --- Textes ---
-static wchar_t g_text[12][80];
+static wchar_t g_text[20][80];
 
 static const wchar_t *Put(int slot, const char *s)
 {
@@ -123,6 +131,34 @@ static const wchar_t *CoopText(const char *key)
         wsprintfA(buf, "%s : %s", fr ? "Garder ses armes" : "Keep weapons", g_cfg.keepWeapons ? yes : no);
         return Put(9, buf);
     }
+    if (!strcmp(key, "VCC_DD")) {
+        wsprintfA(buf, "%s : %d%%", fr ? "Distance d'affichage" : "Draw distance", g_cfg.drawDistance);
+        return Put(10, buf);
+    }
+    // Salon : joueurs (VCC_P0..3 = les connectes, dans l'ordre), attente de l'invite, lancer la partie.
+    if (!strncmp(key, "VCC_P", 5) && key[5] >= '0' && key[5] <= '3' && !key[6]) {
+        int want = key[5] - '0', k = 0;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            bool self = i == g_localId || (g_localId < 0 && i == 0 && g_cfg.host);
+            if (!self && !g_players[i].connected) continue;
+            if (k++ != want) continue;
+            const char *name = self ? g_cfg.playerName : g_players[i].state.name;
+            bool inGame = self ? GameState() == GS_PLAYING : g_players[i].state.inGame != 0;
+            wsprintfA(buf, "%s%s - %s", name, i == 0 ? (fr ? " (hote)" : " (host)") : "", inGame ? (fr ? "en jeu" : "in game") : (fr ? "au menu" : "in menu"));
+            return Put(11 + want, buf);
+        }
+        return Put(11 + want, "-");
+    }
+    if (!strcmp(key, "VCC_NW")) return Put(15, fr ? "Nouvelle partie" : "New game");
+    if (!strcmp(key, "VCC_LD")) return Put(16, fr ? "Charger une partie" : "Load a game");
+    if (!strcmp(key, "VCC_WT")) {
+        if (g_localId <= 0 && g_joining) wsprintfA(buf, fr ? "Connexion a %s..." : "Connecting to %s...", g_cfg.address);
+        else if (g_localId <= 0) wsprintfA(buf, fr ? "Pas de reponse de %s" : "No answer from %s", g_cfg.address);
+        else if (GuestWaitingForSave()) wsprintfA(buf, fr ? "Chargement de la partie de l'hote..." : "Loading the host's game...");
+        else if (g_players[0].state.inGame) wsprintfA(buf, fr ? "L'hote est en jeu : on y va" : "The host is in game: joining");
+        else wsprintfA(buf, fr ? "En attente de l'hote..." : "Waiting for the host...");
+        return Put(17, buf);
+    }
     if (!strcmp(key, "VCC_PSE")) {
         wsprintfA(buf, "%s : %s%s", fr ? "Pseudo" : "Nickname", g_edit == EDIT_NICK ? g_editBuf : g_cfg.playerName,
                   g_edit == EDIT_NICK && (GetTickCount() / 400) % 2 ? "-" : "");
@@ -162,10 +198,20 @@ static void EndEdit(bool keep)
 static void OnCoopAction(int action)
 {
     switch (action) {
-    case ACT_CREATE:
-        if (!g_netStarted) { g_cfg.host = true; CoopStartNetwork(); Log("menu : partie coop creee"); }
-        SwitchToNewScreen(PAGE_NEW_GAME);   // "Commencer une nouvelle partie ?" du jeu
+    case ACT_CREATE:   // l'hote ouvre son salon (le contenu de l'ecran change au prochain passage)
+        if (!g_netStarted) { g_cfg.host = true; CoopStartNetwork(); Log("menu : partie coop creee (salon)"); }
         break;
+    case ACT_NEWGAME: SwitchToNewScreen(PAGE_NEW_GAME); break;    // "Commencer une nouvelle partie ?" du jeu
+    case ACT_LOADGAME: SwitchToNewScreen(PAGE_LOAD_GAME); break;  // liste des sauvegardes : elle partira aux invites
+    case ACT_DRAWDIST: {
+        static const int steps[] = { 100, 150, 200, 300, 400 };
+        int i = 0;
+        while (i < 5 && steps[i] <= g_cfg.drawDistance) i++;
+        g_cfg.drawDistance = steps[i % 5];
+        SaveIni();
+        break;
+    }
+    case ACT_INFO: break;
     case ACT_JOIN:
         if (!g_netStarted) {
             g_cfg.host = false;
@@ -209,9 +255,69 @@ static void __fastcall h_Buttons(void *menu, void *edx, int down, int up, int se
 
 static LRESULT CALLBACK h_WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
-// Invite : une fois accepte par l'hote, on enchaine sur "Commencer une nouvelle partie ?".
+// --- Contenu de l'ecran COOP, refait quand la situation change ---
+static uint32_t g_layoutKey = 0xFFFFFFFF;
+
+static void BuildCoopPage()
+{
+    bool inGame = GameState() == GS_PLAYING;
+    int players = 0;
+    for (int i = 0; i < MAX_PLAYERS; i++) players += (i == g_localId || g_players[i].connected || (g_localId < 0 && i == 0 && g_cfg.host && g_netStarted)) ? 1 : 0;
+    bool lobby = g_netStarted && !inGame;
+    uint32_t key = (inGame ? 1 : 0) | (lobby ? 2 : 0) | (g_cfg.host ? 4 : 0) | (g_netStarted ? 8 : 0) | (players << 4);
+    if (key == g_layoutKey) return;
+    g_layoutKey = key;
+    struct Item { uint16_t act; const char *label; } items[12];
+    int n = 0;
+    static const char *const pl[] = { "VCC_P0", "VCC_P1", "VCC_P2", "VCC_P3" };
+    if (!g_netStarted && !inGame) {
+        items[n++] = { ACT_CREATE, "VCC_CRE" }; items[n++] = { ACT_JOIN, "VCC_JOI" };
+        items[n++] = { ACT_ADDRESS, "VCC_IP" }; items[n++] = { ACT_NICK, "VCC_PSE" };
+    } else {
+        for (int i = 0; i < players && i < 4; i++) items[n++] = { ACT_INFO, pl[i] };
+        if (lobby && g_cfg.host) { items[n++] = { ACT_NEWGAME, "VCC_NW" }; items[n++] = { ACT_LOADGAME, "VCC_LD" }; }
+        else if (lobby) items[n++] = { ACT_INFO, "VCC_WT" };
+    }
+    const Item settings[] = { { ACT_FRIENDLY, "VCC_TA" }, { ACT_MONEY, "VCC_AP" }, { ACT_NAMES, "VCC_PS2" },
+                              { ACT_WEAPONS, "VCC_GA" }, { ACT_DRAWDIST, "VCC_DD" } };
+    for (const Item &s : settings) if (n < 11) items[n++] = s;
+    items[n++] = { ACT_GOBACK, "FEDS_TB" };
+    MenuScreen &c = Screens()[PAGE_COOP];
+    memset(c.entries, 0, sizeof(c.entries));
+    for (int i = 0; i < n; i++) {
+        MenuEntry &e = c.entries[i];
+        e.action = items[i].act;
+        lstrcpynA(e.label, items[i].label, 8);
+        e.target = 0x7F;   // "Retour" : page d'ouverture (principal ou pause)
+        e.align = 3;       // centre
+    }
+    c.entries[0].x = 320;
+    c.entries[0].y = 110;   // meme depart pour tous les contenus (la barre de selection suit ce depart)
+    if (CurrentPage() == PAGE_COOP && CurrentEntry() >= n) *(int *)(Menu() + 0x30) = n - 1;
+}
+
 void MenuFrame()
 {
+    BuildCoopPage();
+    // Invite dans le salon : des que l'hote est en jeu, on le suit. S'il a charge une sauvegarde, elle arrive
+    // (saveshare.cpp) et se charge seule ; sinon, nouvelle partie ("Oui" valide automatiquement).
+    static bool autoYes;
+    if (!g_cfg.host && g_netStarted && GameState() == GS_FRONTEND && g_localId > 0 && !g_cfg.autoStart) {
+        static uint32_t hostInGameSince;
+        g_joining = false;
+        if (!g_players[0].state.inGame || GuestWaitingForSave()) hostInGameSince = 0;
+        else if (!hostInGameSince) hostInGameSince = GetTickCount();
+        else if (GetTickCount() - hostInGameSince > 2500 && CurrentPage() != PAGE_NEW_GAME && !autoYes) {
+            autoYes = true;
+            Log("menu : l'hote est en jeu, nouvelle partie");
+            g_pendingPage = PAGE_NEW_GAME;
+        }
+    }
+    // "Oui" une seconde apres l'ouverture de l'ecran (le menu ignore une validation faite des son ouverture).
+    static uint32_t onNewGameSince;
+    if (!autoYes || CurrentPage() != PAGE_NEW_GAME) onNewGameSince = 0;
+    else if (!onNewGameSince) onNewGameSince = GetTickCount();
+    else if (GetTickCount() - onNewGameSince > 1000 && g_pendingSelect < 0 && g_pendingPage < 0) { g_pendingSelect = 2; autoYes = false; }   // FEM_YES
     // Test (TestMenu=N) : ouvre l'ecran N du menu 3 s apres l'arrivee au menu principal.
     static uint32_t atMenu;
     static bool tested;
@@ -245,7 +351,11 @@ void MenuFrame()
             g_pendingSelect = create ? 0 : 1;
             Log("menu : test, %s valide", create ? "Creer" : "Rejoindre");
             step = 1; since = now;
-        } else if (step == 1 && CurrentPage() == PAGE_NEW_GAME) {
+        } else if (step == 1 && create && CurrentPage() == PAGE_COOP && now - since > 8000) {
+            for (int i = 0; i < 12; i++) if (Screens()[PAGE_COOP].entries[i].action == ACT_NEWGAME) g_pendingSelect = i;
+            Log("menu : test, salon : Nouvelle partie");
+            since = now;
+        } else if (step == 1 && create && CurrentPage() == PAGE_NEW_GAME) {
             g_pendingSelect = 2;   // FEM_YES
             Log("menu : test, Oui a la nouvelle partie");
             step = 2;
@@ -253,16 +363,8 @@ void MenuFrame()
     }
     if (!g_joining) return;
     if (g_localId > 0) {
-        // Si l'hote a charge une sauvegarde, elle arrive juste apres l'accord : on l'attend (elle se chargera
-        // toute seule) au lieu de proposer une nouvelle partie.
-        static uint32_t connectedAt;
-        if (!connectedAt) connectedAt = GetTickCount();
-        if (GuestWaitingForSave()) { g_joining = false; connectedAt = 0; Log("menu : connecte, sauvegarde de l'hote en route"); return; }
-        if (GetTickCount() - connectedAt < 2000) return;
-        connectedAt = 0;
-        g_joining = false;
-        Log("menu : connecte, nouvelle partie");
-        if (GameState() == GS_FRONTEND && CurrentPage() == PAGE_COOP) g_pendingPage = PAGE_NEW_GAME;
+        g_joining = false;   // la suite (suivre l'hote) est plus haut
+        Log("menu : connecte, dans le salon");
     } else if (GetTickCount() - g_joinSince > 10000) {
         g_joining = false;
         Log("menu : pas de reponse de %s", g_cfg.address);
@@ -361,26 +463,13 @@ void InstallMenu()
         pause.entries[5].align = pause.entries[6].align;
     }
 
-    // Ecran COOP (33, vide dans le jeu).
+    // Ecran COOP (33, vide dans le jeu) : son contenu est fait par BuildCoopPage.
     MenuScreen &c = Screens()[PAGE_COOP];
     memset(&c, 0, sizeof(c));
     memcpy(c.name, "VCC_TIT", 8);
     c.prevPage = 0x7F;   // retour : menu principal ou pause, selon qu'on est en partie
     c.parentEntry = 1;
-    const struct { uint16_t act; const char *label; } items[] = {
-        { ACT_CREATE, "VCC_CRE" }, { ACT_JOIN, "VCC_JOI" }, { ACT_ADDRESS, "VCC_IP" }, { ACT_NICK, "VCC_PSE" },
-        { ACT_FRIENDLY, "VCC_TA" }, { ACT_MONEY, "VCC_AP" }, { ACT_NAMES, "VCC_PS2" }, { ACT_WEAPONS, "VCC_GA" },
-        { ACT_GOBACK, "FEDS_TB" },
-    };
-    for (int i = 0; i < (int)(sizeof(items) / sizeof(items[0])); i++) {
-        MenuEntry &e = c.entries[i];
-        e.action = items[i].act;
-        lstrcpynA(e.label, items[i].label, 8);
-        e.target = 0x7F;   // "Retour" : page d ouverture (principal ou pause)
-        e.align = 3;   // centre
-    }
-    c.entries[0].x = 320;
-    c.entries[0].y = 150;
+    BuildCoopPage();
 
     static const uint8_t textPro[] = { 0x53, 0x55, 0x89, 0xCB, 0x83, 0xEC, 0x40 };
     o_TextGet = (TextGet_t)MakeDetour(0x584F30, textPro, sizeof(textPro), (void *)h_TextGet);
