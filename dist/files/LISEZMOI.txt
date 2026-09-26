@@ -96,7 +96,8 @@ A SAVOIR (version de test)
   a la coop : ce qu'il contenait est remplace). Un invite qui arrive plus
   tard la recoit aussi. L'avancement de l'histoire de l'hote est ensuite
   transmis aux invites au fil des missions.
-- En cas de souci : vccoop.log (dans le dossier du jeu) aide a comprendre.
+- En cas de souci : vccoop.log (dans le dossier du jeu) aide a comprendre ; le
+  journal de chaque partie est aussi garde dans le dossier logs (50 derniers).
 
 AUTRES MODS (.asi)
 ------------------
