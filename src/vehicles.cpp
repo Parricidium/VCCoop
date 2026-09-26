@@ -159,19 +159,31 @@ static int PanelStatus(const uint8_t *dm, int p) { return (*(const uint32_t *)(d
 static int WheelStatus(const uint8_t *dm, int w) { return ((int(__thiscall *)(const void *, int))0x5A9830)(dm, w); }
 static int EngineStatus(const uint8_t *dm) { return ((int(__thiscall *)(const void *))0x5A97E0)(dm); }
 
+// Portes : 0 intacte, 1 abimee, 2 battante, 3 arrachee. Entre 1 et 2 le jeu passe tout seul selon le mouvement
+// (porte qui bat, qui se referme) : on ne compare que la gravite, sinon la porte s'ouvrait et se refermait en
+// boucle chez les autres (reparation + reapplication a chaque synchro).
+static int DoorSeverity(int s) { return s == 0 ? 0 : s == 3 ? 2 : 1; }
+
 static void SyncDamage(void *v, const uint8_t *od)
 {
     uint8_t *dm = (uint8_t *)v + 0x2A0;
-    if (!memcmp(dm, od, 24)) return;
+    if (!memcmp(dm + 0x10, od + 0x10, 8) && !memcmp(dm, od, 9)) {   // panneaux, phares, moteur, pneus egaux
+        bool same = true;
+        for (int d = 0; d < 6; d++) same &= DoorSeverity(DoorStatus(dm, d)) == DoorSeverity(DoorStatus(od, d));
+        if (same) return;
+    }
+    // Pas pendant que le joueur local monte ou descend (etats 0x37..0x3F) : la portiere est a lui a ce moment-la.
+    void *me = FindPlayerPed();
+    if (me && PedState(me) >= 0x37 && PedState(me) <= 0x3F) return;
     static const int doorNode[6] = { 0x11, 0x12, 0x0F, 0x0B, 0x10, 0x0C };
     static const int panelNode[5] = { 0x0D, 0x09, 0x0E, 0x0A, 0x13 };
     bool fix = false;
-    for (int d = 0; d < 6; d++) fix |= DoorStatus(dm, d) != 0 && DoorStatus(od, d) == 0;
+    for (int d = 0; d < 6; d++) fix |= DoorSeverity(DoorStatus(dm, d)) > DoorSeverity(DoorStatus(od, d));
     for (int p = 0; p < 7; p++) fix |= PanelStatus(dm, p) != 0 && PanelStatus(od, p) == 0;
     if (fix) ((void(__thiscall *)(void *))0x588530)(v);   // CAutomobile::Fix
     for (int d = 0; d < 6; d++) {
         int s = DoorStatus(od, d);
-        if (s == DoorStatus(dm, d)) continue;
+        if (DoorSeverity(s) <= DoorSeverity(DoorStatus(dm, d))) continue;   // seulement plus abimee
         ((void(__thiscall *)(void *, int, int))0x5A9820)(dm, d, s);                              // SetDoorStatus
         ((void(__thiscall *)(void *, int, int, bool))0x59B150)(v, doorNode[d], d, true);         // sans piece volante
     }

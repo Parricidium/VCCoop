@@ -302,8 +302,8 @@ void AutotestFrame()
             if (withF) Press(PAD_TRIANGLE, 255); else TogglePassenger();
         }
         if (left && frame - boardedAt == 200) Log("autotest : descendu, a pied=%d", !InVehicle(FindPlayerPed()));
-        const NetPlayer &h = g_players[0];
-        if (!boarded && g_localId > 0 && h.connected && h.state.inVehicle && h.state.seat == 0 && frame - controlSince > 30) {
+        const NetPlayer &h = g_players[g_localId == 0 ? 1 : 0];   // l'autre joueur (l'hote peut aussi etre passager)
+        if (!boarded && g_localId >= 0 && h.connected && h.state.inVehicle && h.state.seat == 0 && frame - controlSince > 30) {
             void *ped = FindPlayerPed();
             float dx = h.state.pos[0] - Pos(ped).x, dy = h.state.pos[1] - Pos(ped).y;
             if (dx * dx + dy * dy < 64.0f) {
