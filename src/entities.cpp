@@ -243,6 +243,8 @@ void GhostsAfterProcess()
         if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.state.vehicleId) continue;
         Snap n;
         if (!TrackSample(g.track, 0, n, true)) continue;
+        float jx = n.pos[0] - Pos(g.ped).x, jy = n.pos[1] - Pos(g.ped).y, jz = n.pos[2] - Pos(g.ped).z;
+        if (jx * jx + jy * jy + jz * jz > 400.0f) Teleport(g.ped, { n.pos[0], n.pos[1], n.pos[2] });
         Pos(g.ped) = { n.pos[0], n.pos[1], n.pos[2] };
         MoveSpeed(g.ped) = { n.vel[0], n.vel[1], n.vel[2] };
         SetHeadingMatrix(g.ped, n.heading);

@@ -182,6 +182,9 @@ static void OnState(const MsgState &s)
 {
     if (s.id >= MAX_PLAYERS || s.id == g_localId) return;
     ClockSample(s.id, s.time);
+    // Au menu / en chargement, sa position est (0, 0, 0) : on l'oublie, sinon son Tommy traversait la carte vers
+    // ce point en arrivant (cf. plantage chez JD a l'arrivee d'un invite).
+    if (!s.inGame) { g_puppets[s.id].track.Clear(); return; }
     Snap n = {};
     n.t = s.time;
     for (int k = 0; k < 3; k++) { n.pos[k] = s.pos[k]; n.vel[k] = s.speed[k]; }
@@ -197,6 +200,9 @@ void PuppetsAfterProcess()
         if (!pp.ped || InVehicle(pp.ped)) continue;
         Snap n;
         if (!TrackSample(pp.track, i, n, true)) continue;
+        // Grand ecart (arrivee, teleportation) : par CEntity::Teleport, qui remet le personnage dans les bons secteurs.
+        float jx = n.pos[0] - Pos(pp.ped).x, jy = n.pos[1] - Pos(pp.ped).y, jz = n.pos[2] - Pos(pp.ped).z;
+        if (jx * jx + jy * jy + jz * jz > 400.0f) Teleport(pp.ped, { n.pos[0], n.pos[1], n.pos[2] });
         if (g_cfg.logScripts) {
             // Regularite : pas d'une image a l'autre pendant qu'il se deplace (min / moyenne / max sur 2 s).
             static float lastX, lastY, mn = 1e9f, mx, sum;
