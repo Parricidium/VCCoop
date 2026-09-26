@@ -96,8 +96,9 @@ A SAVOIR (version de test)
   "monter dans telle voiture" peuvent etre remplis par n'importe quel joueur,
   et les invites voient les marqueurs de destination. Un personnage qui suit
   le joueur (Lance...) suit l'hote : pour ces missions, venez ensemble.
-- Pas de tir ami entre joueurs. Les tirs des autres joueurs sont visibles
-  pour les armes a balles (pas encore les grenades ni les roquettes).
+- Tir ami (TirAmi=1) : balles, coups, voitures et explosions des autres
+  joueurs vous blessent ; a 0, rien de tout cela. Grenades, cocktails et
+  roquettes sont rejoues chez tout le monde.
 - Sauvegardes : pour reprendre une partie, l'hote charge sa sauvegarde (menu
   Commencer partie > Charger, ou Pause > Charger) : elle est envoyee aux
   invites, qui la chargent automatiquement dans leur emplacement 8 (reserve

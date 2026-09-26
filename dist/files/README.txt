@@ -89,8 +89,9 @@ KNOWN LIMITS (test build)
 - Only the host can start missions. "Go there" / "get in that car" goals can
   be met by any player, and guests see the destination markers. A character
   who follows the player (Lance...) follows the host: go together on those.
-- No friendly fire between players. Other players' gunfire is shown for
-  bullet weapons (not grenades or rockets yet).
+- Friendly fire (TirAmi=1): bullets, punches, cars and explosions from the
+  other players hurt you; at 0 none of them do. Grenades, molotovs and
+  rockets are replayed on every machine.
 - Saves: to resume, the host loads their save (Start Game > Load, or Pause >
   Load): it is sent to the guests, who load it automatically from their slot
   8 (reserved for co-op: its previous content is replaced). A guest who joins

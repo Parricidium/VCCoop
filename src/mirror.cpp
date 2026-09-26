@@ -21,6 +21,7 @@ using namespace game;
 //   M personnage, mais le Tommy de l'hote devient le notre (tenue changee par la mission : chacun s'habille)
 //   b marqueur cree   o objet cree   k pickup cree   (sorties : on retient la correspondance hote -> invite)
 //   K pickup (reference en entree)
+//   g variable globale du script : on envoie son adresse (minuteurs / compteurs a l'ecran, lus en direct par le jeu)
 //   * signature libre : tous les parametres sont relus apres execution (commandes sans reference d'entite)
 struct OpSig { uint16_t op; const char *sig; const char *name; };
 static const OpSig g_ops[] = {
@@ -87,6 +88,24 @@ static const OpSig g_ops[] = {
     { 0x032B, "vvvvvvk", "CREATE_PICKUP_WITH_AMMO" },
     { 0x02E1, "vvvvk", "CREATE_MONEY_PICKUP" },
     { 0x0215, "K", "REMOVE_PICKUP" },
+    // Objets poses par les missions (mallettes, bombes, portes...).
+    { 0x0107, "vvvvo", "CREATE_OBJECT" },
+    { 0x029B, "vvvvo", "CREATE_OBJECT_NO_OFFSET" },
+    { 0x0108, "O", "DELETE_OBJECT" },
+    { 0x0177, "Ov", "SET_OBJECT_HEADING" },
+    { 0x01BC, "Ovvv", "SET_OBJECT_COORDINATES" },
+    { 0x0453, "Ovvv", "SET_OBJECT_ROTATION" },
+    { 0x0382, "Ov", "SET_OBJECT_COLLISION" },
+    { 0x0392, "Ov", "MAKE_OBJECT_TARGETTABLE" },
+    { 0x01C7, "O", "DONT_REMOVE_OBJECT" },
+    // Minuteurs et compteurs de mission a l'ecran : le jeu lit la variable en direct (et decompte lui-meme le
+    // minuteur) ; l'hote envoie la valeur de ces variables 3 fois par seconde (MSG_TIMERS).
+    { 0x014E, "gv", "DISPLAY_ONSCREEN_TIMER" },
+    { 0x014F, "g", "CLEAR_ONSCREEN_TIMER" },
+    { 0x0150, "gv", "DISPLAY_ONSCREEN_COUNTER" },
+    { 0x0151, "g", "CLEAR_ONSCREEN_COUNTER" },
+    { 0x03C3, "gvl", "DISPLAY_ONSCREEN_TIMER_WITH_STRING" },
+    { 0x03C4, "gvl", "DISPLAY_ONSCREEN_COUNTER_WITH_STRING" },
     { 0x0352, "Ml", "UNDRESS_CHAR" },
     { 0x0353, "M", "DRESS_CHAR" },
     // Configuration du monde faite par l'intro (population des zones, densites) : l'invite ne la joue pas.
@@ -108,6 +127,9 @@ enum { RL_SCRIPT_CMD = 1, RL_MISSION_END = 2, RL_MISSION_START = 3, RL_GLOBALS =
 enum { GLOBALS_BEGIN = 8, GLOBALS_END = 0x8620 };
 static uint8_t g_globSnap[GLOBALS_END];
 static bool g_globSnapValid;
+
+static void TrackTimer(uint16_t op, uint16_t offset);
+static int g_timerCount;
 
 const OpSig *FindOp(uint16_t op)
 {
@@ -195,6 +217,7 @@ bool MirrorBefore(void *script, int ip, uint16_t op)
         default: goto mismatch;
         }
         if ((*k == 'b' || *k == 'o' || *k == 'k') && t != 2 && t != 3) goto mismatch;   // une sortie est forcement une variable
+        if (*k == 'g' && t != 2) goto mismatch;   // le jeu lui-meme suppose une globale
     }
     g_paramCount = n;
     g_pending = sig;
@@ -253,13 +276,15 @@ void MirrorAfter(void *script)
         buf[len++] = (uint8_t)p.kind;
         if (p.kind == 'l') { memcpy(buf + len, ScriptSpace() + p.where, 8); len += 8; continue; }
         int32_t v = p.literal;
-        if (p.type == 2) v = *(int32_t *)(ScriptSpace() + p.where);
+        if (p.kind == 'g') v = p.where;
+        else if (p.type == 2) v = *(int32_t *)(ScriptSpace() + p.where);
         else if (p.type == 3) v = Field<int32_t>(script, 0x30 + p.where * 4);
         memcpy(buf + len, &v, 4); len += 4;
     }
     if (!g_captureOnly) {
         NetSendReliable(buf, len);
         RememberActiveBlip(sig->op, buf, len);
+        if (g_params[0].kind == 'g') TrackTimer(sig->op, (uint16_t)g_params[0].where);
     }
     // Autotest : dernier objectif / point de contact poses par les missions (coordonnees x, y, z en tete).
     if (sig->op == 0x018A || sig->op == 0x02A7) {
@@ -283,13 +308,21 @@ void MirrorAfter(void *script)
 // propriete, appel telephonique qui debloque une mission...) etait alors oublie et n'arrivait jamais aux invites.
 static bool g_missionRunning;
 
-void MirrorMissionStart()
+// Regroupement des invites pres de l'hote au debut et a la fin d'une mission : seulement si l'hote est a pied. Les
+// missions secondaires (taxi, pizza, ambulance, justicier...) se lancent et se terminent en vehicule : les invites
+// n'ont pas a etre teleportes pour celles-la.
+static uint8_t GatherFlag() { void *me = FindPlayerPed(); return me && !InVehicle(me) ? 1 : 0; }
+
+static int g_hostMission;
+
+void MirrorMissionStart(int mission)
 {
     if (!g_globSnapValid) { memcpy(g_globSnap, ScriptSpace(), GLOBALS_END); g_globSnapValid = true; }
     g_missionRunning = true;
-    uint8_t b = RL_MISSION_START;
-    NetSendReliable(&b, 1);
-    Log("miroir : debut de mission envoye");
+    g_hostMission = mission;
+    uint8_t b[4] = { RL_MISSION_START, GatherFlag(), (uint8_t)mission, (uint8_t)(mission >> 8) };
+    NetSendReliable(b, 4);
+    Log("miroir : debut de mission %d envoye (regroupement %d)", mission, b[1]);
 }
 
 // Seules les valeurs "drapeau" (petits entiers) circulent : elles portent l'avancement de l'histoire. Les autres
@@ -382,9 +415,54 @@ void MirrorMissionEnd()
 {
     g_missionRunning = false;
     SendGlobalChanges();
-    uint8_t b = RL_MISSION_END;
-    NetSendReliable(&b, 1);
-    Log("miroir : fin de mission envoyee");
+    uint8_t b[4] = { RL_MISSION_END, GatherFlag(), (uint8_t)g_hostMission, (uint8_t)(g_hostMission >> 8) };
+    NetSendReliable(b, 4);
+    // Le nettoyage de fin de mission du jeu retire les marqueurs et les minuteurs : un invite qui arrive apres n'a
+    // rien a rejouer.
+    if (g_hostMission != 0) g_activeBlipCount = 0;   // INITIAL : ses marqueurs restent (boutiques...)
+    g_timerCount = 0;
+    Log("miroir : fin de la mission %d envoyee (regroupement %d)", g_hostMission, b[1]);
+}
+
+// ======================================================================= Hote : minuteurs / compteurs a l'ecran
+// Variables globales affichees par DISPLAY_ONSCREEN_TIMER / COUNTER : leur valeur part aux invites 3 fois par
+// seconde (sans accuse : la suivante corrige), tant que l'affichage n'est pas efface.
+static struct { uint16_t offset; bool clock; } g_timers[8];
+
+static void TrackTimer(uint16_t op, uint16_t offset)
+{
+    bool clear = op == 0x014F || op == 0x0151;
+    for (int i = 0; i < g_timerCount; i++)
+        if (g_timers[i].offset == offset) { if (clear) g_timers[i] = g_timers[--g_timerCount]; return; }
+    if (!clear && g_timerCount < 8) g_timers[g_timerCount++] = { offset, op == 0x014E || op == 0x03C3 };
+}
+
+static void SendTimers()
+{
+    static uint32_t last;
+    if (!g_timerCount || GetTickCount() - last < 300) return;
+    last = GetTickCount();
+    uint8_t buf[2 + 8 * 6];
+    buf[0] = MSG_TIMERS;
+    buf[1] = (uint8_t)g_timerCount;
+    for (int i = 0; i < g_timerCount; i++) {
+        memcpy(buf + 2 + i * 6, &g_timers[i].offset, 2);
+        memcpy(buf + 4 + i * 6, ScriptSpace() + g_timers[i].offset, 4);
+    }
+    NetSendToGuests(buf, 2 + g_timerCount * 6);
+}
+
+// Invite : les valeurs recues vont directement dans nos variables (le jeu les affiche et decompte les minuteurs).
+void MirrorOnTimers(const uint8_t *buf, int len)
+{
+    if (g_cfg.host || len < 2 || GameState() != GS_PLAYING) return;
+    int n = buf[1];
+    if (len < 2 + n * 6) return;
+    for (int i = 0; i < n; i++) {
+        uint16_t off;
+        memcpy(&off, buf + 2 + i * 6, 2);
+        if (off >= GLOBALS_BEGIN && off + 4 <= GLOBALS_END) memcpy(ScriptSpace() + off, buf + 4 + i * 6, 4);
+    }
 }
 
 // ======================================================================= Invite : rejeu
@@ -452,6 +530,18 @@ static void SetArea(int area)
 }
 void MirrorFollowHostArea(int area) { SetArea(area); }   // coop.cpp : regroupement pres de l'hote
 
+// Minuteurs / compteurs affiches chez nous sur ordre de l'hote : effaces a la fin de sa mission (chez lui, c'est le
+// nettoyage de fin de mission du jeu qui le fait).
+static struct { uint16_t offset; bool clock; } g_guestTimers[8];
+static int g_guestTimerCount;
+static void GuestTrackTimer(uint16_t op, uint16_t offset)
+{
+    bool clear = op == 0x014F || op == 0x0151;
+    for (int i = 0; i < g_guestTimerCount; i++)
+        if (g_guestTimers[i].offset == offset) { if (clear) g_guestTimers[i] = g_guestTimers[--g_guestTimerCount]; return; }
+    if (!clear && g_guestTimerCount < 8) g_guestTimers[g_guestTimerCount++] = { offset, op == 0x014E || op == 0x03C3 };
+}
+
 static bool Execute(const uint8_t *d, int len, bool force)
 {
     uint16_t op;
@@ -464,6 +554,18 @@ static bool Execute(const uint8_t *d, int len, bool force)
         else { g_pendingArea = area; g_pendingAreaAt = GetTickCount(); }
         return true;
     }
+    // Objet : son modele doit etre charge (REQUEST_MODEL est rejoue avant, mais le chargement prend un moment).
+    // Un numero negatif designe un objet par son nom dans la table du script : le jeu le traduit lui-meme.
+    if ((op == 0x0107 || op == 0x029B) && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v') {
+        int32_t model;
+        memcpy(&model, d + 5, 4);
+        if (model >= 0 && !HasModelLoaded(model)) {
+            RequestModel(model, 1 | 8);
+            if (!force) return false;
+            Log("miroir : modele %d pas charge, objet non cree", model);
+            return true;
+        }
+    }
     uint8_t *ss = ScriptSpace();
     int w = SCRATCH;
     memcpy(ss + w, &op, 2); w += 2;
@@ -475,6 +577,13 @@ static bool Execute(const uint8_t *d, int len, bool force)
         if (kind == 'l') { memcpy(ss + w, d + at, 8); w += 8; at += 8; continue; }
         uint32_t v;
         memcpy(&v, d + at, 4); at += 4;
+        if (kind == 'g') {   // adresse d'une globale : la meme chez nous
+            ss[w] = 2;
+            *(uint16_t *)(ss + w + 1) = (uint16_t)v;
+            w += 3;
+            GuestTrackTimer(op, (uint16_t)v);
+            continue;
+        }
         if (kind == 'b' || kind == 'o' || kind == 'k') {
             ss[w] = 3;                                   // variable locale de notre script
             *(uint16_t *)(ss + w + 1) = (uint16_t)outCount;
@@ -547,7 +656,7 @@ static void Local(uint16_t op, int n, const int32_t *vals)
 
 void MirrorLocal(uint16_t op, int n, const int32_t *vals) { Local(op, n, vals); }
 
-static void MissionEnd()
+static void MissionEnd(bool gather, int mission)
 {
     // Remet l'ecran comme le laisse la fin d'une mission (le dernier fondu est souvent fait par le script
     // principal de l'hote, qui n'est pas reproduit) : fondu d'entree, plus de bandes, controles, camera.
@@ -564,9 +673,19 @@ static void MissionEnd()
     // par notre script prive, on les retire nous-memes.
     for (int i = 0; i < g_pickupCount; i++) { int32_t h[1] = { (int32_t)g_pickups[i].guest }; Local(0x0215, 1, h); }
     g_pickupCount = 0;
-    g_objCount = 0;
-    RequestGather();
-    Log("miroir : fin de mission chez l'hote");
+    // Objets, marqueurs radar et minuteurs de la mission : le nettoyage de fin de mission du jeu les retire chez
+    // l'hote sans passer par une commande ; ici on le fait nous-memes. Sauf pour INITIAL (mission 0) : ce qu'elle
+    // pose (objets du decor, marqueurs des boutiques) est permanent.
+    if (mission != 0) {
+        for (int i = 0; i < g_objCount; i++) { int32_t h[1] = { (int32_t)g_objs[i].guest }; Local(0x0108, 1, h); }
+        g_objCount = 0;
+        for (int i = 0; i < g_blipCount; i++) { int32_t h[1] = { (int32_t)g_blips[i].guest }; Local(0x0164, 1, h); }
+        g_blipCount = 0;
+        for (int i = 0; i < g_guestTimerCount; i++) { int32_t o[1] = { g_guestTimers[i].offset }; Local(g_guestTimers[i].clock ? 0x014F : 0x0151, 1, o); }
+        g_guestTimerCount = 0;
+    }
+    if (gather) RequestGather();
+    Log("miroir : fin de la mission %d chez l'hote (regroupement %d)", mission, gather);
 }
 
 static void OnReliable(int from, const uint8_t *data, int len)
@@ -594,6 +713,7 @@ void MirrorFrame(bool inGame)
     if (g_cfg.host) {
         if (!inGame) { g_activeBlipCount = 0; g_globSnapValid = false; g_missionRunning = false; }
         HostSyncNewcomers(inGame);
+        if (inGame) SendTimers();
         // Entre deux missions, les changements du script principal partent au fil de l'eau (toutes les 2 s).
         static uint32_t lastDiff;
         if (inGame && !g_globSnapValid) { memcpy(g_globSnap, ScriptSpace(), GLOBALS_END); memcpy(g_globPrev, g_globSnap, GLOBALS_END); g_globSnapValid = true; lastDiff = GetTickCount(); }
@@ -616,7 +736,7 @@ void MirrorFrame(bool inGame)
         Pending &p = g_queue[g_qHead];
         if (!p.since) p.since = now;
         bool done;
-        if (p.data[0] == RL_MISSION_END) { MissionEnd(); done = true; }
+        if (p.data[0] == RL_MISSION_END) { MissionEnd(p.len < 2 || p.data[1], p.len >= 4 ? (int16_t)(p.data[2] | (p.data[3] << 8)) : -1); done = true; }
         else if (p.data[0] == RL_GLOBALS) {
             for (int at = 1; at + 6 <= p.len; at += 6) {
                 uint16_t off; uint32_t v;
@@ -626,7 +746,7 @@ void MirrorFrame(bool inGame)
             Log("miroir : %d variables globales recues de l'hote", (p.len - 1) / 6);
             done = true;
         }
-        else if (p.data[0] == RL_MISSION_START) { RequestGather(); Log("miroir : debut de mission chez l'hote"); done = true; }
+        else if (p.data[0] == RL_MISSION_START) { if (p.len < 2 || p.data[1]) RequestGather(); Log("miroir : debut de mission chez l'hote"); done = true; }
         else if (p.data[0] == RL_SCRIPT_CMD) done = Execute(p.data, p.len, now - p.since > 3000);
         else done = true;
         if (!done) break;   // on garde l'ordre : la suite attend

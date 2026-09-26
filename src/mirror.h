@@ -8,7 +8,8 @@ void MirrorFrame(bool inGame);
 bool MirrorBefore(void *script, int ip, uint16_t op);
 void MirrorAfter(void *script);
 void MirrorMissionEnd();
-void MirrorMissionStart();
+void MirrorMissionStart(int mission);   // numero de la mission (0 = INITIAL : ses objets et marqueurs sont permanents)
+void MirrorOnTimers(const uint8_t *buf, int len);   // invite : valeurs des minuteurs de mission de l'hote
 void MirrorPlayerJoined(int peer);
 void MirrorGuestsGetHostSave();      // hote : tous les invites vont charger sa sauvegarde   // hote : envoie l'etat de l'histoire a un nouvel invite
 void RequestGather();

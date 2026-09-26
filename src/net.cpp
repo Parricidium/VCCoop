@@ -4,6 +4,7 @@
 #include "vccoop.h"
 #include "net.h"
 #include "conditions.h"
+#include "mirror.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -376,6 +377,9 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         break;
     case MSG_PED_REMOVE:
         HandleEntityMsg(buf, len);
+        break;
+    case MSG_TIMERS:
+        MirrorOnTimers(buf, len);
         break;
     case MSG_BYE:
         if (len >= (int)sizeof(MsgBye) && ((const MsgBye *)buf)->id < MAX_PLAYERS && ((const MsgBye *)buf)->id != g_localId) {

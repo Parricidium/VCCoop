@@ -29,6 +29,7 @@ struct NetVehicle {
     MsgVehicle state;   // dernier etat recu (vehicules distants)
     Track track;        // etats recus, pour l'interpolation
     uint32_t lastDamageSync;
+    bool blown;         // copie deja explosee (EXPLODE_CAR une seule fois)
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
 static uint32_t g_vehCounter;
@@ -111,6 +112,7 @@ static void SendVehicle(NetVehicle &e)
     m.poolHandle = VehicleHandle(v);
     m.time = GetTickCount();
     m.ambient = e.ambient;
+    m.wrecked = EntityStatus(v) == STATUS_WRECKED;
     // Station : celle qu'ecoute le conducteur (cMusicManager 0x980038, station en cours +0x3984), sinon celle du vehicule.
     if (m.vclass == VCLASS_CAR) memcpy(m.damage, (uint8_t *)v + 0x2A0, sizeof(m.damage));
     m.radio = drv && drv == FindPlayerPed() ? (uint8_t)*(int *)(0x980038 + 0x3984) : Field<uint8_t>(v, 0x23C);
@@ -231,6 +233,13 @@ static void ApplyState(NetVehicle &e)
             MirrorLocal(0x041E, 2, args);
             Log("vehicules : radio %d (celle du conducteur)", m.radio);
         }
+    }
+    // Epave chez le proprietaire : la copie explose aussi (EXPLODE_CAR 020B), une fois.
+    if (m.wrecked && !e.blown && EntityStatus(v) != STATUS_WRECKED) {
+        e.blown = true;
+        int32_t h[1] = { (int32_t)VehicleHandle(v) };
+        MirrorLocal(0x020B, 1, h);
+        Log("vehicules : copie %08X detruite (epave chez son proprietaire)", m.id);
     }
     // Sans IA : un vehicule "abandonne" garde sa physique mais personne ne le conduit.
     if (EntityStatus(v) != STATUS_WRECKED) SetEntityStatus(v, STATUS_ABANDONED);

@@ -45,10 +45,33 @@ static Fire_t o_Fire;
 static uint8_t g_localShots;
 static bool g_cosmetic;
 
+// Tirs des personnages (policiers d'un invite recherche, personnages de mission) : comptes par reference de pool,
+// pour que leurs copies chez les autres tirent aussi (et que leurs balles y fassent mal).
+static struct { uint32_t handle; uint8_t count; } g_pedShots[64];
+static int g_pedShotsNext;
+
+uint8_t PedShotCount(void *ped)
+{
+    uint32_t h = PedHandle(ped);
+    for (auto &e : g_pedShots) if (e.handle == h) return e.count;
+    return 0;
+}
+
+static void NoteShot(void *ped)
+{
+    uint32_t h = PedHandle(ped);
+    for (auto &e : g_pedShots) if (e.handle == h) { e.count++; return; }
+    g_pedShots[g_pedShotsNext] = { h, 1 };
+    g_pedShotsNext = (g_pedShotsNext + 1) % 64;
+}
+
 static bool __fastcall h_Fire(void *weapon, void *edx, void *shooter, void *source)
 {
     bool r = o_Fire(weapon, edx, shooter, source);
-    if (r && !g_cosmetic && shooter && shooter == FindPlayerPed()) g_localShots++;
+    if (r && !g_cosmetic && shooter) {
+        if (shooter == FindPlayerPed()) g_localShots++;
+        else if (IsPedEntity(shooter) && !IsPuppet(shooter) && !IsGhostPed(shooter)) NoteShot(shooter);
+    }
     return r;
 }
 
@@ -84,13 +107,31 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
 {
     if (g_bypass || GameState() != GS_PLAYING) return o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir);
     void *me = FindPlayerPed();
+    // Explosions (arme 41) : le jeu donne comme auteur le lanceur du projectile. Les projectiles des joueurs sont
+    // rejoues sur chaque machine (RL_PROJECTILE), chacune subit donc l'explosion chez elle : celle d'un autre joueur
+    // nous blesse ici si le tir ami est permis, blesse nos personnages, et rien ne part par le reseau (sinon double).
+    bool explosion = weapon == 41;
+    bool byPuppet = damager && (IsPuppet(damager) || (!IsPedEntity(damager) && IsPuppetVehicle(damager)));
+    if (byPuppet && explosion) {
+        if (ped == me) return g_cfg.friendlyFire ? o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir) : false;
+        if (PuppetPlayer(ped) < 0 && !IsGhostPed(ped)) return o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir);
+        return false;
+    }
     // Les coups portes par le Tommy d'un autre joueur sont decides sur sa machine et arrivent par le reseau :
     // ici ils ne font rien (evite les doubles degats et le tir ami involontaire).
-    if (damager && (IsPuppet(damager) || (!IsPedEntity(damager) && IsPuppetVehicle(damager)))) return false;
+    if (byPuppet) return false;
+    // Balles d'une copie de personnage (ses tirs sont rejoues ici) : celles des personnages de l'hote nous arrivent
+    // deja par le reseau (RL_DAMAGE_PLAYER), on ne les compte pas deux fois ; celles de la police d'un autre invite
+    // ne viennent que d'ici, elles comptent.
+    if (ped == me && damager && IsPedEntity(damager) && IsGhostPed(damager)) {
+        uint8_t owner;
+        uint32_t handle;
+        if (GhostOwner(damager, owner, handle) && owner == 0 && !g_cfg.host) return false;
+    }
     // Nous touchons le Tommy d'un autre joueur (coup, balle, voiture) : rien ici, le coup part chez lui.
     int victim = PuppetPlayer(ped);
     if (victim >= 0 && damager && (damager == me || damager == PedVehicle(me))) {
-        if (g_cfg.friendlyFire) {
+        if (g_cfg.friendlyFire && !explosion) {
             RlDamagePvp d = { RL_DAMAGE_PVP, (uint8_t)g_localId, (uint8_t)victim, dir, weapon, piece, damage };
             if (g_cfg.host) NetSendReliableTo(victim, &d, sizeof(d));
             else NetSendReliable(&d, sizeof(d));
@@ -103,7 +144,7 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
         uint8_t owner;
         uint32_t handle;
         if (GhostOwner(ped, owner, handle)) {
-            if (damager == me || (damager && damager == PedVehicle(me))) {
+            if (!explosion && (damager == me || (damager && damager == PedVehicle(me)))) {
                 RlDamagePed d = { RL_DAMAGE_PED, (uint8_t)g_localId, dir, handle, weapon, piece, damage, owner };
                 SendToOwner(owner, &d, sizeof(d));
             }
@@ -120,6 +161,7 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
             // chocs de vehicules : son propre jeu les calcule ; renvoyer ceux de son Tommy chez nous le tuait a son
             // arrivee (chute de 565 points en le deplacant pres de l'hote).
             if (!damager || !IsPedEntity(damager)) return false;
+            if (IsGhostPed(damager)) return false;   // police d'un invite (copie) : ses vrais policiers le touchent deja chez lui
             if (!friendly) {
                 uint32_t npc = damager && IsPedEntity(damager) ? PedHandle(damager) : 0xFFFFFFFF;
                 RlDamagePlayer d = { RL_DAMAGE_PLAYER, dir, npc, weapon, piece, damage };
@@ -212,6 +254,7 @@ static void __fastcall h_SetFall(void *ped, void *edx, int timeout, int anim, in
 typedef bool(__cdecl *AddProjectile_t)(void *source, int weapon, float x, float y, float z, float power);
 static AddProjectile_t o_AddProjectile;
 static bool g_replayingProjectile;
+bool g_testDropProjectile;
 static void **Projectiles() { return (void **)0x94B708; }
 static float *ProjectileLastPos(int i) { return (float *)(0x7DB888 + i * 0x1C + 0x10); }
 
@@ -220,6 +263,8 @@ static bool __cdecl h_AddProjectile(void *source, int weapon, float x, float y, 
     void *before[32];
     memcpy(before, Projectiles(), sizeof(before));
     bool ok = o_AddProjectile(source, weapon, x, y, z, power);
+    // Autotest "grenade" : la grenade tombe a nos pieds (pour voir ce que le jeu passe comme auteur de l'explosion).
+    if (ok && g_testDropProjectile) for (int i = 0; i < 32; i++) if (Projectiles()[i] && Projectiles()[i] != before[i]) MoveSpeed(Projectiles()[i]) = { 0, 0, 0.05f };
     if (!ok || g_replayingProjectile || GameState() != GS_PLAYING || g_localId < 0) return ok;
     void *me = FindPlayerPed();
     if (!source || (source != me && !(me && InVehicle(me) && source == PedVehicle(me)))) return ok;
