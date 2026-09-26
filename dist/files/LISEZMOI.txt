@@ -41,6 +41,12 @@ JOUER
   quel passant). Gauche / Droite pour changer, Entree pour garder, Retour pour
   annuler. La tenue est gardee pour les parties suivantes ; les missions qui
   habillent Tommy la remplacent le temps de la mission, comme en solo.
+- COOP > Creer une partie : salon avec la liste des joueurs connectes, puis
+  "Nouvelle partie" ou "Charger une partie". Les invites (COOP > Rejoindre)
+  attendent dans le salon et suivent l'hote tout seuls des qu'il est en jeu
+  (meme sauvegarde, ou nouvelle partie).
+- Distance d'affichage (menu COOP, 100 a 400 %) : details, passants et
+  vehicules visibles plus loin (DistanceAffichage=200 par defaut).
 - Tab (maintenu) : liste des joueurs (sante, gilet, ping, distance).
 - B : poser un point de rendez-vous la ou on regarde (visible par tous, dans
   sa couleur) ; B a nouveau pour le retirer.
@@ -65,8 +71,8 @@ JOUER
 
 MONDE PARTAGE
 -------------
-Quand un invite est pres de l'hote (moins de 120 m), il voit les memes
-passants et la meme circulation que lui. En s'eloignant (plus de 170 m), il
+Quand un invite est pres de l'hote (moins de 150 m), il voit les memes
+passants et la meme circulation que lui. En s'eloignant (plus de 210 m), il
 retrouve sa propre ville autour de lui.
 
 AFFICHAGE

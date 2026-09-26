@@ -137,4 +137,4 @@ bool NetIsHost();
 bool NearAnyGuest(const float *p, uint8_t area, float r);
 // Distances de la population partagee : l'invite la rejoint a SHARE_ENTER_M de l'hote, la quitte a SHARE_LEAVE_M ;
 // l'hote lui envoie alors ses passants et sa circulation jusqu'a AMBIENT_SHARE_M autour de lui.
-enum { SHARE_ENTER_M = 120, SHARE_LEAVE_M = 170, AMBIENT_SHARE_M = 200 };
+enum { SHARE_ENTER_M = 150, SHARE_LEAVE_M = 210, AMBIENT_SHARE_M = 260 };

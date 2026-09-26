@@ -109,9 +109,28 @@ bool TrackSample(const Track &tr, int src, Snap &o, bool linear)
 }
 
 // --- Crochet apres CGame::Process (appel dans Idle, 0x4A5DA0) ---
+// Distance d'affichage (DistanceAffichage, en %) : CCamera::Process (dans CGame::Process) vient de calculer
+// m_fLODDistMultiplier (0x7E4778 : jusqu'ou les modeles detailles, passants et vehicules restent visibles) et
+// m_fGenerationDistMultiplier (0x7E477C : jusqu'ou la circulation et les passants apparaissent / sont gardes).
+// On les augmente (la generation moitie moins, pour rester dans les limites du jeu : ~110 vehicules, ~140
+// personnages) ; la memoire de chargement (CStreaming::ms_memoryAvailable, 0x94DD54, 45 Mo) suit.
+static void ApplyDrawDistance()
+{
+    float f = g_cfg.drawDistance / 100.0f;
+    if (f <= 1.0f) return;
+    *(float *)0x7E4778 *= f;
+    float gen = 1.0f + (f - 1.0f) * 0.5f;
+    if (gen > 1.6f) gen = 1.6f;
+    *(float *)0x7E477C *= gen;
+    int mem = 45 * 1024 * 1024 + (int)((f - 1.0f) * 80 * 1024 * 1024);
+    if (mem > 256 * 1024 * 1024) mem = 256 * 1024 * 1024;
+    if (*(int *)0x94DD54 < mem) *(int *)0x94DD54 = mem;
+}
+
 static void __cdecl h_GameProcess()
 {
     ((void(__cdecl *)())0x4A4410)();
+    ApplyDrawDistance();
     if (GameState() != GS_PLAYING || !FindPlayerPed()) return;
     PuppetsAfterProcess();
     VehiclesAfterProcess();
