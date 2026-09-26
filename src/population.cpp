@@ -38,6 +38,10 @@ static void __cdecl h_GenerateRandomCars() { if (!g_shared || Wanted()) o_Genera
 
 // Forces de l'ordre (policiers, SWAT, FBI, armee : type de personnage 6) et leurs vehicules.
 static bool LawPed(void *ped) { return ped && PedType(ped) == 6; }
+bool IsLawPed(void *ped) { return LawPed(ped); }
+bool LocalWanted() { return Wanted(); }
+static bool LawVehicle(void *v);
+bool IsLawVehicle(void *v) { return LawVehicle(v); }
 static bool LawVehicle(void *v)
 {
     if (LawPed(VehDriver(v))) return true;

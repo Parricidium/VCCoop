@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 6 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 7 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -96,8 +96,9 @@ struct MsgPed {
     char modelName[21];     // pour les personnages speciaux (Lance, Ken...)
     uint32_t time;          // GetTickCount de l'envoi
     AnimSlot anims[2];      // animations d'action (se battre, tomber, se relever...)
+    uint8_t owner;          // joueur dont c'est le personnage (0 = hote ; un invite recherche envoie sa police)
 };
-struct MsgPedRemove { uint8_t type; uint32_t handle; };
+struct MsgPedRemove { uint8_t type; uint32_t handle; uint8_t owner; };
 #pragma pack(pop)
 
 struct NetPlayer {
@@ -118,7 +119,7 @@ extern void (*g_onState)(const MsgState &s);       // chaque etat de joueur recu
 extern void (*g_onVehicle)(const MsgVehicle &v);
 extern void (*g_onVehRemove)(uint32_t id);
 extern void (*g_onPed)(const MsgPed &p);
-extern void (*g_onPedRemove)(uint32_t handle);
+extern void (*g_onPedRemove)(uint8_t owner, uint32_t handle);
 void NetSendToAll(const void *data, int len);      // hote : a tous les invites ; invite : a l'hote (qui relaie)
 
 // Flux fiable et ordonne (renvoye jusqu'a accuse de reception). Hote : vers chaque invite ; invite : vers l'hote.
