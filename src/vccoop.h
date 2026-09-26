@@ -21,6 +21,8 @@ struct Config {
     char testMenuPlan[16];   // test : "creer" / "rejoindre" depuis l'ecran COOP       // test : ecran de menu a ouvrir au demarrage       // reseau demarre d'office (ligne de commande -vccoop, ou Reseau=1) ; sinon par le menu COOP
     bool logScripts;
     bool friendlyFire;  // TirAmi=1 (hote) : les joueurs peuvent se blesser entre eux
+    bool showNames;     // AfficherPseudos=1 : pseudo au-dessus de la tete des autres joueurs
+    char skin[24];      // Tenue=... : tenue choisie avec F7 (vide : celle du jeu)
     int logOpcodes;
     char traceScript[9];
     int watchPuppetField;   // diagnostic : surveille ce champ du Tommy distant (SurveilleTommy=0x24C)   // diagnostic : trace d'un script nomme    // diagnostic : chaque opcode des scripts de mission
@@ -74,6 +76,7 @@ void AutotestFrame();
 bool TogglePassenger();   // coop.cpp : touches F / G (monter a bord du vehicule d un autre joueur, en descendre)
 void InstallEnterHooks(); // coop.cpp
 void InstallAsiLoader();  // asi.cpp : mods .asi du dossier du jeu
+void InstallPlayers();    // players.cpp : pseudos a l'ecran
 
 // coop.cpp : appele une fois par image, sur le fil du jeu, juste avant l'affichage.
 void CoopFrame();

@@ -41,6 +41,8 @@ static void LoadConfig()
     g_cfg.port = GetPrivateProfileIntA("VCCoop", "Port", 7790, ini);
     g_cfg.logScripts = GetPrivateProfileIntA("VCCoop", "JournalScripts", 0, ini) != 0;
     g_cfg.friendlyFire = GetPrivateProfileIntA("VCCoop", "TirAmi", 1, ini) != 0;
+    g_cfg.showNames = GetPrivateProfileIntA("VCCoop", "AfficherPseudos", 1, ini) != 0;
+    GetPrivateProfileStringA("VCCoop", "Tenue", "", g_cfg.skin, sizeof(g_cfg.skin), ini);
     GetPrivateProfileStringA("VCCoop", "Autotest", "", g_cfg.autotest, sizeof(g_cfg.autotest), ini);
     g_cfg.logOpcodes = GetPrivateProfileIntA("VCCoop", "JournalOpcodes", 0, ini);
     GetPrivateProfileStringA("VCCoop", "TraceScript", "", g_cfg.traceScript, sizeof(g_cfg.traceScript), ini);
@@ -105,5 +107,6 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallInterp();
     InstallEnterHooks();
     InstallAsiLoader();
+    InstallPlayers();
     return TRUE;
 }
