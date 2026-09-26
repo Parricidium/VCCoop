@@ -400,6 +400,7 @@ static void GatherToHost(bool inGame)
     }
     if (!inGame) { gathered = false; return; }
     if (g_cfg.host || gathered || g_localId <= 0) return;
+    if (GuestSideMission()) { gathered = true; return; }   // en pleine course de taxi : on ne le deplace pas
     const NetPlayer &h = g_players[0];
     if (!h.connected || !h.state.inGame) return;
     void *ped = FindPlayerPed();

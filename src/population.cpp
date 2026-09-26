@@ -113,7 +113,8 @@ void PopulationFrame(bool inGame)
     bool hostHere = h.connected && h.state.inGame && h.state.area == AreaCode(me);
     float dx = h.state.pos[0] - Pos(me).x, dy = h.state.pos[1] - Pos(me).y;
     float d2 = dx * dx + dy * dy;
-    bool want = hostHere && d2 < (g_shared ? SHARE_LEAVE_M * SHARE_LEAVE_M : SHARE_ENTER_M * SHARE_ENTER_M);
+    // Mission secondaire en cours (taxi...) : il lui faut ses propres passants (clients, cibles) ; population locale.
+    bool want = hostHere && !GuestSideMission() && d2 < (g_shared ? SHARE_LEAVE_M * SHARE_LEAVE_M : SHARE_ENTER_M * SHARE_ENTER_M);
     if (want != g_shared) {
         g_shared = want;
         if (want) { g_savedPedDensity = PedDensity(); Log("population : partagee avec l'hote"); }

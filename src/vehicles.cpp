@@ -108,6 +108,8 @@ static void SendVehicle(NetVehicle &e)
     m.brake = Field<float>(v, 0x1F4);
     m.poolHandle = VehicleHandle(v);
     m.time = GetTickCount();
+    // Station : celle qu'ecoute le conducteur (cMusicManager 0x980038, station en cours +0x3984), sinon celle du vehicule.
+    m.radio = drv && drv == FindPlayerPed() ? (uint8_t)*(int *)(0x980038 + 0x3984) : Field<uint8_t>(v, 0x23C);
     // Rotation des roues (par 1/50 s) : calculee par le jeu au rendu (CAutomobile / CBike::PreRender).
     float step = TimeStep() > 0.01f ? TimeStep() : 1.0f;
     if (m.vclass == VCLASS_BIKE) { m.wheelSpin[0] = Field<float>(v, 0x418) / step; m.wheelSpin[1] = Field<float>(v, 0x41C) / step; }
@@ -152,6 +154,19 @@ static void ApplyState(NetVehicle &e)
     Field<uint8_t>(v, 0x1A0) = m.color1;   // SET_CAR_COLOUR peut les changer en cours de route
     Field<uint8_t>(v, 0x1A1) = m.color2;
     VehHealth(v) = m.health;
+    // Radio : celle que le conducteur a choisie (ou eteinte). Passager : on l'impose a notre musique, comme
+    // SET_RADIO_CHANNEL (041E) des missions.
+    Field<uint8_t>(v, 0x23C) = m.radio;
+    void *me = FindPlayerPed();
+    if (me && InVehicle(me) && PedVehicle(me) == v && SeatOf(v, me) > 0 && *(int *)(0x980038 + 0x3984) != m.radio) {
+        static uint32_t last;
+        if (GetTickCount() - last > 1000) {
+            last = GetTickCount();
+            int32_t args[2] = { m.radio, -1 };
+            MirrorLocal(0x041E, 2, args);
+            Log("vehicules : radio %d (celle du conducteur)", m.radio);
+        }
+    }
     // Sans IA : un vehicule "abandonne" garde sa physique mais personne ne le conduit.
     if (EntityStatus(v) != STATUS_WRECKED) SetEntityStatus(v, STATUS_ABANDONED);
 }
