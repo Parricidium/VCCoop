@@ -239,6 +239,49 @@ static void ReplayProjectile(const RlProjectile &r)
     if (g_cfg.logScripts) Log("combat : projectile %d du joueur %d rejoue", r.weapon, r.player);
 }
 
+// --- Tir en passager ---
+// Le jeu ne fait tirer que le conducteur (CVehicle::DoDriveByShootings, 0x5C97B0 : regarder a gauche / a droite +
+// tirer, armes de poing et mitraillettes). Passager, on fait la meme chose pour lui : animation de tir sur le cote,
+// CWeapon::FireFromCar. Le tir est attribue au conducteur du vehicule : il devient nous le temps du tir, sinon
+// les degats seraient ceux du Tommy distant (ignores) et les munitions les siennes.
+static void *GetPad0() { return ((void *(__cdecl *)(int))0x4AB060)(0); }
+
+bool g_testPassengerFire;   // autotest : tire a gauche en continu
+
+void PassengerShooting()
+{
+    void *me = FindPlayerPed();
+    if (!me || !InVehicle(me) || !PedVehicle(me)) return;
+    void *veh = PedVehicle(me);
+    if (SeatOf(veh, me) <= 0 || VehClass(veh) == VCLASS_BIKE) return;
+    uint8_t *slot = (uint8_t *)me + 0x408 + CurrentWeaponSlot(me) * 0x18;
+    int type = *(int *)slot;
+    uint8_t *info = ((uint8_t *(__cdecl *)(int))0x5D5710)(type);
+    if (!info || *(int *)(info + 0x60) != 5) return;   // pas une arme de tir en voiture
+    void *pad = GetPad0();
+    bool left = g_testPassengerFire || ((bool(__thiscall *)(void *))0x4AAC90)(pad);
+    bool right = !left && ((bool(__thiscall *)(void *))0x4AAC60)(pad);
+    void *clump = Field<void *>(me, 0x4C);
+    bool low = (Field<uint8_t>(veh, 0x1FA) >> 3 & 1) != 0;
+    int animL = low ? 0x70 : 0x6E, animR = low ? 0x71 : 0x6F;
+    auto stop = [&](int id) { for (void *a = FirstAssoc(clump); a; a = NextAssoc(a)) if (Field<int16_t>(a, 0x2C) == id) Field<float>(a, 0x1C) = -1000.0f; };
+    if (!left && !right) { stop(animL); stop(animR); return; }
+    int want = left ? animL : animR;
+    stop(left ? animR : animL);
+    bool playing = false;
+    for (void *a = FirstAssoc(clump); a; a = NextAssoc(a)) playing |= Field<int16_t>(a, 0x2C) == want && Field<float>(a, 0x1C) >= 0.0f;
+    if (!playing) BlendAnimation(clump, 0, want, 8.0f);
+    bool fire = g_testPassengerFire || ((bool(__thiscall *)(void *))0x4AAA60)(pad);   // CPad::GetCarGunFired
+    uint32_t now = TimeInMs();
+    if (!fire || *(uint32_t *)(slot + 0x10) >= now || *(int *)(slot + 0xC) <= 0) return;
+    void *driver = VehDriver(veh);
+    VehDriver(veh) = me;
+    ((bool(__thiscall *)(void *, void *, bool, bool))0x5D44E0)(slot, veh, left, right);
+    VehDriver(veh) = driver;
+    *(uint32_t *)(slot + 0x10) = now + 70;
+    g_localShots++;
+}
+
 // Autotest : ce que fait CPed::FightHitPed quand le joueur local frappe victim (parade puis degats).
 void TestMeleeHit(void *victim)
 {
