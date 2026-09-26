@@ -31,8 +31,11 @@ JOUER
 - Raccourcis possibles : "VCCoop - Heberger.cmd" / "VCCoop - Rejoindre.cmd".
 - L'hote joue les missions comme en solo. Les invites sont places a cote de
   lui au debut et a la fin de chaque mission.
-- Touche G : monter comme passager dans le vehicule d'un autre joueur
-  (ou en descendre).
+- Touche F (entrer dans un vehicule) pres du vehicule d'un autre joueur : on
+  prend la premiere place libre (volant ou passager) au lieu de le lui voler.
+  Passager, F pour descendre. La touche G fait la meme chose.
+- Les joueurs peuvent se blesser entre eux (coups, balles, voiture) :
+  TirAmi=0 dans le vccoop.ini de l'hote pour l'empecher.
 
 MONDE PARTAGE
 -------------
@@ -62,3 +65,11 @@ A SAVOIR (version de test)
   tard la recoit aussi. L'avancement de l'histoire de l'hote est ensuite
   transmis aux invites au fil des missions.
 - En cas de souci : vccoop.log (dans le dossier du jeu) aide a comprendre.
+
+AUTRES MODS (.asi)
+------------------
+VCCoop utilise dinput8.dll, le meme nom que l'"Ultimate ASI Loader" : ne
+l'installez pas, VCCoop charge lui-meme les fichiers .asi du dossier du jeu,
+de scripts\ et de plugins\ (ChargerASI=0 pour ne pas les charger). Evitez les
+mods qui font deja ce que fait VCCoop (ecran large, limite d'images) et ceux
+qui changent les missions : l'hote et les invites doivent avoir les memes.

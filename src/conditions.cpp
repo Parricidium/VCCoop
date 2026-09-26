@@ -58,6 +58,10 @@ static bool AnyGuestSatisfies(uint16_t op)
     // Un LOCATE de personnage ne concerne les joueurs que s'il vise le Tommy de l'hote : on le lit comme
     // le LOCATE "joueur" correspondant (meme disposition des parametres apres le premier).
     if (IsCharLocate(op)) op = (uint16_t)(op - 0x00FE + 0x00EC);
+    // "Joueur pres d'un personnage" (00F2-00F4, 00FB-00FD) : c'est presque toujours la logique d'un accompagnateur
+    // (Ken, Lance... le suivre, l'attendre). Rempli par un invite reste a cote de lui, le script de l'accompagnateur
+    // croyait l'hote la et la mission de l'hote attendait sans fin (The Party). Reserve a l'hote.
+    if ((op >= 0x00F2 && op <= 0x00F4) || (op >= 0x00FB && op <= 0x00FD)) return false;
     for (int i = 1; i < MAX_PLAYERS; i++) {
         const NetPlayer &g = g_players[i];
         if (!g.connected || !g.state.inGame) continue;

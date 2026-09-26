@@ -8,6 +8,8 @@
 //   Autotest=passager : des qu'un autre joueur est au volant pres de nous, monte a cote de lui (touche G), et
 //                       redescend (G) 6 s plus tard
 //   Autotest=bagarre : toutes les 2 s, alternativement un coup de poing (rond) et un saut (carre)
+//   Autotest=cogneur : toutes les 2 s, le joueur local "frappe" (10 points, a mains nues) le Tommy du joueur voisin
+//   Autotest=boxeur : se place a 1 m du Tommy du joueur voisin, face a lui, et lui donne un coup de poing toutes les 2 s
 //   Autotest=moto : (hote) fait apparaitre un Faggio a cote de lui, s'assoit dessus, roule doucement par moments
 //   Autotest=cible : (hote) cree un personnage de mission a cote de lui ; toutes les 3 s il "blesse" le Tommy de l'invite
 //   Autotest=frappe : (invite) toutes les 2 s, inflige 25 points a la copie du personnage de mission le plus proche
@@ -101,6 +103,48 @@ void AutotestFrame()
         if (k == 0) Log("autotest : %s", ((t - 150) / 120) % 2 ? "saut" : "coup de poing");
         return;
     }
+    bool onNpc = _stricmp(g_cfg.autotest, "boxeurpnj") == 0;   // (invite) la copie d'un personnage de mission
+    if (onNpc || _stricmp(g_cfg.autotest, "boxeur") == 0) {
+        uint32_t t = frame - controlSince;
+        void *victim = onNpc ? NULL : PuppetPed(g_localId == 0 ? 1 : 0);
+        if (onNpc && PuppetPed(0)) {   // la copie la plus proche de l'hote (la cible qu'il a creee devant lui)
+            Pool *pool = PedPool();
+            Vec3 hp = Pos(PuppetPed(0));
+            float best = 100.0f;
+            for (int i = 0; i < pool->size; i++) {
+                if (pool->flags[i] & 0x80) continue;
+                void *p = pool->objects + i * PED_POOL_ENTRY;
+                if (!IsGhostPed(p) || Health(p) <= 0 || InVehicle(p)) continue;
+                float dx = Pos(p).x - hp.x, dy = Pos(p).y - hp.y, d = dx * dx + dy * dy;
+                if (d < best) { best = d; victim = p; }
+            }
+        }
+        void *me = FindPlayerPed();
+        if (!victim || t < 150) return;
+        uint32_t k = (t - 150) % 60;
+        if (k == 0) {
+            float h = Heading(victim);
+            Vec3 v = Pos(victim);
+            Pos(me) = { v.x + sinf(h) * 1.0f, v.y - cosf(h) * 1.0f, v.z };   // derriere lui (la ou il y a de la place)
+            MoveSpeed(me) = { 0, 0, 0 };
+            float face = atan2f(-(v.x - Pos(me).x), v.y - Pos(me).y);   // tourne vers lui (avant = (-sin, cos))
+            SetHeadingMatrix(me, face);
+            Heading(me) = HeadingGoal(me) = face;
+            Log("autotest : coup de poing sur l'autre joueur");
+        }
+        if (onNpc) { if (k == 3) { TestMeleeHit(victim); Log("autotest : coup simule sur la copie"); } }
+        else if (k >= 2 && k < 5) Press(PAD_CIRCLE, 255);
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "cogneur") == 0) {
+        uint32_t t = frame - controlSince;
+        void *victim = PuppetPed(g_localId == 0 ? 1 : 0);
+        if (victim && t > 150 && t % 60 == 0) {
+            ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(victim, FindPlayerPed(), 0, 10.0f, 0, 0);
+            Log("autotest : je frappe l'autre joueur");
+        }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "moto") == 0) {
         static void *bike;
         static uint32_t seated;
@@ -129,15 +173,18 @@ void AutotestFrame()
         if (seated && InVehicle(me) && (frame - seated) % 240 > 180) Press(PAD_CROSS, 160);
         return;
     }
-    if (_stricmp(g_cfg.autotest, "passager") == 0) {
+    bool withF = _stricmp(g_cfg.autotest, "passagerf") == 0;   // meme chose avec la touche F (manette : triangle)
+    if (withF || _stricmp(g_cfg.autotest, "passager") == 0) {
         static bool boarded, left;
         static uint32_t boardedAt;
+        if (boarded && withF && frame - boardedAt == 30) Log("autotest : a bord=%d (place %d)", InVehicle(FindPlayerPed()),
+            InVehicle(FindPlayerPed()) && PedVehicle(FindPlayerPed()) ? SeatOf(PedVehicle(FindPlayerPed()), FindPlayerPed()) : -1);
         if (boarded && !left && frame - boardedAt > 180) {
             left = true;
-            Log("autotest : touche G (descendre)");
-            TogglePassenger();
-            Log("autotest : descendu, a pied=%d", !InVehicle(FindPlayerPed()));
+            Log("autotest : touche %s (descendre)", withF ? "F" : "G");
+            if (withF) Press(PAD_TRIANGLE, 255); else TogglePassenger();
         }
+        if (left && frame - boardedAt == 200) Log("autotest : descendu, a pied=%d", !InVehicle(FindPlayerPed()));
         const NetPlayer &h = g_players[0];
         if (!boarded && g_localId > 0 && h.connected && h.state.inVehicle && h.state.seat == 0 && frame - controlSince > 30) {
             void *ped = FindPlayerPed();
@@ -145,8 +192,8 @@ void AutotestFrame()
             if (dx * dx + dy * dy < 64.0f) {
                 boarded = true;
                 boardedAt = frame;
-                Log("autotest : l'hote est au volant, touche G");
-                TogglePassenger();
+                Log("autotest : l'hote est au volant, touche %s", withF ? "F" : "G");
+                if (withF) Press(PAD_TRIANGLE, 255); else TogglePassenger();
             }
         }
         return;

@@ -25,7 +25,7 @@ struct MsgHello { uint8_t type, version; char name[24]; };
 struct MsgWelcome { uint8_t type, id; };
 struct MsgBye { uint8_t type, id; };
 
-// Animation "d'action" d'un joueur (tout sauf marcher / courir / attendre), rejouee sur son Tommy chez les autres.
+// Animation "d'action" (tout sauf marcher / courir / attendre), rejouee sur la copie du personnage chez les autres.
 struct AnimSlot { int16_t id; uint8_t group, blend; float time; };   // id -1 : aucune
 
 // Etat d'un joueur, envoye ~30 fois par seconde.
@@ -57,6 +57,7 @@ struct MsgWorld {
     uint32_t playerHandle;   // reference de pool du Tommy de l'hote (pour traduire les commandes qui le visent)
     float fade;              // niveau du fondu de la camera de l'hote (0 = image claire, 255 = noir)
     uint8_t fading, widescreen;
+    uint8_t friendlyFire;    // les joueurs peuvent se blesser entre eux (reglage TirAmi de l'hote)
 };
 // Vehicule reseau : identifiant = (numero du joueur qui l'a cree << 24) | compteur.
 struct MsgVehicle {
@@ -84,6 +85,7 @@ struct MsgPed {
     int32_t weapon;         // type d'arme en main
     char modelName[21];     // pour les personnages speciaux (Lance, Ken...)
     uint32_t time;          // GetTickCount de l'envoi
+    AnimSlot anims[2];      // animations d'action (se battre, tomber, se relever...)
 };
 struct MsgPedRemove { uint8_t type; uint32_t handle; };
 #pragma pack(pop)

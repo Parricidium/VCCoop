@@ -18,7 +18,9 @@ using namespace game;
 // Signature des parametres :
 //   v valeur   l etiquette de texte (8 octets)
 //   P personnage   C vehicule   O objet   B marqueur   (references en entree, a traduire)
-//   b marqueur cree   o objet cree   (sorties : on retient la correspondance hote -> invite)
+//   M personnage, mais le Tommy de l'hote devient le notre (tenue changee par la mission : chacun s'habille)
+//   b marqueur cree   o objet cree   k pickup cree   (sorties : on retient la correspondance hote -> invite)
+//   K pickup (reference en entree)
 //   * signature libre : tous les parametres sont relus apres execution (commandes sans reference d'entite)
 struct OpSig { uint16_t op; const char *sig; const char *name; };
 static const OpSig g_ops[] = {
@@ -80,6 +82,12 @@ static const OpSig g_ops[] = {
     { 0x03EF, "*", "MAKE_PLAYER_SAFE_FOR_CUTSCENE" },
     { 0x03BF, "*", "SET_EVERYONE_IGNORE_PLAYER" },
     { 0x0055, "vvvv", "SET_PLAYER_COORDINATES" },
+    { 0x0213, "vvvvvk", "CREATE_PICKUP" },
+    { 0x032B, "vvvvvvk", "CREATE_PICKUP_WITH_AMMO" },
+    { 0x02E1, "vvvvk", "CREATE_MONEY_PICKUP" },
+    { 0x0215, "K", "REMOVE_PICKUP" },
+    { 0x0352, "Ml", "UNDRESS_CHAR" },
+    { 0x0353, "M", "DRESS_CHAR" },
     // Configuration du monde faite par l'intro (population des zones, densites) : l'invite ne la joue pas.
     { 0x0152, "*", "SET_ZONE_CAR_INFO" },
     { 0x0324, "*", "SET_ZONE_PED_GROUP_INFO" },
@@ -184,7 +192,7 @@ bool MirrorBefore(void *script, int ip, uint16_t op)
         case 5: p.literal = *(int16_t *)(ss + at + 1); at += 3; break;
         default: goto mismatch;
         }
-        if ((*k == 'b' || *k == 'o') && t != 2 && t != 3) goto mismatch;   // une sortie est forcement une variable
+        if ((*k == 'b' || *k == 'o' || *k == 'k') && t != 2 && t != 3) goto mismatch;   // une sortie est forcement une variable
     }
     g_paramCount = n;
     g_pending = sig;
@@ -347,8 +355,8 @@ void MirrorMissionEnd()
 // ======================================================================= Invite : rejeu
 // Correspondances hote -> invite pour les marqueurs et objets crees par les commandes rejouees.
 struct HandlePair { uint32_t host, guest; };
-static HandlePair g_blips[128], g_objs[128];
-static int g_blipCount, g_objCount;
+static HandlePair g_blips[128], g_objs[128], g_pickups[128];
+static int g_blipCount, g_objCount, g_pickupCount;
 
 static bool MapGet(HandlePair *m, int n, uint32_t host, uint32_t &guest)
 {
@@ -378,10 +386,14 @@ enum { SCRATCH = 0x370E8 + 0x40 };   // zone des missions de ScriptSpace : jamai
 static bool Translate(char kind, uint32_t host, uint32_t &guest)
 {
     switch (kind) {
+    case 'M':
+        if (host == g_hostPlayerHandle && FindPlayerPed()) { guest = PedHandle(FindPlayerPed()); return true; }
+        return GuestPedForHost(host, guest);
     case 'P': return GuestPedForHost(host, guest);
     case 'C': return GuestVehicleForHost(host, guest);
     case 'O': return MapGet(g_objs, g_objCount, host, guest);
     case 'B': return MapGet(g_blips, g_blipCount, host, guest);
+    case 'K': return MapGet(g_pickups, g_pickupCount, host, guest);
     }
     guest = host;
     return true;
@@ -404,7 +416,7 @@ static bool Execute(const uint8_t *d, int len, bool force)
         if (kind == 'l') { memcpy(ss + w, d + at, 8); w += 8; at += 8; continue; }
         uint32_t v;
         memcpy(&v, d + at, 4); at += 4;
-        if (kind == 'b' || kind == 'o') {
+        if (kind == 'b' || kind == 'o' || kind == 'k') {
             ss[w] = 3;                                   // variable locale de notre script
             *(uint16_t *)(ss + w + 1) = (uint16_t)outCount;
             w += 3;
@@ -437,12 +449,18 @@ static bool Execute(const uint8_t *d, int len, bool force)
     for (int i = 0; i < outCount; i++) {
         uint32_t g = Field<uint32_t>(g_script, 0x30 + i * 4);
         if (outs[i].kind == 'b') MapSet(g_blips, g_blipCount, 128, outs[i].host, g);
+        else if (outs[i].kind == 'k') MapSet(g_pickups, g_pickupCount, 128, outs[i].host, g);
         else MapSet(g_objs, g_objCount, 128, outs[i].host, g);
     }
     if (op == 0x0164) {   // REMOVE_BLIP : on oublie la correspondance
         uint32_t host;
         memcpy(&host, d + 5, 4);
         MapDel(g_blips, g_blipCount, host);
+    }
+    if (op == 0x0215) {   // REMOVE_PICKUP
+        uint32_t host;
+        memcpy(&host, d + 5, 4);
+        MapDel(g_pickups, g_pickupCount, host);
     }
     if (op == 0x02EA) g_objCount = 0;   // CLEAR_CUTSCENE detruit les objets de la cinematique
     if (g_cfg.logScripts) { const OpSig *s = FindOp(op); Log("miroir : rejoue %s", s ? s->name : "?"); }
@@ -478,6 +496,10 @@ static void MissionEnd()
     Local(0x02A3, 1, off);
     Local(0x01B4, 2, control);
     Local(0x02EB, 0, NULL);
+    // Pickups poses par la mission : chez l'hote, le nettoyage de fin de mission les retire ; les notres ont ete crees
+    // par notre script prive, on les retire nous-memes.
+    for (int i = 0; i < g_pickupCount; i++) { int32_t h[1] = { (int32_t)g_pickups[i].guest }; Local(0x0215, 1, h); }
+    g_pickupCount = 0;
     g_objCount = 0;
     RequestGather();
     Log("miroir : fin de mission chez l'hote");
@@ -506,7 +528,7 @@ void MirrorInit()
 void MirrorFrame(bool inGame)
 {
     if (g_cfg.host) { if (!inGame) g_activeBlipCount = 0; HostSyncNewcomers(inGame); return; }
-    if (!inGame) { g_blipCount = g_objCount = 0; return; }
+    if (!inGame) { g_blipCount = g_objCount = g_pickupCount = 0; return; }
     uint32_t now = GetTickCount();
     while (g_qHead != g_qTail) {
         Pending &p = g_queue[g_qHead];
