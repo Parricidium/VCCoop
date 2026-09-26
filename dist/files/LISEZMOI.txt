@@ -82,6 +82,13 @@ au vrai format de l'ecran (16:9, 21:9, 32:9) : on voit plus large, sans
 deformation, et le HUD garde ses proportions. Reglages dans vccoop.ini
 (Fenetre, GrandEcran). Les menus gardent leurs proportions, centres.
 
+MODS PARTAGES
+-------------
+Modeles de voitures, armes, batiments (dff/txd) et lignes handling/carcols
+deposes dans VCCoop\mods remplacent ceux du jeu et sont envoyes tout seuls
+aux invites par l'hote (voir VCCoop\mods\LISEZMOI.txt). ModsPartages=0
+pour couper.
+
 INTERFACE PERSONNALISEE
 -----------------------
 Texte des menus gris tres fonce (1b1b1b) a contour rose, plus petit et plus net (reglages

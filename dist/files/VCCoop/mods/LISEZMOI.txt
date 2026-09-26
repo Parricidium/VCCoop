@@ -1,0 +1,33 @@
+MODS PARTAGES (ModsPartages=1 dans vccoop.ini)
+==============================================
+
+Deposez vos mods ici, dans des sous-dossiers a votre convenance (leur nom ne
+sert qu'a vous y retrouver) :
+
+  VCCoop\mods\ma ferrari\cheetah.dff
+  VCCoop\mods\ma ferrari\cheetah.txd
+  VCCoop\mods\ma ferrari\handling.cfg
+
+Ce qui compte, c'est le nom des fichiers :
+- nom.dff / nom.txd (et .col, .ifp) : remplacent le modele "nom" du jeu,
+  voiture, arme, personnage ou batiment (cheetah, infernus, colt45, ...).
+- handling.cfg (ou handling.txt, *.handling) : lignes de conduite au format du
+  handling.cfg du jeu ; chaque ligne remplace celle du jeu qui commence par le
+  meme nom de vehicule (CHEETAH ...).
+- carcols.dat : lignes de couleurs (cheetah, 1,1, 2,2 ...), meme principe.
+Les mods qui livrent handling.xml (GTA V) ne sont pas au format de Vice City :
+il faut la ligne handling.cfg du mod, generalement fournie dans son lisez-moi.
+
+Fonctionnement :
+- A chaque lancement de partie, un vccmods.img est fabrique a la racine du
+  jeu a partir de ces fichiers et charge en priorite sur gta3.img. Rien n'est
+  modifie dans les fichiers du jeu : videz le dossier et tout redevient
+  d'origine.
+- L'hote envoie automatiquement son dossier aux invites (meme port que la
+  partie, en TCP : ouvrez-le aussi en TCP si vous ouvrez un port). L'invite ne
+  telecharge que ce qui lui manque ; la partie ne demarre pas tant qu'un
+  invite telecharge (indique dans le salon). Chez l'invite, seuls les fichiers
+  de l'hote sont charges : tout le monde a les memes modeles.
+- Limite : 64 Mo par fichier, noms de modeles de 23 caracteres au plus.
+- Pas de nouveaux vehicules (identifiants ajoutes) : seulement des
+  remplacements.

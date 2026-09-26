@@ -371,6 +371,7 @@ static void SendLocalState(bool inGame)
     s.id = (uint8_t)g_localId;
     s.seq = ++seq;
     s.time = now;
+    s.modsPct = (uint8_t)ModsPercent();
     for (AnimSlot &a : s.anims) a.id = -1;
     lstrcpynA(s.name, g_cfg.playerName, sizeof(s.name));
     void *ped = inGame ? FindPlayerPed() : NULL;
@@ -768,6 +769,7 @@ void CoopFrame()
     }
 
     MenuFrame();
+    ModsFrame();
     SaveShareFrame();
     AutotestFrame();
     NetPoll();

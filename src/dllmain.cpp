@@ -53,9 +53,11 @@ static void LoadConfig()
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;
     g_cfg.showNames = GetPrivateProfileIntA("VCCoop", "AfficherPseudos", 1, ini) != 0;
+    g_cfg.sharedMods = GetPrivateProfileIntA("VCCoop", "ModsPartages", 1, ini) != 0;
     GetPrivateProfileStringA("VCCoop", "Tenue", "", g_cfg.skin, sizeof(g_cfg.skin), ini);
     GetPrivateProfileStringA("VCCoop", "Autotest", "", g_cfg.autotest, sizeof(g_cfg.autotest), ini);
     g_cfg.logOpcodes = GetPrivateProfileIntA("VCCoop", "JournalOpcodes", 0, ini);
+    g_cfg.testModel = GetPrivateProfileIntA("VCCoop", "TestModele", 0, ini);
     GetPrivateProfileStringA("VCCoop", "TraceScript", "", g_cfg.traceScript, sizeof(g_cfg.traceScript), ini);
     g_cfg.watchPuppetField = GetPrivateProfileIntA("VCCoop", "SurveilleTommy", 0, ini);
     g_cfg.autoStart = GetPrivateProfileIntA("VCCoop", "AutoDemarrer", 0, ini) != 0;
@@ -110,6 +112,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallGamePatches();
     InstallWindowHooks();
     InstallFileHooks();
+    InstallMods();
     InstallScriptHooks();
     InstallCombatHooks();
     InstallMenu();
