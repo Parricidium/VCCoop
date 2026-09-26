@@ -40,7 +40,7 @@ static void ParseColor(const char *s, uint8_t *out)
 static void LoadSettings()
 {
     char ini[MAX_PATH], buf[64];
-    wsprintfA(ini, "%svccoop.ini", GameDir());
+    lstrcpynA(ini, IniPath(), MAX_PATH);
     g_style = GetPrivateProfileIntA("VCCoop", "StyleMenus", 1, ini) != 0;
     GetPrivateProfileStringA("VCCoop", "CouleurTexteMenus", "27,27,27", buf, sizeof(buf), ini);
     ParseColor(buf, g_fill);

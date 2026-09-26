@@ -71,7 +71,7 @@ void CoopStartNetwork()
 static void SaveIni()
 {
     char ini[MAX_PATH];
-    wsprintfA(ini, "%svccoop.ini", GameDir());
+    lstrcpynA(ini, IniPath(), MAX_PATH);
     WritePrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, ini);
     WritePrivateProfileStringA("VCCoop", "Pseudo", g_cfg.playerName, ini);
     WritePrivateProfileStringA("VCCoop", "TirAmi", g_cfg.friendlyFire ? "1" : "0", ini);
@@ -83,7 +83,8 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "DistanceAffichage", dd, ini);
     wsprintfA(dd, "%d", g_cfg.msaa);
     WritePrivateProfileStringA("VCCoop", "Anticrenelage", dd, ini);
-    WritePrivateProfileStringA("VCCoop", "FiltrageAnisotrope", g_cfg.aniso ? "1" : "0", ini);
+    if (!WritePrivateProfileStringA("VCCoop", "FiltrageAnisotrope", g_cfg.aniso ? "1" : "0", ini))
+        Log("reglages : ecriture impossible dans %s (erreur %lu)", ini, GetLastError());
 }
 
 // --- Textes ---

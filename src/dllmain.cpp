@@ -29,7 +29,7 @@ extern "C" HRESULT WINAPI Proxy_DirectInput8Create(HINSTANCE inst, DWORD ver, co
 static void LoadConfig()
 {
     char ini[MAX_PATH];
-    wsprintfA(ini, "%svccoop.ini", GameDir());
+    lstrcpynA(ini, IniPath(), MAX_PATH);
     g_cfg.windowed = GetPrivateProfileIntA("VCCoop", "Fenetre", 1, ini) != 0;
     g_cfg.winX = GetPrivateProfileIntA("VCCoop", "FenetreX", 40, ini);
     g_cfg.winY = GetPrivateProfileIntA("VCCoop", "FenetreY", 40, ini);

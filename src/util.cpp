@@ -18,6 +18,36 @@ const char *GameDir()
     return g_gameDir;
 }
 
+// vccoop.ini : celui du dossier du jeu. Si ce dossier n'est pas modifiable (Program Files sans droits
+// d'administrateur : les reglages changes dans le menu ne se gardaient pas), une copie dans
+// %LOCALAPPDATA%\VCCoop\<dossier du jeu>ccoop.ini sert a la place (creee a partir de celui du jeu).
+static char g_iniPath[MAX_PATH];
+
+const char *IniPath()
+{
+    if (g_iniPath[0]) return g_iniPath;
+    wsprintfA(g_iniPath, "%svccoop.ini", GameDir());
+    HANDLE h = CreateFileA(g_iniPath, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h != INVALID_HANDLE_VALUE) { CloseHandle(h); return g_iniPath; }
+    DWORD err = GetLastError();
+    char base[MAX_PATH], alt[MAX_PATH];
+    if (!GetEnvironmentVariableA("LOCALAPPDATA", base, MAX_PATH)) return g_iniPath;
+    // Nom du sous-dossier : le chemin du jeu sans caracteres genants.
+    char tag[MAX_PATH];
+    int n = 0;
+    for (const char *c = GameDir(); *c && n < 100; c++) tag[n++] = (*c == '\\' || *c == ':' || *c == ' ') ? '_' : *c;
+    tag[n] = 0;
+    wsprintfA(alt, "%s\\VCCoop", base);
+    CreateDirectoryA(alt, NULL);
+    wsprintfA(alt, "%s\\VCCoop\\%s", base, tag);
+    CreateDirectoryA(alt, NULL);
+    lstrcatA(alt, "\\vccoop.ini");
+    if (GetFileAttributesA(alt) == INVALID_FILE_ATTRIBUTES) CopyFileA(g_iniPath, alt, TRUE);
+    Log("reglages : %s non modifiable (erreur %lu), copie utilisee : %s", g_iniPath, err, alt);
+    lstrcpynA(g_iniPath, alt, MAX_PATH);
+    return g_iniPath;
+}
+
 // Chaque partie a aussi son journal dans le dossier logs (vccoop-AAAA-MM-JJ_HH-MM-SS.log), garde : apres un
 // plantage, on relance souvent le jeu avant de penser a envoyer le journal. Les 50 plus recents sont conserves.
 static FILE *g_logKept;

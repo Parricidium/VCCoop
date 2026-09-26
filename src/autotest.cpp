@@ -521,7 +521,7 @@ void AutotestFrame()
             // TestDistance=N (vccoop.ini) : on part a N m sur le cote du vehicule le plus proche.
             if (t == 1) {
                 char ini[MAX_PATH];
-                wsprintfA(ini, "%svccoop.ini", GameDir());
+                lstrcpynA(ini, IniPath(), MAX_PATH);
                 int dist = GetPrivateProfileIntA("VCCoop", "TestDistance", 0, ini);
                 Pool *vp = VehiclePool();
                 void *best = NULL;
