@@ -26,6 +26,7 @@ struct Config {
     int drawDistance;   // DistanceAffichage=200 (en %) : detail, passants et vehicules visibles plus loin
     int msaa;           // Anticrenelage=4 : 0, 2, 4 ou 8 echantillons (au prochain lancement)
     bool aniso;         // FiltrageAnisotrope=1 : textures nettes au loin (16x, trilineaire)
+    bool sunShadows;    // OmbresSoleil=1 : ombres projetees du soleil (carte d'ombre, gfx.cpp)
     bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
     float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;
@@ -72,6 +73,10 @@ void UpdateHudScale();
 bool MenuSqueezeActive();
 float MenuSqueezeFactor();
 void SuspendMenuSqueeze(bool on);
+
+// gfx.cpp : socle du rendu moderne (interception des dessins Direct3D 8)
+void GfxHookDevice(void *dev);
+void GfxBeforeReset();
 
 // mods.cpp : mods partages (modeles remplaces, conduite, couleurs) et leur distribution
 void InstallMods();

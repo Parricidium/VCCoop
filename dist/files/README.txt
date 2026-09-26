@@ -45,7 +45,8 @@ PLAY
 - COOP menu: Host / Join (host's address, then Connect) / Nickname / Options.
   Options > Coop options (friendly fire, shared money, names, keep weapons) and Video
   options (draw distance 100 to 400 %, anti-aliasing 2x to 8x taken at the
-  next launch, anisotropic filtering). Video options are set before hosting /
+  next launch, anisotropic filtering, sun shadows: buildings, palms, vehicles
+  and characters cast real shadows according to the time of day). Video options are set before hosting /
   joining, or in game with Esc > COOP; the host has "Coop options" in the
   lobby and in game.
 - Tab (hold): player list (health, armour, ping, distance).

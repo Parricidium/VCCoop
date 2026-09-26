@@ -190,6 +190,7 @@ static HRESULT WINAPI h_Reset(void *dev, D3DPRESENT_PARAMETERS8 *pp)
 {
     MakeWindowed(pp);
     ApplyMsaa(pp);
+    GfxBeforeReset();
     HRESULT hr = o_Reset(dev, pp);
     Log("Reset %ux%u fenetre=%d -> 0x%08lX", pp->BackBufferWidth, pp->BackBufferHeight, pp->Windowed, hr);
     FitWindow(g_hwnd, pp->BackBufferWidth, pp->BackBufferHeight);
@@ -222,6 +223,7 @@ static HRESULT WINAPI h_CreateDevice(void *d3d, UINT adapter, UINT type, HWND fo
             o_Reset = (Reset_t)PatchPointer(&vt[VT_DEV_RESET], (void *)h_Reset);
             o_Present = (Present_t)PatchPointer(&vt[VT_DEV_PRESENT], (void *)h_Present);
             o_SetTss = (SetTss_t)PatchPointer(&vt[VT_DEV_SETTSS], (void *)h_SetTss);
+            GfxHookDevice(*out);
         }
         FitWindow(g_hwnd, pp->BackBufferWidth, pp->BackBufferHeight);
     }
