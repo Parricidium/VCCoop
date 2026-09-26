@@ -24,9 +24,9 @@ JOUER
 -----
 - Lancer le jeu normalement (gta-vc.exe). Dans le menu principal : COOP.
 - L'hote choisit "Creer une partie", puis confirme la nouvelle partie.
-- Les autres reglent "Adresse" (IP de l'hote : Entree, taper l'adresse,
-  Entree) et leur "Pseudo", puis "Rejoindre" : une fois connectes, ils
-  confirment la nouvelle partie.
+- Les autres mettent leur "Pseudo", puis Rejoindre > "Adresse" (IP de
+  l'hote : Entree, taper l'adresse, Entree) > "Se connecter" : une fois
+  connectes, ils suivent l'hote tout seuls.
 - Sans passer par COOP, le jeu reste en solo.
 - Raccourcis possibles : "VCCoop - Heberger.cmd" / "VCCoop - Rejoindre.cmd".
 - L'hote joue les missions comme en solo. Les invites sont places a cote de
@@ -45,8 +45,9 @@ JOUER
   "Nouvelle partie" ou "Charger une partie". Les invites (COOP > Rejoindre)
   attendent dans le salon et suivent l'hote tout seuls des qu'il est en jeu
   (meme sauvegarde, ou nouvelle partie).
-- Menu COOP : Creer une partie / Rejoindre / Pseudo / Options. Options >
-  Options coop (adresse, tir ami, argent partage, pseudos, garder ses armes)
+- Menu COOP : Creer une partie / Rejoindre (adresse de l'hote, puis Se
+  connecter) / Pseudo / Options. Options > Options coop (tir ami, argent
+  partage, pseudos, garder ses armes)
   et Options video (distance d'affichage 100 a 400 %, anticrenelage 2x a 8x
   pris au prochain lancement, filtrage anisotrope). Les options video se
   reglent avant de creer / rejoindre, ou en jeu par Echap > COOP ; l'hote a

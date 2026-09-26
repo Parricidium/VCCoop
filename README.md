@@ -63,9 +63,9 @@ Start `gta-vc.exe` normally. Main menu > **COOP**:
 | | |
 |---|---|
 | **Host a game** | Opens the lobby with the list of connected players. **New game** or **Load a game**: the guests follow you by themselves (your save is sent to them). |
-| **Join** | Set **Address** (the host's IP: Enter, type, Enter) and your **Nickname**, then Join. You wait in the lobby and enter the game when the host does. |
+| **Join** | **Address** (the host's IP: Enter, type, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
 | **Nickname** | Your name, set before hosting or joining. |
-| **Options** | **Coop options**: host's address, friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering. Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
+| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering. Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` go straight to hosting / joining. Without COOP the
 game stays single player. **Esc > COOP** in game shows the same page.
@@ -241,9 +241,9 @@ Lancer `gta-vc.exe` normalement. Menu principal > **COOP** :
 | | |
 |---|---|
 | **Créer une partie** | Ouvre le salon avec la liste des joueurs connectés. **Nouvelle partie** ou **Charger une partie** : les invités suivent tout seuls (la sauvegarde leur est envoyée). |
-| **Rejoindre** | Régler **Adresse** (IP de l'hôte : Entrée, taper, Entrée) et **Pseudo**, puis Rejoindre. On attend dans le salon et on entre en jeu avec l'hôte. |
+| **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
 | **Pseudo** | Votre nom, à régler avant de créer ou rejoindre. |
-| **Options** | **Options coop** : adresse de l'hôte, tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope. Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
+| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope. Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` vont droit à l'hébergement / la connexion. Sans
 passer par COOP, le jeu reste en solo. **Échap > COOP** en jeu montre la même page.
