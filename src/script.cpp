@@ -59,6 +59,13 @@ static char __fastcall h_ProcessOneCommand(void *script)
         static uint32_t lastLog;
         Field<int>(script, 0x10) = ip + 2;
         CollectParameters(script, 1);
+        // INITIAL (mission 0) : pas une mission d'histoire mais la mise en place du monde (generateurs de voitures
+        // garees, pickups, marqueurs des boutiques, objets) : chaque invite la joue lui-meme.
+        if (*(int *)0x7D7438 == 0) {
+            Field<int>(script, 0x10) = ip;
+            Log("script : l'invite joue INITIAL lui-meme");
+            return o_ProcessOneCommand(script);
+        }
         uint32_t now = GetTickCount();
         if (now - lastLog > 5000) {
             Log("script : mission %d non lancee chez l'invite (%.8s)", *(int *)0x7D7438, (char *)script + 8);

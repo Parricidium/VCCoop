@@ -127,6 +127,8 @@ enum { RL_SCRIPT_CMD = 1, RL_MISSION_END = 2, RL_MISSION_START = 3, RL_GLOBALS =
 enum { GLOBALS_BEGIN = 8, GLOBALS_END = 0x8620 };
 static uint8_t g_globSnap[GLOBALS_END];
 static bool g_globSnapValid;
+static bool g_missionRunning;   // hote : une mission est en cours
+static int g_hostMission;       // hote : son numero
 
 static void TrackTimer(uint16_t op, uint16_t offset);
 static int g_timerCount;
@@ -195,6 +197,7 @@ bool MirrorBefore(void *script, int ip, uint16_t op)
     const OpSig *sig = FindOp(op);
     if (!sig) return false;
     if (op == 0x0109 && !g_cfg.shareMoney) return false;
+    if (g_missionRunning && g_hostMission == 0 && !g_captureOnly) return false;   // INITIAL : chaque invite joue la sienne
     if (sig->sig[0] == '*') { g_pending = sig; g_pendingIp = ip; return true; }
     uint8_t *ss = ScriptSpace();
     int at = ip + 2, n = 0;
@@ -306,14 +309,11 @@ void MirrorAfter(void *script)
 // Photo des variables : prise a l'entree en partie, puis rafraichie a chaque envoi de changements. Elle n'est plus
 // reprise au debut de chaque mission : ce que le script principal change entre deux missions (achat d'une
 // propriete, appel telephonique qui debloque une mission...) etait alors oublie et n'arrivait jamais aux invites.
-static bool g_missionRunning;
 
 // Regroupement des invites pres de l'hote au debut et a la fin d'une mission : seulement si l'hote est a pied. Les
 // missions secondaires (taxi, pizza, ambulance, justicier...) se lancent et se terminent en vehicule : les invites
 // n'ont pas a etre teleportes pour celles-la.
 static uint8_t GatherFlag() { void *me = FindPlayerPed(); return me && !InVehicle(me) ? 1 : 0; }
-
-static int g_hostMission;
 
 void MirrorMissionStart(int mission)
 {
@@ -520,11 +520,13 @@ static bool Translate(char kind, uint32_t host, uint32_t &guest)
 static void Local(uint16_t op, int n, const int32_t *vals);
 static int g_pendingArea = -1;
 static uint32_t g_pendingAreaAt, g_lastTeleportAt;
+static int g_mirrorArea;   // zone posee par nous (-1 : la zone courante vient du jeu, portes)
 static void SetArea(int area)
 {
     if (*(int *)0x978810 == area) return;   // CGame::currArea
     int32_t v[1] = { area };
     Local(0x04BB, 1, v);
+    g_mirrorArea = area;
     if (void *me = FindPlayerPed()) AreaCode(me) = (uint8_t)area;   // notre Tommy dans la meme zone que la ville affichee
     Log("miroir : zone visible %d (avec l'hote)", area);
 }
@@ -550,7 +552,11 @@ static bool Execute(const uint8_t *d, int len, bool force)
     if (op == 0x04BB && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v' && !force) {
         int32_t area;
         memcpy(&area, d + 5, 4);
-        if (GetTickCount() - g_lastTeleportAt < 2000) SetArea(area);
+        // Retour a la ville chez l'hote alors que c'est nous (le miroir) qui avions mis l'invite dans un interieur :
+        // on le suit toujours, sinon il restait dans une zone sans ville (cinematique en interieur, sortie par une
+        // commande non reproduite).
+        if (area == 0 && g_mirrorArea > 0 && *(int *)0x978810 == g_mirrorArea) SetArea(0);
+        else if (GetTickCount() - g_lastTeleportAt < 2000) SetArea(area);
         else { g_pendingArea = area; g_pendingAreaAt = GetTickCount(); }
         return true;
     }
@@ -740,6 +746,7 @@ void MirrorFrame(bool inGame)
         if (inGame && !g_missionRunning && GetTickCount() - lastDiff > 2000) { lastDiff = GetTickCount(); SendStableChanges(); }
         return;
     }
+    if (*(int *)0x978810 != g_mirrorArea) g_mirrorArea = -1;   // le jeu a change de zone lui-meme (porte) : on ne suit plus
     if (!inGame) {
         g_blipCount = g_objCount = g_pickupCount = 0;
         // Hors partie (salon, chargement), la presentation des missions de l'hote n'a pas de sens : rejouees d'un coup
