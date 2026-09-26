@@ -39,6 +39,8 @@ struct Puppet {
     Track track;        // etats recus, pour l'interpolation (interp.cpp)
     AnimMirror anims;   // animations d'action recues, posees sur lui
     int blip;           // son point de couleur sur le radar (-1 : aucun)
+    bool entering, exiting;   // montee / descente animee en cours (objectif donne au personnage, le jeu joue la scene)
+    uint32_t busySince;
 };
 
 // La tenue de Tommy est le modele 0, propre a chaque instance : le Tommy d'un autre joueur utilise un
@@ -122,11 +124,72 @@ static void CreatePuppet(Puppet &pp, const MsgState &s)
 
 // Le Tommy distant monte dans la copie locale de son vehicule (a sa place), ou en descend.
 // Renvoie vrai s'il est dans un vehicule (sa position est alors celle du vehicule).
+static void EvictNpcDriver(void *veh, const MsgState &s)
+{
+    // Hote : un personnage de l'IA a pris le volant de la voiture que ce joueur conduit (le proprietaire revenu
+    // chercher sa voiture...) : on le fait descendre, c'est le joueur qui conduit.
+    void *npc = VehDriver(veh);
+    if (!npc || IsPuppet(npc) || npc == FindPlayerPed()) return;
+    WarpOutOfVehicle(npc, NULL);
+    ((void(__thiscall *)(void *))0x521720)(npc);   // CPed::ClearObjective
+    Log("coop : un personnage conduisait la voiture de %s, il descend", s.name);
+}
+
+// Montee et descente animees : quand il monte chez lui (animation en cours), son double recoit l'objectif "monter
+// dans cette voiture" des scripts (SET_CHAR_OBJ_ENTER_CAR_AS_DRIVER 01D5) et le jeu joue portiere et animation ;
+// pareil pour descendre (SET_CHAR_OBJ_LEAVE_CAR 01D3). Pendant ce temps on ne touche a rien. Si ca traine (porte
+// bloquee, voiture partie), on le pose directement comme avant.
 static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
 {
     void *ped = pp.ped;
     void *want = s.inVehicle ? NetVehicleById(s.vehicleId) : NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;
+    uint32_t now = GetTickCount();
+    if (pp.entering) {
+        // La voiture demarre chez lui avant que son double soit assis : on le pose tout de suite (sinon il courait derriere).
+        Vec3 ws = want ? MoveSpeed(want) : Vec3{ 0, 0, 0 };
+        bool driving = want && (ws.x * ws.x + ws.y * ws.y > 0.01f);
+        if (cur) { pp.entering = false; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
+        else if (now - pp.busySince > 6000 || !PedVehicle(ped) || driving) {
+            pp.entering = false;
+            ((void(__thiscall *)(void *))0x521720)(ped);
+            Log("coop : Tommy %d : montee animee abandonnee (%s)", s.id, driving ? "la voiture roule deja" : "trop long");
+        }
+        else return true;
+    }
+    if (pp.exiting) {
+        if (!cur) { pp.exiting = false; Field<int>(ped, 0x164) = 0; pp.lastMoveState = -1; Log("coop : Tommy %d est descendu (animation)", s.id); }
+        else if (now - pp.busySince > 4000) {
+            pp.exiting = false;
+            ((void(__thiscall *)(void *))0x521720)(ped);
+            Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
+            WarpOutOfVehicle(ped, &at);
+            cur = NULL;
+            Log("coop : Tommy %d : descente animee abandonnee", s.id);
+        } else return true;
+    }
+    if (!cur && !s.inVehicle && s.enterId) {
+        void *veh = NetVehicleById(s.enterId);
+        if (veh) {
+            EvictNpcDriver(veh, s);
+            if (!VehDriver(veh)) {
+                int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(veh) };
+                MirrorLocal(0x01D5, 2, a);
+                pp.entering = true;
+                pp.busySince = now;
+                Log("coop : Tommy %d monte dans %08X (animation)", s.id, s.enterId);
+                return true;
+            }
+        }
+    }
+    if (cur && s.exiting && (s.inVehicle ? cur == want : true)) {
+        int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
+        MirrorLocal(0x01D3, 2, a);
+        pp.exiting = true;
+        pp.busySince = now;
+        Log("coop : Tommy %d descend (animation)", s.id);
+        return true;
+    }
     // Passager : n'importe quelle place de passager convient (chaque machine range ses passagers a sa facon).
     if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (s.seat == 0))) {
         Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
@@ -135,14 +198,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         Log("coop : Tommy %d descend du vehicule", s.id);
         cur = NULL;
     }
-    // Hote : un personnage de l'IA a pris le volant de la voiture que ce joueur conduit (le proprietaire revenu
-    // chercher sa voiture...) : on le fait descendre, c'est le joueur qui conduit.
-    if (want && !cur && s.seat == 0 && VehDriver(want) && !IsPuppet(VehDriver(want)) && VehDriver(want) != FindPlayerPed()) {
-        void *npc = VehDriver(want);
-        WarpOutOfVehicle(npc, NULL);
-        ((void(__thiscall *)(void *))0x521720)(npc);   // CPed::ClearObjective
-        Log("coop : un personnage conduisait la voiture de %s, il descend", s.name);
-    }
+    if (want && !cur && s.seat == 0) EvictNpcDriver(want, s);
     if (want && !cur && WarpIntoSeat(ped, want, s.seat)) {
         Log("coop : Tommy %d monte dans %08X (place %d)", s.id, s.vehicleId, s.seat);
         cur = want;
@@ -159,10 +215,11 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     HoldWeapon(ped, s.weapon);
     (void)np;
     if (UpdatePuppetVehicle(pp, s)) {
+        pp.anims.count = 0;
+        if (pp.entering || pp.exiting) return;   // le jeu joue la scene : on ne touche a rien
         // Chez lui il est assis : ce que notre jeu lui fait subir (ejecte d'un coup de coude par le motard qui reprend
         // sa moto, tire dehors...) ne compte pas. Si on le retrouve hors de l'etat "conduite" ou sans son animation
         // assise, on le reinstalle a sa place (sinon il etait traine sous la moto, couche).
-        pp.anims.count = 0;
         void *veh = PedVehicle(ped);
         // Ses tirs en drive-by (le jeu tire depuis le vehicule quand le tireur est a bord).
         for (int n = 0; pp.lastShots != s.shots && n < 3; n++) { pp.lastShots++; PuppetShoot(ped, s.weapon); }
@@ -226,7 +283,7 @@ void PuppetsAfterProcess()
 {
     for (int i = 0; i < MAX_PLAYERS; i++) {
         Puppet &pp = g_puppets[i];
-        if (!pp.ped || InVehicle(pp.ped)) continue;
+        if (!pp.ped || InVehicle(pp.ped) || pp.entering || pp.exiting) continue;
         Snap n;
         if (!TrackSample(pp.track, i, n, true)) continue;
         // Grand ecart (arrivee, teleportation) : par CEntity::Teleport, qui remet le personnage dans les bons secteurs.
@@ -324,6 +381,10 @@ static void SendLocalState(bool inGame)
         s.fade = CamFade();
         s.weapon = (uint8_t)WeaponTypeInSlot(ped, CurrentWeaponSlot(ped));
         s.shots = LocalShotCount();
+        // Montee / descente en cours (animation du jeu) : les autres la jouent sur notre double.
+        int st = PedState(ped);
+        if (!InVehicle(ped) && PedVehicle(ped) && EnteringState(st)) s.enterId = NetVehicleId(PedVehicle(ped));
+        s.exiting = InVehicle(ped) && ExitingState(st);
         s.aiming = IsAimingGun(ped) ? 1 : 0;
         s.inVehicle = InVehicle(ped) ? 1 : 0;
         s.shared = PopulationShared() ? 1 : 0;

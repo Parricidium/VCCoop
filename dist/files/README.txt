@@ -89,6 +89,8 @@ KNOWN LIMITS (test build)
 - Only the host can start missions. "Go there" / "get in that car" goals can
   be met by any player, and guests see the destination markers. A character
   who follows the player (Lance...) follows the host: go together on those.
+- Other players enter and leave vehicles with the full animation (door
+  included); if the car drives off first, they are seated directly.
 - Friendly fire (TirAmi=1): bullets, punches, cars and explosions from the
   other players hurt you; at 0 none of them do. Grenades, molotovs and
   rockets are replayed on every machine.

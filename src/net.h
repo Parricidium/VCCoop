@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 8 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 9 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -59,6 +59,8 @@ struct MsgState {
     uint8_t shared;      // invite : il voit les passants et la circulation de l'hote (population.cpp)
     uint16_t ping;       // invite : aller-retour avec l'hote (ms)
     uint8_t wanted;      // etoiles de recherche
+    uint32_t enterId;    // vehicule reseau dans lequel il est en train de monter (animation en cours chez lui), 0 sinon
+    uint8_t exiting;     // en train de descendre (animation en cours)
 };
 struct MsgWorld {
     uint8_t type;

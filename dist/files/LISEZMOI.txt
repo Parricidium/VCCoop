@@ -96,6 +96,9 @@ A SAVOIR (version de test)
   "monter dans telle voiture" peuvent etre remplis par n'importe quel joueur,
   et les invites voient les marqueurs de destination. Un personnage qui suit
   le joueur (Lance...) suit l'hote : pour ces missions, venez ensemble.
+- Les autres joueurs montent et descendent des vehicules avec l'animation
+  complete (portiere comprise) ; si la voiture demarre avant, ils sont
+  poses directement a leur place.
 - Tir ami (TirAmi=1) : balles, coups, voitures et explosions des autres
   joueurs vous blessent ; a 0, rien de tout cela. Grenades, cocktails et
   roquettes sont rejoues chez tout le monde.
