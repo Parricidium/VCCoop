@@ -5,6 +5,7 @@
 #include "conditions.h"
 #include "interp.h"
 #include "camera.h"
+#include "net.h"
 #include <stdio.h>
 
 Config g_cfg;
@@ -89,6 +90,7 @@ static bool IsVersion10()
 
 BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
 {
+    if (reason == DLL_PROCESS_DETACH) { NetSendBye(); return TRUE; }   // fermeture du jeu : les autres le savent tout de suite
     if (reason != DLL_PROCESS_ATTACH) return TRUE;
     DisableThreadLibraryCalls(inst);
 
