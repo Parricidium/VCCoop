@@ -108,6 +108,10 @@ inline void RemovePassenger(void *veh, void *ped) { ((void(__thiscall *)(void *,
 inline int AddInCarAnims(void *ped, void *veh, bool driver) { return ((int(__thiscall *)(void *, void *, bool))0x512520)(ped, veh, driver); }
 inline void *&VehPassenger(void *v, int i) { return Field<void *>(v, 0x1AC + i * 4); }   // 8 places
 enum { PED_DRIVING = 50 };
+// Etats de montee / descente (CPed::m_nPedState) : 53 ouvre la porte, 56 vole la voiture, 57 tire le conducteur,
+// 58 monte, 59 vole, 60 descend.
+inline bool EnteringState(int st) { return st == 24 || st == 53 || (st >= 56 && st <= 59); }   // 24 : marche vers la voiture
+inline bool ExitingState(int st) { return st == 60; }
 // Place occupee par ped : 0 = conducteur, 1..8 = passager, -1 = aucune.
 inline int SeatOf(void *veh, void *ped)
 {

@@ -266,6 +266,30 @@ void AutotestFrame()
         }
         return;
     }
+    if (_stricmp(g_cfg.autotest, "porte") == 0) {
+        static void *car;
+        static int lastState = -1;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        enum { MI_LANDSTAL = 130 };
+        if (!car && t > 60 && t < 70) {
+            if (!HasModelLoaded(MI_LANDSTAL)) { RequestModel(MI_LANDSTAL, 1); return; }
+            void *v = VehicleAlloc();
+            AutomobileCtor(v, MI_LANDSTAL, 1);
+            float h = Heading(me);
+            Pos(v) = { Pos(me).x - sinf(h) * 4.0f, Pos(me).y + cosf(h) * 4.0f, Pos(me).z + 0.3f };
+            SetHeadingMatrix(v, h + 1.5708f);
+            SetEntityStatus(v, STATUS_ABANDONED);
+            WorldAdd(v);
+            car = v;
+            RegisterReference(v, &car);
+            Log("autotest : voiture creee");
+        }
+        if (car && (t == 120 || t == 500)) { Press(PAD_TRIANGLE, 255); Log("autotest : triangle (%s)", t == 120 ? "monter" : "descendre"); }
+        int st = PedState(me);
+        if (st != lastState) { lastState = st; Log("autotest : etat %d, vehicule %p, a bord %d", st, PedVehicle(me), InVehicle(me)); }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "moto") == 0) {
         static void *bike;
         static uint32_t seated;

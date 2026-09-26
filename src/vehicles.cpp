@@ -31,6 +31,7 @@ struct NetVehicle {
     uint32_t lastDamageSync;
     bool blown;         // copie deja explosee (EXPLODE_CAR une seule fois)
     uint32_t hostHandle;   // reference de pool chez l'hote (traduction des commandes de mission), meme si un invite l'a reprise
+    int model;             // modele au moment de l'association : s'il change, la case du pool a ete reutilisee (entree perimee)
     uint32_t idleSince;    // proprietaire d'une copie : depuis quand elle est vide et immobile
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
@@ -42,9 +43,10 @@ static NetVehicle *FindById(uint32_t id)
     return NULL;
 }
 
+static bool Stale(const NetVehicle &e);
 static NetVehicle *FindByPtr(void *veh)
 {
-    for (auto &e : g_vehs) if (e.used && e.veh == veh) return &e;
+    for (auto &e : g_vehs) if (e.used && e.veh == veh && !Stale(e)) return &e;
     return NULL;
 }
 
@@ -58,8 +60,13 @@ static NetVehicle *Alloc(uint32_t id)
 static void Bind(NetVehicle &e, void *veh)
 {
     e.veh = veh;
+    e.model = veh ? ModelIndex(veh) : 0;
     if (veh) RegisterReference(veh, &e.veh);
 }
+
+// Vehicule supprime par le jeu sans que notre reference ait ete effacee, et sa case reprise par un autre : l'entree
+// ne vaut plus rien (le double d'un joueur allait monter dans une voiture de l'intro disparue).
+static bool Stale(const NetVehicle &e) { return e.veh && e.model && ModelIndex(e.veh) != e.model; }
 
 static void Unbind(NetVehicle &e)
 {
@@ -439,6 +446,27 @@ void VehiclesFrame(bool inGame)
         if (e && now - e->lastSend >= 33) SendVehicle(*e);
     }
 
+    // En train de monter (animation en cours) : le vehicule recoit tout de suite son identifiant, pour que les autres
+    // voient la montee sur notre double.
+    if (g_cfg.logScripts && !myVeh && PedVehicle(ped) && !InVehicle(ped) && EnteringState(PedState(ped))) {
+        static uint32_t lastDbg;
+        if (now - lastDbg > 500) {
+            lastDbg = now;
+            NetVehicle *f = FindByPtr(PedVehicle(ped));
+            Log("vehicules : montee dans %p (modele %d) -> entree %08X (modele %d, veh %p, perime %d)", PedVehicle(ped), ModelIndex(PedVehicle(ped)),
+                f ? f->id : 0, f ? f->model : 0, f ? f->veh : NULL, f ? Stale(*f) : 0);
+        }
+    }
+    if (!myVeh && PedVehicle(ped) && !InVehicle(ped) && EnteringState(PedState(ped)) && VehClass(PedVehicle(ped)) != VCLASS_TRAIN && !FindByPtr(PedVehicle(ped))) {
+        NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
+        if (e) {
+            e->owner = (uint8_t)g_localId;
+            Bind(*e, PedVehicle(ped));
+            SendVehicle(*e);
+            Log("vehicules : je monte dans %08X (modele %d)", e->id, ModelIndex(PedVehicle(ped)));
+        }
+    }
+
     // Hote : les vehicules crees par les scripts de mission sont a lui et partent chez les invites.
     if (g_cfg.host) {
         static uint32_t lastScan;
@@ -488,6 +516,7 @@ void VehiclesFrame(bool inGame)
         // Plus d'etat depuis 10 s (le proprietaire l'a oublie, ou son message de retrait s'est perdu) : on la retire.
         if (e.owner != g_localId && e.haveState && now - e.lastRecv > 10000) { DeleteCopy(e); e.used = false; continue; }
         if (e.owner == g_localId) {
+            if (Stale(e)) { Log("vehicules : %08X perime (case reutilisee), retire", e.id); e.veh = NULL; }
             if (!e.veh) {   // detruit chez nous : on previent les autres
                 MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
                 NetSendToAll(&r, sizeof(r));
