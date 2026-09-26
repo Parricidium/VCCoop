@@ -21,7 +21,11 @@ struct Config {
     char testMenuPlan[16];   // test : "creer" / "rejoindre" depuis l'ecran COOP       // test : ecran de menu a ouvrir au demarrage       // reseau demarre d'office (ligne de commande -vccoop, ou Reseau=1) ; sinon par le menu COOP
     bool logScripts;
     bool friendlyFire;  // TirAmi=1 (hote) : les joueurs peuvent se blesser entre eux
-    bool showNames;     // AfficherPseudos=1 : pseudo au-dessus de la tete des autres joueurs
+    bool shareWanted;   // RecherchePartagee=1 : etoiles de police communes
+    bool shareMoney;    // ArgentPartage=1 (hote) : l'argent donne par les missions va aussi aux invites
+    bool showNames;
+    bool keepWeapons;   // GarderArmes=1 : un invite mort ou arrete garde armes et argent
+    bool respawnAtHost; // ReapparitionHote=1 : il reapparait pres de l'hote (0 par defaut : a l'hopital)     // AfficherPseudos=1 : pseudo au-dessus de la tete des autres joueurs
     char skin[24];      // Tenue=... : tenue choisie avec F7 (vide : celle du jeu)
     int logOpcodes;
     char traceScript[9];

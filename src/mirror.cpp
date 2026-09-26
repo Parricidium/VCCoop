@@ -82,6 +82,7 @@ static const OpSig g_ops[] = {
     { 0x03EF, "*", "MAKE_PLAYER_SAFE_FOR_CUTSCENE" },
     { 0x03BF, "*", "SET_EVERYONE_IGNORE_PLAYER" },
     { 0x0055, "vvvv", "SET_PLAYER_COORDINATES" },
+    { 0x0109, "vv", "ADD_SCORE" },   // argent des missions (ArgentPartage) : chacun recoit la meme somme
     { 0x0213, "vvvvvk", "CREATE_PICKUP" },
     { 0x032B, "vvvvvvk", "CREATE_PICKUP_WITH_AMMO" },
     { 0x02E1, "vvvvk", "CREATE_MONEY_PICKUP" },
@@ -171,6 +172,7 @@ bool MirrorBefore(void *script, int ip, uint16_t op)
     }
     const OpSig *sig = FindOp(op);
     if (!sig) return false;
+    if (op == 0x0109 && !g_cfg.shareMoney) return false;
     if (sig->sig[0] == '*') { g_pending = sig; g_pendingIp = ip; return true; }
     uint8_t *ss = ScriptSpace();
     int at = ip + 2, n = 0;
@@ -335,7 +337,9 @@ static void HostSyncNewcomers(bool inGame)
     static bool saveSent[MAX_PLAYERS], wasInGame[MAX_PLAYERS];
     for (int i = 1; i < MAX_PLAYERS; i++) {
         if (!g_players[i].connected) { saveSent[i] = wasInGame[i] = false; continue; }
-        if (!saveSent[i] && !g_synced[i]) { saveSent[i] = true; if (HostHasSave()) { SendHostSave(i); g_sameSave[i] = true; } }
+        // Retour apres une coupure : il est deja dans notre partie, on ne lui fait pas tout recharger.
+        if (!saveSent[i] && !g_synced[i]) { saveSent[i] = true; if (HostHasSave() && !g_peerRejoin[i]) { SendHostSave(i); g_sameSave[i] = true; } }
+        if (g_peerRejoin[i] && g_players[i].state.inGame) { g_peerRejoin[i] = false; wasInGame[i] = true; g_synced[i] = false; }
         bool in = g_players[i].state.inGame != 0;
         // Retour en partie apres avoir charge la sauvegarde de l'hote : memes variables que lui, rien a envoyer.
         if (in && !wasInGame[i]) { if (g_sameSave[i]) { g_sameSave[i] = false; g_synced[i] = true; } else g_synced[i] = false; }
