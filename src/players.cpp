@@ -285,8 +285,11 @@ static bool KeyEdge(int vk, bool &was)
     return edge;
 }
 
+static void RdvKey(bool inGame);
+
 void PlayersFrame(bool inGame)
 {
+    RdvKey(inGame);
     static bool built;
     if (!built && inGame) { built = true; BuildSkinList(); }
     // Tenue choisie les fois precedentes : remise en arrivant en partie (apres un chargement aussi).
@@ -349,6 +352,156 @@ void PlayersFrame(bool inGame)
     else if (f7 || (focus && KeyEdge(VK_BACK, wBack))) CloseMenu(false);
 }
 
+// ======================================================================= Messages (arrivees, departs, coupures)
+static wchar_t g_notice[96];
+static uint32_t g_noticeUntil, g_noticeColor;
+
+static void OnNotice(const char *fr, const char *en, int player)
+{
+    bool french = *(int *)(0x869630 + 0x50) == 1;
+    const char *name = player >= 0 && player < MAX_PLAYERS && g_players[player].state.name[0] ? g_players[player].state.name : "";
+    char text[96];
+    if (!g_cfg.host && player == 0 && strstr(fr, "hote")) lstrcpynA(text, french ? fr : en, sizeof(text));   // phrase complete
+    else _snprintf(text, sizeof(text), "%s %s", name, french ? fr : en);
+    text[sizeof(text) - 1] = 0;
+    MultiByteToWideChar(CP_ACP, 0, text, -1, g_notice, 96);
+    g_noticeColor = player >= 0 ? PlayerColor(player) : 0xFFFFFFFF;
+    g_noticeUntil = GetTickCount() + 5000;
+}
+
+static void DrawNotice()
+{
+    if (!g_noticeUntil || GetTickCount() > g_noticeUntil) return;
+    FontSetup(0.7f);
+    FontColor(g_noticeColor);
+    FontPrint(ScreenW() * 0.5f, ScreenH() * 0.12f, g_notice);
+}
+
+// ======================================================================= Point de rendez-vous (touche B)
+// Chaque joueur peut poser un repere (la ou il regarde, jusqu'a 300 m) : fleche dans le monde et point sur le radar,
+// a sa couleur, chez tout le monde. B a nouveau le retire. Renvoye toutes les 3 s (arrivees en cours de route).
+struct Rdv { bool active; float pos[3]; int blip; };
+static Rdv g_rdv[MAX_PLAYERS];
+
+static int SetCoordBlip(float x, float y, float z) { return ((int(__cdecl *)(int, float, float, float, uint32_t, int))0x4C3C80)(4, x, y, z, 0, 3); }
+
+static void ApplyRdv(int player, bool active, const float *pos)
+{
+    if (player < 0 || player >= MAX_PLAYERS || player == g_localId && !active && !g_rdv[player].active) return;
+    Rdv &r = g_rdv[player];
+    bool moved = active && (!r.active || fabsf(r.pos[0] - pos[0]) + fabsf(r.pos[1] - pos[1]) + fabsf(r.pos[2] - pos[2]) > 0.5f);
+    if (r.active && (!active || moved)) { RemovePlayerBlip(r.blip); r.active = false; }
+    if (active && moved) {
+        memcpy(r.pos, pos, sizeof(r.pos));
+        r.blip = SetCoordBlip(pos[0], pos[1], pos[2]);
+        if (r.blip != -1) { ChangeBlipColour(r.blip, PlayerColor(player)); ChangeBlipScale(r.blip, 3); }
+        r.active = true;
+        if (player != g_localId && g_onNotice) g_onNotice("a pose un point de rendez-vous", "set a meeting point", player);
+    }
+}
+
+static void OnRdv(const MsgRdv &m) { if (m.player != g_localId) ApplyRdv(m.player, m.active != 0, m.pos); }
+
+static void SendRdv()
+{
+    const Rdv &r = g_rdv[g_localId];
+    MsgRdv m = { MSG_RDV, (uint8_t)g_localId, (uint8_t)r.active, { r.pos[0], r.pos[1], r.pos[2] } };
+    NetSendToAll(&m, sizeof(m));
+}
+
+// Point vise : rayon depuis la camera (a notre adresse de TheCamera, la matrice commence en +0 : avant = "up"
+// +0x10, position +0x30 ; verifie en jeu).
+static bool AimPoint(float *out)
+{
+    uint8_t *cam = (uint8_t *)0x7E4688;
+    float o[3] = { Field<float>(cam, 0x30), Field<float>(cam, 0x34), Field<float>(cam, 0x38) };
+    float f[3] = { Field<float>(cam, 0x10), Field<float>(cam, 0x14), Field<float>(cam, 0x18) };
+    float e[3] = { o[0] + f[0] * 300.0f, o[1] + f[1] * 300.0f, o[2] + f[2] * 300.0f };
+    uint8_t colPoint[64] = {};
+    void *hit = NULL;
+    bool ok = ((bool(__cdecl *)(const float *, const float *, void *, void **, bool, bool, bool, bool, bool, bool, bool, bool))0x4D92D0)(
+        o, e, colPoint, &hit, true, true, false, true, false, false, false, false);
+    if (!ok) return false;
+    memcpy(out, colPoint, 12);   // CColPoint : point d'impact en tete
+    return true;
+}
+
+static void RdvKey(bool inGame)
+{
+    static bool wasB;
+    static uint32_t lastSend;
+    if (!inGame || g_localId < 0) { for (auto &r : g_rdv) { r.active = false; r.blip = -1; } return; }
+    for (int i = 0; i < MAX_PLAYERS; i++)   // joueur parti : son repere aussi
+        if (i != g_localId && g_rdv[i].active && !g_players[i].connected) ApplyRdv(i, false, g_rdv[i].pos);
+    bool b = GameHasFocus() && !g_menuOpen && KeyEdge('B', wasB);
+    static bool autoDone;   // Autotest=rdv : en pose un 20 s apres l'arrivee
+    static uint32_t autoAt;
+    if (_stricmp(g_cfg.autotest, "rdv") == 0 && !autoDone) {
+        if (!autoAt) autoAt = GetTickCount();
+        if (GetTickCount() - autoAt > 35000) { autoDone = true; b = true; }
+    }
+    if (b) {
+        Rdv &r = g_rdv[g_localId];
+        if (r.active) { ApplyRdv(g_localId, false, r.pos); Log("rendez-vous : retire"); }
+        else {
+            float p[3];
+            void *me = FindPlayerPed();
+            bool aimed = AimPoint(p);
+            if (!aimed) { p[0] = Pos(me).x; p[1] = Pos(me).y; p[2] = Pos(me).z; }
+            ApplyRdv(g_localId, true, p);
+            Log("rendez-vous : pose en %.1f %.1f %.1f (%s, joueur en %.1f %.1f)", p[0], p[1], p[2], aimed ? "vise" : "a ses pieds",
+                Pos(me).x, Pos(me).y);
+        }
+        SendRdv();
+        lastSend = GetTickCount();
+    } else if (g_rdv[g_localId].active && GetTickCount() - lastSend > 3000) {
+        SendRdv();
+        lastSend = GetTickCount();
+    }
+}
+
+// ======================================================================= Liste des joueurs (touche Tab maintenue)
+static void DrawPlayerList()
+{
+    bool forced = _stricmp(g_cfg.autotest, "liste") == 0;   // autotest : toujours affichee
+    if (!forced && (!GameHasFocus() || !(GetAsyncKeyState(VK_TAB) & 0x8000) || g_menuOpen)) return;
+    bool fr = *(int *)(0x869630 + 0x50) == 1;
+    void *me = FindPlayerPed();
+    float y = ScreenH() * 0.22f, step = ScreenH() * 0.045f;
+    FontSetup(0.8f);
+    FontColor(0xFFFFFFFF);
+    FontPrint(ScreenW() * 0.5f, y, fr ? L"JOUEURS" : L"PLAYERS");
+    y += step * 1.3f;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const NetPlayer &np = g_players[i];
+        bool self = i == g_localId;
+        if (!self && !np.connected) continue;
+        const MsgState &s = np.state;
+        wchar_t line[160], name[32];
+        MultiByteToWideChar(CP_ACP, 0, self ? g_cfg.playerName : s.name, -1, name, 32);
+        float dist = 0;
+        if (!self && me && s.inGame) {
+            float dx = s.pos[0] - Pos(me).x, dy = s.pos[1] - Pos(me).y, dz = s.pos[2] - Pos(me).z;
+            dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        }
+        int ping = self ? (g_cfg.host ? 0 : g_myPing) : (i == 0 ? (g_cfg.host ? 0 : g_myPing) : s.ping);
+        float health = self && me ? Health(me) : s.health, armour = self && me ? Armour(me) : s.armour;
+        if (!s.inGame && !self)
+            swprintf(line, 160, fr ? L"%s%s   (au menu)" : L"%s%s   (in menu)", name, i == 0 ? (fr ? L" (hote)" : L" (host)") : L"");
+        else if (self)
+            swprintf(line, 160, fr ? L"%s%s   sante %d   gilet %d   ping %d ms   (vous)" : L"%s%s   health %d   armour %d   ping %d ms   (you)",
+                     name, i == 0 ? (fr ? L" (hote)" : L" (host)") : L"", (int)health, (int)armour, ping);
+        else
+            swprintf(line, 160, fr ? L"%s%s   sante %d   gilet %d   ping %d ms   %d m%s" : L"%s%s   health %d   armour %d   ping %d ms   %d m%s",
+                     name, i == 0 ? (fr ? L" (hote)" : L" (host)") : L"", (int)health, (int)armour, ping, (int)dist,
+                     s.inVehicle ? (fr ? L"   en vehicule" : L"   in a vehicle") : L"");
+        FontSetup(0.65f);
+        FontColor(PlayerColor(i));
+        FontPrint(ScreenW() * 0.5f, y, line);
+        y += step;
+    }
+}
+
 // ======================================================================= Dessin (avant l'interface du jeu)
 static void DrawSkinMenu()
 {
@@ -367,12 +520,14 @@ static void DrawSkinMenu()
 
 static void __cdecl h_Render2dStuff()
 {
-    if (GameState() == GS_PLAYING && FindPlayerPed()) { DrawNametags(); DrawSkinMenu(); }
+    if (GameState() == GS_PLAYING && FindPlayerPed()) { DrawNametags(); DrawSkinMenu(); DrawNotice(); DrawPlayerList(); }
     ((void(__cdecl *)())0x4A6190)();
 }
 
 void InstallPlayers()
 {
+    g_onNotice = OnNotice;
+    g_onRdv = OnRdv;
     static const uint8_t undressPro[] = { 0x53, 0x89, 0xCB, 0x8B, 0x43, 0x4C, 0x56, 0x55 };
     o_Undress = (Undress_t)MakeDetour(0x4EF030, undressPro, sizeof(undressPro), (void *)h_Undress);
     static const uint8_t call[] = { 0xE8, 0xFD, 0x00, 0x00, 0x00 };   // call 0x4A6190 (depuis 0x4A608E)

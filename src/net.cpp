@@ -35,6 +35,12 @@ static sockaddr_in g_peerAddr[MAX_PLAYERS];  // hote : adresse de chaque invite
 static uint32_t g_lastHello;
 void (*g_onReliable)(int from, const uint8_t *data, int len);
 void (*g_onJoin)(int peer);
+bool g_peerRejoin[MAX_PLAYERS];
+void (*g_onNotice)(const char *fr, const char *en, int player);
+static bool g_everAccepted;   // invite : deja accepte par l'hote pendant cette session
+uint32_t g_netMuteUntil;
+uint16_t g_myPing;
+void (*g_onRdv)(const MsgRdv &r);      // autotest : simule une coupure (rien n'entre ni ne sort)
 
 // --- Flux fiables : un par pair (hote : un par invite ; invite : un seul, vers l'hote, indice 0) ---
 enum { RL_QUEUE = 2048 };   // la mission 0 fait reproduire ~400 commandes d'un coup
@@ -67,6 +73,7 @@ bool NearAnyGuest(const float *p, uint8_t area, float r)
 
 static void SendTo(const sockaddr_in &to, const void *data, int len)
 {
+    if (g_netMuteUntil && GetTickCount() < g_netMuteUntil) return;
     sendto(g_sock, (const char *)data, len, 0, (const sockaddr *)&to, sizeof(to));
 }
 
@@ -213,7 +220,9 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
                     g_peerAddr[i] = from;
                     RlReset(g_rl[i]);
                     lstrcpynA(g_players[i].state.name, h->name, sizeof(g_players[i].state.name));
-                    Log("reseau : %s entre (joueur %d)", g_players[i].state.name, i);
+                    g_peerRejoin[i] = len >= (int)sizeof(MsgHello) && h->rejoin;
+                    Log("reseau : %s %s (joueur %d)", g_players[i].state.name, g_peerRejoin[i] ? "revient" : "entre", i);
+                    if (g_onNotice) g_onNotice(g_peerRejoin[i] ? "est de retour" : "a rejoint la partie", g_peerRejoin[i] ? "is back" : "joined the game", i);
                     if (g_onJoin) g_onJoin(i);
                 }
         if (id < 0) {
@@ -235,6 +244,16 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         if (g_onState) g_onState(s);
         for (int i = 1; i < MAX_PLAYERS; i++)   // relais aux autres invites
             if (i != id && g_players[i].connected) SendTo(g_peerAddr[i], &s, sizeof(s));
+    } else if (buf[0] == MSG_RDV && len >= (int)sizeof(MsgRdv)) {
+        MsgRdv r = *(const MsgRdv *)buf;
+        r.player = (uint8_t)id;
+        if (g_onRdv) g_onRdv(r);
+        for (int i = 1; i < MAX_PLAYERS; i++)   // relais aux autres invites
+            if (i != id && g_players[i].connected) SendTo(g_peerAddr[i], &r, sizeof(r));
+    } else if (buf[0] == MSG_PING && len >= (int)sizeof(MsgPing)) {
+        MsgPing p = *(const MsgPing *)buf;
+        p.type = MSG_PONG;
+        SendTo(g_peerAddr[id], &p, sizeof(p));
     } else if (buf[0] == MSG_RELIABLE) {
         RlReceive(id, buf, len);
     } else if (buf[0] == MSG_ACK) {
@@ -256,6 +275,15 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
     case MSG_RELIABLE:
         RlReceive(0, buf, len);
         break;
+    case MSG_RDV:
+        if (len >= (int)sizeof(MsgRdv) && g_onRdv) g_onRdv(*(const MsgRdv *)buf);
+        break;
+    case MSG_PONG:
+        if (len >= (int)sizeof(MsgPing)) {
+            uint32_t rtt = GetTickCount() - ((const MsgPing *)buf)->time;
+            g_myPing = (uint16_t)(rtt > 9999 ? 9999 : rtt);
+        }
+        break;
     case MSG_ACK:
         RlAck(0, buf, len);
         break;
@@ -265,6 +293,8 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
             g_localId = ((const MsgWelcome *)buf)->id;
             g_players[0].connected = true;
             Log("reseau : accepte par l'hote, joueur %d", g_localId);
+            if (g_everAccepted && g_onNotice) g_onNotice("reconnecte a l'hote", "reconnected to the host", 0);
+            g_everAccepted = true;
         }
         break;
     case MSG_FULL:
@@ -316,6 +346,7 @@ void NetPoll()
         fromLen = sizeof(from);
         int len = recvfrom(g_sock, (char *)buf, sizeof(buf), 0, (sockaddr *)&from, &fromLen);
         if (len <= 0) break;
+        if (g_netMuteUntil && GetTickCount() < g_netMuteUntil) continue;
         if (g_cfg.host) HostReceive(buf, len, from);
         else GuestReceive(buf, len, from);
     }
@@ -323,9 +354,16 @@ void NetPoll()
     uint32_t now = GetTickCount();
     if (g_cfg.host) { for (int i = 1; i < MAX_PLAYERS; i++) if (g_players[i].connected) RlResend(i, now); }
     else if (g_localId >= 0) RlResend(0, now);
+    static uint32_t lastPing;
+    if (!g_cfg.host && g_localId >= 0 && now - lastPing > 2000) {
+        lastPing = now;
+        MsgPing p = { MSG_PING, now };
+        SendTo(g_hostAddr, &p, sizeof(p));
+    }
     if (!g_cfg.host && g_localId < 0 && now - g_lastHello > 1000) {   // on frappe a la porte chaque seconde
         MsgHello h = { MSG_HELLO, NET_VERSION };
         lstrcpynA(h.name, g_cfg.playerName, sizeof(h.name));
+        h.rejoin = g_everAccepted && *(int *)0x9B5F08 == 9;   // deja dans la partie : simple coupure
         SendTo(g_hostAddr, &h, sizeof(h));
         g_lastHello = now;
     }
@@ -334,6 +372,8 @@ void NetPoll()
         if (now - g_players[i].lastSeen > TIMEOUT_MS) {
             g_players[i].connected = false;
             Log("reseau : joueur %d ne repond plus", i);
+            if (g_onNotice) g_onNotice(i == 0 && !g_cfg.host ? "l'hote ne repond plus, reconnexion..." : "ne repond plus",
+                                       i == 0 && !g_cfg.host ? "the host is not responding, reconnecting..." : "is not responding", i);
             if (!g_cfg.host && i == 0) g_localId = -1;   // l'hote a disparu : on refrappe
         }
     }

@@ -14,6 +14,8 @@
 #include "interp.h"
 #include "anims.h"
 #include "players.h"
+
+int WantedLevel(void *ped);   // plus bas : etoiles de recherche
 #include <math.h>
 #include <string.h>
 
@@ -285,6 +287,8 @@ static void SendLocalState(bool inGame)
         s.aiming = IsAimingGun(ped) ? 1 : 0;
         s.inVehicle = InVehicle(ped) ? 1 : 0;
         s.shared = PopulationShared() ? 1 : 0;
+        s.ping = g_cfg.host ? 0 : g_myPing;
+        s.wanted = (uint8_t)WantedLevel(ped);
         if (!s.inVehicle && !s.aiming) CollectAnimSlots(ped, s.anims, 3);
         if (s.inVehicle && PedVehicle(ped)) {
             s.vehicleId = NetVehicleId(PedVehicle(ped));
@@ -341,14 +345,57 @@ void RequestGather() { g_gathered = false; }
 static void GatherToHost(bool inGame)
 {
     bool &gathered = g_gathered;
-    // Mort : il reapparait a l'hopital ; on le ramene ensuite pres de l'hote. (PED_DEAD = 55, verifie dans
+    // Mort : il reapparait a l'hopital le plus proche, comme en solo (ReapparitionHote=1 : pres de l'hote). (PED_DEAD = 55, verifie dans
     // CPed::SetDead ; 54 = PED_DIE. Surtout pas 56 et suivants : etats de vol de voiture, l'invite etait teleporte
     // en pleine action.)
     static bool wasDown;
+    static int savedWeapons[10], savedAmmo[10];
     if (inGame && !g_cfg.host) {
         void *me = FindPlayerPed();
-        bool down = me && (Health(me) <= 0.0f || PedState(me) == 54 || PedState(me) == 55);
-        if (wasDown && !down) { gathered = false; Log("coop : de retour apres la mort / l'arrestation"); }
+        uint8_t *info = (uint8_t *)0x94AD28;   // CWorld::Players[0] ; m_nPlayerState +0xCC (1 mort, 2 arrete)
+        int wb = *(int *)(info + 0xCC);
+        bool down = me && (Health(me) <= 0.0f || PedState(me) == 54 || PedState(me) == 55 || wb == 1 || wb == 2);
+        if (down && !wasDown) {
+            Log("coop : %s", wb == 2 ? "arrete" : "mort");
+            // Garder armes et argent : les "sortie gratuite" de l'hopital et de la prison (m_bGetOutOfJailFree +0x145,
+            // m_bGetOutOfHospitalFree +0x146), comme le fait le jeu apres certaines missions.
+            if (g_cfg.keepWeapons) {
+                info[0x145] = 1; info[0x146] = 1;
+                for (int s = 0; s < 10; s++) {   // et au cas ou : ses armes, rendues a la reapparition
+                    savedWeapons[s] = WeaponTypeInSlot(me, s);
+                    savedAmmo[s] = Field<int>(me, 0x408 + s * 0x18 + 0xC);
+                }
+            }
+            // Reapparaitre pres de l'hote plutot qu'a l'hopital / au commissariat (OVERRIDE_NEXT_RESTART). Desactive par
+            // defaut (choix de JD : trop facile en mission ; il revient par ses propres moyens).
+            const NetPlayer &h = g_players[0];
+            if (g_cfg.respawnAtHost && h.connected && h.state.inGame && !h.state.inVehicle) {
+                int32_t r[4];
+                float v[4] = { h.state.pos[0] + 2.0f, h.state.pos[1], h.state.pos[2], h.state.heading * 57.2958f };
+                memcpy(r, v, sizeof(r));
+                MirrorLocal(0x016E, 4, r);
+            }
+        }
+        if (wasDown && !down) {
+            if (g_cfg.respawnAtHost) gathered = false;   // sinon il reste a l'hopital / au commissariat
+            Log("coop : de retour apres la mort / l'arrestation");
+            if (g_cfg.keepWeapons) {
+                bool missing = false;
+                for (int s = 0; s < 10; s++)
+                    if (savedWeapons[s] > 0 && WeaponTypeInSlot(me, s) != savedWeapons[s] && savedAmmo[s] > 0) {
+                        int model = *(int *)(0x782A14 + savedWeapons[s] * 0x64 + 0x54);   // CWeaponInfo : modele
+                        if (model > 0 && !HasModelLoaded(model)) RequestModel(model, 1);
+                        missing = true;
+                    }
+                if (missing) ((void(__cdecl *)(bool))0x40B5F0)(false);   // CStreaming::LoadAllRequestedModels
+                for (int s = 0; s < 10; s++)
+                    if (missing && savedWeapons[s] > 0 && WeaponTypeInSlot(me, s) != savedWeapons[s] && savedAmmo[s] > 0) {
+                        GiveWeapon(me, savedWeapons[s], savedAmmo[s]);
+                        Log("coop : arme %d rendue (%d balles)", savedWeapons[s], savedAmmo[s]);
+                    }
+            }
+            memset(savedWeapons, 0, sizeof(savedWeapons));
+        }
         wasDown = down;
     }
     if (!inGame) { gathered = false; return; }
@@ -369,6 +416,43 @@ static void GatherToHost(bool inGame)
     MirrorLocal(0x0373, 0, NULL);   // SET_CAMERA_BEHIND_PLAYER
     gathered = true;
     Log("coop : pose a cote de l'hote (%.1f %.1f %.1f)", Pos(ped).x, Pos(ped).y, Pos(ped).z);
+}
+
+// --- Recherche de la police partagee (RecherchePartagee=1) ---
+// L'hote prend le plus haut niveau des joueurs (un crime d'un invite attire aussi sa police) ; les invites prennent
+// celui de l'hote a chaque fois qu'il change (hausse, ou police semee : tout le monde retombe a zero).
+int WantedLevel(void *ped) { void *w = Field<void *>(ped, 0x5F4); return w ? Field<int>(w, 0x20) : 0; }
+static void SetWantedLevel(void *ped, int level)
+{
+    void *w = Field<void *>(ped, 0x5F4);
+    if (w) ((void(__thiscall *)(void *, int))0x4D1FA0)(w, level);
+}
+
+static void ShareWanted(bool inGame)
+{
+    static int lastHost = -1;
+    if (!inGame || !g_cfg.shareWanted) { lastHost = -1; return; }
+    void *me = FindPlayerPed();
+    if (g_cfg.host) {
+        // Quand la recherche de l'hote baisse (police semee), les invites l'apprennent un peu apres : pendant 2 s on
+        // ignore leurs anciens niveaux, sinon on remontait aussitot.
+        static int lastMine;
+        static uint32_t quietUntil;
+        int mine = WantedLevel(me), best = mine;
+        if (mine < lastMine) quietUntil = GetTickCount() + 2000;
+        lastMine = mine;
+        if (GetTickCount() < quietUntil) return;
+        for (int i = 1; i < MAX_PLAYERS; i++)
+            if (g_players[i].connected && g_players[i].state.inGame && g_players[i].state.wanted > best) best = g_players[i].state.wanted;
+        if (best > mine) { SetWantedLevel(me, best); Log("police : recherche %d (crime d'un invite)", best); }
+        return;
+    }
+    const NetPlayer &h = g_players[0];
+    if (g_localId <= 0 || !h.connected || !h.state.inGame) return;
+    if (h.state.wanted != lastHost) {
+        lastHost = h.state.wanted;
+        if (WantedLevel(me) != lastHost) { SetWantedLevel(me, lastHost); Log("police : recherche %d (comme l'hote)", lastHost); }
+    }
 }
 
 static bool OtherPlayersConnected()
@@ -512,6 +596,7 @@ void CoopFrame()
     ConditionsFrame(inGame);
     if (inGame) PassengerKey();
     PlayersFrame(inGame);
+    ShareWanted(inGame);
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
     MirrorFrame(inGame);

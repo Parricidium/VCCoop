@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 4 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 5 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -18,10 +18,16 @@ enum MsgType : uint8_t {
     MSG_RELIABLE,    // enveloppe fiable et ordonnee : seq + charge utile (voir NetSendReliable)
     MSG_ACK,         // accuse de reception cumulatif d'un flux fiable
     MSG_MARKER,      // hote -> invites : cylindre de destination d'une mission (conditions.cpp)
+    MSG_PING,        // invite -> hote : heure d'envoi (mesure du ping)
+    MSG_PONG,        // hote -> invite : la meme heure, renvoyee
+    MSG_RDV,         // point de rendez-vous d'un joueur (players.cpp), relaye par l'hote
 };
+struct MsgPing { uint8_t type; uint32_t time; };
+struct MsgRdv { uint8_t type, player, active; float pos[3]; };
 
 #pragma pack(push, 1)
-struct MsgHello { uint8_t type, version; char name[24]; };
+// rejoin : l'invite etait deja dans cette partie (coupure reseau) : pas besoin de lui renvoyer la sauvegarde.
+struct MsgHello { uint8_t type, version; char name[24]; uint8_t rejoin; };
 struct MsgWelcome { uint8_t type, id; };
 struct MsgBye { uint8_t type, id; };
 
@@ -49,6 +55,8 @@ struct MsgState {
     uint32_t time;       // GetTickCount de l'envoi (interpolation, interp.cpp)
     AnimSlot anims[3];   // animations en cours hors marche (coups, sauts, chutes...), les plus visibles d'abord
     uint8_t shared;      // invite : il voit les passants et la circulation de l'hote (population.cpp)
+    uint16_t ping;       // invite : aller-retour avec l'hote (ms)
+    uint8_t wanted;      // etoiles de recherche
 };
 struct MsgWorld {
     uint8_t type;
@@ -118,6 +126,10 @@ void NetSendReliable(const void *data, int len);
 void NetSendReliableTo(int peer, const void *data, int len);   // hote : a un invite precis
 extern void (*g_onReliable)(int from, const uint8_t *data, int len);
 extern void (*g_onJoin)(int peer);   // hote : un invite vient d'entrer
+extern bool g_peerRejoin[MAX_PLAYERS]; // hote : cet invite revient d'une coupure (deja en partie avec nous)
+extern void (*g_onNotice)(const char *fr, const char *en, int player);   // message a l'ecran (players.cpp)
+extern uint16_t g_myPing;
+extern void (*g_onRdv)(const MsgRdv &r);   // point de rendez-vous recu (players.cpp)   // invite : dernier aller-retour mesure avec l'hote (ms)
 bool NetIsHost();
 // Hote : un invite en partie, en population partagee, est-il a moins de r metres de p (meme interieur) ?
 bool NearAnyGuest(const float *p, uint8_t area, float r);

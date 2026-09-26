@@ -10,6 +10,8 @@
 //   Autotest=bagarre : toutes les 2 s, alternativement un coup de poing (rond) et un saut (carre)
 //   Autotest=cogneur : toutes les 2 s, le joueur local "frappe" (10 points, a mains nues) le Tommy du joueur voisin
 //   Autotest=boxeur : se place a 1 m du Tommy du joueur voisin, face a lui, et lui donne un coup de poing toutes les 2 s
+//   Autotest=mort : (invite) prend un pistolet, meurt, et dit ou il reapparait et s'il a garde son arme
+//   Autotest=coupure : (invite) coupe le reseau 12 s au bout de 10 s de jeu (doit revenir sans recharger)
 //   Autotest=moto : (hote) fait apparaitre un Faggio a cote de lui, s'assoit dessus, roule doucement par moments
 //   Autotest=cible : (hote) cree un personnage de mission a cote de lui ; toutes les 3 s il "blesse" le Tommy de l'invite
 //   Autotest=frappe : (invite) toutes les 2 s, inflige 25 points a la copie du personnage de mission le plus proche
@@ -142,6 +144,48 @@ void AutotestFrame()
         if (victim && t > 150 && t % 60 == 0) {
             ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(victim, FindPlayerPed(), 0, 10.0f, 0, 0);
             Log("autotest : je frappe l'autre joueur");
+        }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "recherche") == 0) {   // (invite) 2 etoiles au bout de 5 s de jeu
+        static bool done;
+        void *w = Field<void *>(FindPlayerPed(), 0x5F4);
+        if (!done && w && frame - controlSince > 150) {
+            done = true;
+            ((void(__thiscall *)(void *, int))0x4D1FA0)(w, 2);
+            Log("autotest : je me fais rechercher (2 etoiles)");
+        }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "coupure") == 0) {
+        extern uint32_t g_netMuteUntil;
+        static bool done;
+        if (!done && frame - controlSince > 300) {
+            done = true;
+            g_netMuteUntil = GetTickCount() + 12000;
+            Log("autotest : coupure reseau de 12 s");
+        }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "mort") == 0) {
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        static int step;
+        if (step == 0 && t > 100) {
+            int model = *(int *)(0x782A14 + 17 * 0x64 + 0x54);
+            if (!HasModelLoaded(model)) { RequestModel(model, 1); return; }
+            GiveWeapon(me, 17, 60); SetCurrentWeapon(me, 17);
+            step = 1;
+            Log("autotest : pistolet en main (creneau %d), argent %d", CurrentWeaponSlot(me), *(int *)(0x94AD28 + 0xA0));
+        } else if (step == 1 && t > 200) {
+            Health(me) = 0.0f;
+            step = 2;
+            Log("autotest : je meurs en %.1f %.1f %.1f", Pos(me).x, Pos(me).y, Pos(me).z);
+        } else if (step == 2 && *(int *)(0x94AD28 + 0xCC) == 0 && Health(me) > 0 && t > 400) {
+            step = 3;
+            char w[128]; int n = 0;
+            for (int s = 0; s < 10; s++) n += wsprintfA(w + n, " %d", WeaponTypeInSlot(me, s));
+            Log("autotest : de retour en %.1f %.1f %.1f, armes%s, argent %d", Pos(me).x, Pos(me).y, Pos(me).z, w, *(int *)(0x94AD28 + 0xA0));
         }
         return;
     }

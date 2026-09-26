@@ -23,7 +23,8 @@ static_assert(sizeof(MenuEntry) == 0x12 && sizeof(MenuScreen) == 0xE2, "table de
 static MenuScreen *Screens() { return (MenuScreen *)0x6D8B70; }
 
 enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
-enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK };
+enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
+       ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS };
 
 static uint8_t *Menu() { return (uint8_t *)0x869630; }   // FrontEndMenuManager
 static int CurrentPage() { return *(int *)(Menu() + 0xF8); }
@@ -61,10 +62,14 @@ static void SaveIni()
     wsprintfA(ini, "%svccoop.ini", GameDir());
     WritePrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, ini);
     WritePrivateProfileStringA("VCCoop", "Pseudo", g_cfg.playerName, ini);
+    WritePrivateProfileStringA("VCCoop", "TirAmi", g_cfg.friendlyFire ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "ArgentPartage", g_cfg.shareMoney ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "AfficherPseudos", g_cfg.showNames ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "GarderArmes", g_cfg.keepWeapons ? "1" : "0", ini);
 }
 
 // --- Textes ---
-static wchar_t g_text[8][80];
+static wchar_t g_text[12][80];
 
 static const wchar_t *Put(int slot, const char *s)
 {
@@ -96,6 +101,25 @@ static const wchar_t *CoopText(const char *key)
         wsprintfA(buf, "%s : %s%s", fr ? "Adresse" : "Address", g_edit == EDIT_ADDRESS ? g_editBuf : g_cfg.address,
                   g_edit == EDIT_ADDRESS && (GetTickCount() / 400) % 2 ? "-" : "");
         return Put(4, buf);
+    }
+    // Reglages. Tir ami et argent partage : c'est l'hote qui decide (chez un invite connecte, on montre les siens).
+    const char *yes = fr ? "Oui" : "On", *no = fr ? "Non" : "Off";
+    bool guestOnline = g_netStarted && !g_cfg.host && g_localId > 0;
+    if (!strcmp(key, "VCC_TA")) {
+        wsprintfA(buf, "%s : %s%s", fr ? "Tir ami" : "Friendly fire", g_cfg.friendlyFire ? yes : no, guestOnline ? (fr ? " (hote)" : " (host)") : "");
+        return Put(6, buf);
+    }
+    if (!strcmp(key, "VCC_AP")) {
+        wsprintfA(buf, "%s : %s", fr ? "Argent partage" : "Shared money", g_cfg.shareMoney ? yes : no);
+        return Put(7, buf);
+    }
+    if (!strcmp(key, "VCC_PS2")) {
+        wsprintfA(buf, "%s : %s", fr ? "Pseudos" : "Names", g_cfg.showNames ? yes : no);
+        return Put(8, buf);
+    }
+    if (!strcmp(key, "VCC_GA")) {
+        wsprintfA(buf, "%s : %s", fr ? "Garder ses armes" : "Keep weapons", g_cfg.keepWeapons ? yes : no);
+        return Put(9, buf);
     }
     if (!strcmp(key, "VCC_PSE")) {
         wsprintfA(buf, "%s : %s%s", fr ? "Pseudo" : "Nickname", g_edit == EDIT_NICK ? g_editBuf : g_cfg.playerName,
@@ -148,6 +172,12 @@ static void OnCoopAction(int action)
         }
         if (!g_cfg.host) { g_joining = true; g_joinSince = GetTickCount(); }
         break;
+    case ACT_FRIENDLY:
+        if (g_netStarted && !g_cfg.host && g_localId > 0) break;   // l'hote decide
+        g_cfg.friendlyFire = !g_cfg.friendlyFire; SaveIni(); break;
+    case ACT_MONEY: g_cfg.shareMoney = !g_cfg.shareMoney; SaveIni(); break;
+    case ACT_NAMES: g_cfg.showNames = !g_cfg.showNames; SaveIni(); break;
+    case ACT_WEAPONS: g_cfg.keepWeapons = !g_cfg.keepWeapons; SaveIni(); break;
     case ACT_ADDRESS: BeginEdit(EDIT_ADDRESS); break;
     case ACT_NICK: BeginEdit(EDIT_NICK); break;
     }
@@ -318,9 +348,10 @@ void InstallMenu()
     c.parentEntry = 1;
     const struct { uint16_t act; const char *label; } items[] = {
         { ACT_CREATE, "VCC_CRE" }, { ACT_JOIN, "VCC_JOI" }, { ACT_ADDRESS, "VCC_IP" }, { ACT_NICK, "VCC_PSE" },
+        { ACT_FRIENDLY, "VCC_TA" }, { ACT_MONEY, "VCC_AP" }, { ACT_NAMES, "VCC_PS2" }, { ACT_WEAPONS, "VCC_GA" },
         { ACT_GOBACK, "FEDS_TB" },
     };
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < (int)(sizeof(items) / sizeof(items[0])); i++) {
         MenuEntry &e = c.entries[i];
         e.action = items[i].act;
         lstrcpynA(e.label, items[i].label, 8);
