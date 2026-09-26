@@ -187,6 +187,8 @@ void AutotestFrame()
             armed = weapon;
             Log("autotest : arme %d en main", weapon);
         }
+        extern bool g_testDropProjectile;
+        g_testDropProjectile = true;
         if (armed == 12 && t > 150 && t % 120 < 20) Press(PAD_CIRCLE, 255);
         if (armed == 31 && t % 120 < 40) Press(PAD_CIRCLE, 255);
         return;

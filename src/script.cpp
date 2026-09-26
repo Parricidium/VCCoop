@@ -116,13 +116,13 @@ static char __fastcall h_ProcessOneCommand(void *script)
     if (g_cfg.host) {
         if (op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85)) MirrorMissionEnd();
         if (op == OP_START_MISSION) {
-            MirrorMissionStart();
             int at = ip + 2, n = 0;
             uint8_t t = ScriptSpace()[at];
             if (t == 4) n = (int8_t)ScriptSpace()[at + 1];
             else if (t == 5) n = *(int16_t *)(ScriptSpace() + at + 1);
             else if (t == 1) n = *(int32_t *)(ScriptSpace() + at + 1);
             else if (t == 2) n = *(int32_t *)(ScriptSpace() + *(uint16_t *)(ScriptSpace() + at + 1));
+            MirrorMissionStart(n);
             Log("script : l'hote lance la mission %d (%.8s)", n, (char *)script + 8);
         }
         if (MirrorBefore(script, ip, op)) {

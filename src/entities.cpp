@@ -64,6 +64,7 @@ static void ScanOwnPeds()
         m.time = now;
         m.owner = (uint8_t)g_localId;
         m.ambient = CharCreatedBy(ped) == 1;
+        m.shots = PedShotCount(ped);
         if (InVehicle(ped)) m.anims[0].id = m.anims[1].id = -1;
         else CollectAnimSlots(ped, m.anims, 2);
         m.area = AreaCode(ped);
@@ -99,6 +100,7 @@ struct Ghost {
     uint32_t lastRecv;
     int lastMoveState;
     bool dead;
+    uint8_t lastShots;
     Track track;
     AnimMirror anims;
 };
@@ -212,7 +214,10 @@ static void UpdateGhost(Ghost &g)
         return;
     }
     Health(ped) = m.health;
-    HoldWeapon(ped, m.weapon);
+    bool armed = HoldWeapon(ped, m.weapon);
+    // Ses tirs (police d'un invite recherche, personnages de mission) : rejoues ici, avec de vraies balles.
+    if (armed && !InVehicle(ped)) for (int n = 0; g.lastShots != m.shots && n < 3; n++) { g.lastShots++; PuppetShoot(ped, m.weapon); }
+    g.lastShots = m.shots;
 
     void *want = m.vehicleId ? NetVehicleById(m.vehicleId) : NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;

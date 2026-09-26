@@ -21,6 +21,7 @@ enum MsgType : uint8_t {
     MSG_PING,        // invite -> hote : heure d'envoi (mesure du ping)
     MSG_PONG,        // hote -> invite : la meme heure, renvoyee
     MSG_RDV,         // point de rendez-vous d'un joueur (players.cpp), relaye par l'hote
+    MSG_TIMERS,      // hote -> invites : valeur des minuteurs / compteurs de mission a l'ecran (mirror.cpp)
 };
 struct MsgPing { uint8_t type; uint32_t time; };
 struct MsgRdv { uint8_t type, player, active; float pos[3]; };
@@ -82,6 +83,7 @@ struct MsgVehicle {
     uint8_t radio;           // station de radio (m_nRadioStation +0x23C) : celle du conducteur pour tout le monde
     uint8_t damage[24];      // voitures : CDamageManager (+0x2A0) du proprietaire (portes, ailes, phares, pneus...)
     uint8_t ambient;         // circulation partagee (ignoree par un invite qui a son propre monde)
+    uint8_t wrecked;         // epave chez le proprietaire (la copie explose aussi)
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 
@@ -100,6 +102,7 @@ struct MsgPed {
     AnimSlot anims[2];      // animations d'action (se battre, tomber, se relever...)
     uint8_t owner;          // joueur dont c'est le personnage (0 = hote ; un invite recherche envoie sa police)
     uint8_t ambient;        // passant (population partagee), pas un personnage de mission
+    uint8_t shots;          // compteur de tirs (chaque nouveau tir est rejoue sur la copie : ses balles font mal)
 };
 struct MsgPedRemove { uint8_t type; uint32_t handle; uint8_t owner; };
 #pragma pack(pop)

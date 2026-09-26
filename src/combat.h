@@ -9,5 +9,6 @@ uint8_t LocalShotCount();
 void TestMeleeHit(void *victim);
 void PassengerShooting();   // chaque image : tir sur le cote pour le joueur passager
 extern bool g_testPassengerFire;   // autotest : un coup de poing du joueur local sur victim
-void PuppetShoot(void *ped, int weapon);   // tir visuel du Tommy d'un autre joueur
+void PuppetShoot(void *ped, int weapon);   // tir visuel du Tommy d'un autre joueur (ou d'une copie de personnage)
+uint8_t PedShotCount(void *ped);           // tirs reels de ce personnage chez nous (pour les rejouer sur sa copie)
 bool ApplyDamage(void *ped, void *damager, int weapon, float damage, int piece, uint8_t dir);   // sans renvoi reseau
