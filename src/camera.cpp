@@ -2,7 +2,7 @@
 //  - la souris fait tourner la camera autour du vehicule ; sans mouvement pendant 2,5 s, elle revient derriere ;
 //  - clic droit (arme de tir en voiture : pistolets, mitraillettes) : on vise au centre de l'ecran, clic gauche
 //    tire la ou on vise (conducteur ou passager) ;
-//  - la direction a la souris du jeu est coupee (la souris ne sert qu'a la camera).
+//  - la direction a la souris du jeu est coupee (CVehicle::m_bDisableMouseSteering) : la souris ne sert qu'a la camera.
 // La camera du jeu est calculee par CCam::Process (0x48351A) ; juste apres, CCamera::Process construit la vue a
 // partir de sa position (m_vecSource +0x174), sa direction (m_vecFront +0x168) et son "haut" (m_vecUp +0x18C) :
 // c'est la qu'on les remplace. Les tirs passent par CWeapon::FireFromCar, dont le point vise est calcule par
@@ -140,10 +140,17 @@ static void __cdecl h_AutoAim(void *shooter, void *veh, float *start, float *end
     o_AutoAim(shooter, veh, start, end);
 }
 
-// Chaque image : coupe la direction a la souris des voitures (0xA10B4C) tant que la camera libre est active.
+// Chaque image : coupe la direction a la souris des voitures tant que la camera libre est active. Le jeu la fait si
+// CCamera::m_bUseMouse3rdPerson (0xA10B4C, qui sert aussi a la camera a pied : surtout pas a zero, la souris ne
+// marchait plus a pied) et pas CVehicle::m_bDisableMouseSteering (0x69C610) : c'est ce dernier qu'on pose.
 void CameraFrame()
 {
-    if (g_cfg.freeCam) *(bool *)0xA10B4C = false;
+    if (!g_cfg.freeCam) return;
+    *(bool *)0x69C610 = true;
+    // La 2026.09.27c remettait m_bUseMouse3rdPerson a zero (et le jeu a pu l'enregistrer dans gta_vc.set en
+    // passant par les options) : on la remet une fois, sinon la souris resterait sans effet a pied.
+    static bool restored;
+    if (!restored) { restored = true; *(bool *)0xA10B4C = true; }
 }
 
 void InstallCamera()
