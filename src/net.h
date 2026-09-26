@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 7 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 8 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -27,7 +27,8 @@ struct MsgRdv { uint8_t type, player, active; float pos[3]; };
 
 #pragma pack(push, 1)
 // rejoin : l'invite etait deja dans cette partie (coupure reseau) : pas besoin de lui renvoyer la sauvegarde.
-struct MsgHello { uint8_t type, version; char name[24]; uint8_t rejoin; };
+// session : tire au sort par l'invite a chaque (re)connexion ; l'hote repart d'un flux fiable neuf quand il change.
+struct MsgHello { uint8_t type, version; char name[24]; uint8_t rejoin; uint32_t session; };
 struct MsgWelcome { uint8_t type, id; };
 struct MsgBye { uint8_t type, id; };
 
@@ -80,6 +81,7 @@ struct MsgVehicle {
     float wheelSpin[4];      // rotation des roues par 1/50 s (moto : avant, arriere)
     uint8_t radio;           // station de radio (m_nRadioStation +0x23C) : celle du conducteur pour tout le monde
     uint8_t damage[24];      // voitures : CDamageManager (+0x2A0) du proprietaire (portes, ailes, phares, pneus...)
+    uint8_t ambient;         // circulation partagee (ignoree par un invite qui a son propre monde)
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 
@@ -97,6 +99,7 @@ struct MsgPed {
     uint32_t time;          // GetTickCount de l'envoi
     AnimSlot anims[2];      // animations d'action (se battre, tomber, se relever...)
     uint8_t owner;          // joueur dont c'est le personnage (0 = hote ; un invite recherche envoie sa police)
+    uint8_t ambient;        // passant (population partagee), pas un personnage de mission
 };
 struct MsgPedRemove { uint8_t type; uint32_t handle; uint8_t owner; };
 #pragma pack(pop)
@@ -105,6 +108,7 @@ struct NetPlayer {
     bool connected;
     MsgState state;     // dernier etat recu
     uint32_t lastSeen;  // GetTickCount de la derniere reception
+    uint32_t lastSeq;   // numero du dernier etat applique (les etats arrives dans le desordre sont ignores)
 };
 
 extern NetPlayer g_players[MAX_PLAYERS];
@@ -113,6 +117,7 @@ extern int g_localId;   // 0 = hote ; -1 = invite pas encore accepte
 bool NetStart();        // selon g_cfg (hote ou invite)
 void NetPoll();         // lit tous les paquets en attente
 void NetSendState(const MsgState &s);
+void NetSendBye();      // on quitte : previent l'hote (ou tous les invites) tout de suite, sans attendre le delai
 void NetSendToGuests(const void *data, int len);   // hote seulement
 extern void (*g_onWorld)(const MsgWorld &w);       // invite : appele a la reception d'un MsgWorld
 extern void (*g_onState)(const MsgState &s);       // chaque etat de joueur recu (pour son interpolation)

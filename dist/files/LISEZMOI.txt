@@ -104,6 +104,9 @@ A SAVOIR (version de test)
   a la coop : ce qu'il contenait est remplace). Un invite qui arrive plus
   tard la recoit aussi. L'avancement de l'histoire de l'hote est ensuite
   transmis aux invites au fil des missions.
+- Coupure reseau : la partie reprend toute seule quand la connexion revient
+  (l'invite recoit a nouveau l'etat complet de l'histoire). Un joueur qui
+  quitte le jeu disparait tout de suite chez les autres, avec ses vehicules.
 - En cas de souci : vccoop.log (dans le dossier du jeu) aide a comprendre ; le
   journal de chaque partie est aussi garde dans le dossier logs (50 derniers).
 

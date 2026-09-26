@@ -63,6 +63,7 @@ static void ScanOwnPeds()
         m.pedType = (uint8_t)PedType(ped);
         m.time = now;
         m.owner = (uint8_t)g_localId;
+        m.ambient = CharCreatedBy(ped) == 1;
         if (InVehicle(ped)) m.anims[0].id = m.anims[1].id = -1;
         else CollectAnimSlots(ped, m.anims, 2);
         m.area = AreaCode(ped);
@@ -239,6 +240,12 @@ static void OnPed(const MsgPed &m)
 {
     if (GameState() != GS_PLAYING || m.owner == g_localId || m.owner >= MAX_PLAYERS) return;
     Ghost *g = FindGhost(m.owner, m.handle);
+    // Invite avec son propre monde (loin de l'hote) : les passants partages envoyes pour un autre invite ne le
+    // concernent pas (ils se superposaient aux siens).
+    if (m.ambient && !g_cfg.host && !PopulationShared()) {
+        if (g) DestroyGhost(*g);
+        return;
+    }
     if (!g) {
         for (auto &x : g_ghosts)
             if (!x.used) { memset(&x, 0, sizeof(x)); x.used = true; x.owner = m.owner; x.handle = m.handle; g = &x; break; }

@@ -278,10 +278,15 @@ void MirrorAfter(void *script)
     if (g_cfg.logScripts && !g_captureOnly) Log("miroir : envoi %s", sig->name);
 }
 
+// Photo des variables : prise a l'entree en partie, puis rafraichie a chaque envoi de changements. Elle n'est plus
+// reprise au debut de chaque mission : ce que le script principal change entre deux missions (achat d'une
+// propriete, appel telephonique qui debloque une mission...) etait alors oublie et n'arrivait jamais aux invites.
+static bool g_missionRunning;
+
 void MirrorMissionStart()
 {
-    memcpy(g_globSnap, ScriptSpace(), GLOBALS_END);
-    g_globSnapValid = true;
+    if (!g_globSnapValid) { memcpy(g_globSnap, ScriptSpace(), GLOBALS_END); g_globSnapValid = true; }
+    g_missionRunning = true;
     uint8_t b = RL_MISSION_START;
     NetSendReliable(&b, 1);
     Log("miroir : debut de mission envoye");
@@ -313,7 +318,7 @@ static void SendGlobals(int peer, bool changedOnly)
         }
     }
     if (len > 1) { if (peer < 0) NetSendReliable(buf, len); else NetSendReliableTo(peer, buf, len); }
-    Log("miroir : %d variables globales envoyees (%s)", total, changedOnly ? "changees par la mission" : "etat complet");
+    if (total || !changedOnly) Log("miroir : %d variables globales envoyees (%s)", total, changedOnly ? "changees" : "etat complet");
 }
 
 static void SendGlobalChanges()
@@ -321,6 +326,29 @@ static void SendGlobalChanges()
     if (!g_globSnapValid) return;
     SendGlobals(-1, true);
     memcpy(g_globSnap, ScriptSpace(), GLOBALS_END);
+}
+
+// Entre deux missions : seulement les variables qui ont change ET ne bougent plus depuis le passage precedent
+// (les compteurs et minuteurs du script principal changent sans arret, ils ne portent pas l'histoire).
+static uint8_t g_globPrev[GLOBALS_END];
+static void SendStableChanges()
+{
+    if (!g_globSnapValid) return;
+    uint8_t buf[MAX_RELIABLE_PAYLOAD];
+    int len = 1, total = 0;
+    buf[0] = RL_GLOBALS;
+    for (int off = GLOBALS_BEGIN; off + 4 <= GLOBALS_END; off += 4) {
+        uint32_t now = *(uint32_t *)(ScriptSpace() + off), sent = *(uint32_t *)(g_globSnap + off), prev = *(uint32_t *)(g_globPrev + off);
+        if (now == sent || now != prev || !IsFlagValue(now) || !IsFlagValue(sent)) continue;
+        *(uint32_t *)(g_globSnap + off) = now;
+        uint16_t o = (uint16_t)off;
+        memcpy(buf + len, &o, 2); memcpy(buf + len + 2, &now, 4);
+        len += 6; total++;
+        if (len + 6 > MAX_RELIABLE_PAYLOAD) { NetSendReliable(buf, len); len = 1; }
+    }
+    if (len > 1) NetSendReliable(buf, len);
+    memcpy(g_globPrev, ScriptSpace(), GLOBALS_END);
+    if (total) Log("miroir : %d variables globales envoyees (changees hors mission)", total);
 }
 
 // Hote : chaque invite recoit l'etat complet de l'histoire des que l'hote est en partie (a son arrivee, ou plus
@@ -338,7 +366,9 @@ static void HostSyncNewcomers(bool inGame)
     for (int i = 1; i < MAX_PLAYERS; i++) {
         if (!g_players[i].connected) { saveSent[i] = wasInGame[i] = false; continue; }
         // Retour apres une coupure : il est deja dans notre partie, on ne lui fait pas tout recharger.
-        if (!saveSent[i] && !g_synced[i]) { saveSent[i] = true; if (HostHasSave() && !g_peerRejoin[i]) { SendHostSave(i); g_sameSave[i] = true; } }
+        // Un invite qui arrive alors que l'hote joue deja recoit la sauvegarde telle qu'elle a ete chargee : elle a
+        // pu vieillir (missions faites depuis), il aura donc aussi l'etat complet des variables une fois en partie.
+        if (!saveSent[i] && !g_synced[i]) { saveSent[i] = true; if (HostHasSave() && !g_peerRejoin[i]) { SendHostSave(i); if (!inGame) g_sameSave[i] = true; } }
         if (g_peerRejoin[i] && g_players[i].state.inGame) { g_peerRejoin[i] = false; wasInGame[i] = true; g_synced[i] = false; }
         bool in = g_players[i].state.inGame != 0;
         // Retour en partie apres avoir charge la sauvegarde de l'hote : memes variables que lui, rien a envoyer.
@@ -350,6 +380,7 @@ static void HostSyncNewcomers(bool inGame)
 
 void MirrorMissionEnd()
 {
+    g_missionRunning = false;
     SendGlobalChanges();
     uint8_t b = RL_MISSION_END;
     NetSendReliable(&b, 1);
@@ -559,7 +590,15 @@ void MirrorInit()
 
 void MirrorFrame(bool inGame)
 {
-    if (g_cfg.host) { if (!inGame) g_activeBlipCount = 0; HostSyncNewcomers(inGame); return; }
+    if (g_cfg.host) {
+        if (!inGame) { g_activeBlipCount = 0; g_globSnapValid = false; g_missionRunning = false; }
+        HostSyncNewcomers(inGame);
+        // Entre deux missions, les changements du script principal partent au fil de l'eau (toutes les 2 s).
+        static uint32_t lastDiff;
+        if (inGame && !g_globSnapValid) { memcpy(g_globSnap, ScriptSpace(), GLOBALS_END); memcpy(g_globPrev, g_globSnap, GLOBALS_END); g_globSnapValid = true; lastDiff = GetTickCount(); }
+        if (inGame && !g_missionRunning && GetTickCount() - lastDiff > 2000) { lastDiff = GetTickCount(); SendStableChanges(); }
+        return;
+    }
     if (!inGame) {
         g_blipCount = g_objCount = g_pickupCount = 0;
         // Hors partie (salon, chargement), la presentation des missions de l'hote n'a pas de sens : rejouees d'un coup

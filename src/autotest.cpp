@@ -230,6 +230,18 @@ void AutotestFrame()
         }
         return;
     }
+    // Coupure d'un seul cote : on n'envoie plus rien pendant 12 s mais on recoit toujours (l'autre nous perd, pas
+    // nous) ; c'est le cas ou le flux fiable restait bloque pour de bon.
+    if (_stricmp(g_cfg.autotest, "coupuresortie") == 0) {
+        extern uint32_t g_netMuteSendUntil;
+        static bool done;
+        if (!done && frame - controlSince > 300) {
+            done = true;
+            g_netMuteSendUntil = GetTickCount() + 12000;
+            Log("autotest : plus d'envoi reseau pendant 12 s");
+        }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "mort") == 0) {
         uint32_t t = frame - controlSince;
         void *me = FindPlayerPed();

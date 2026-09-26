@@ -110,6 +110,7 @@ static void SendVehicle(NetVehicle &e)
     m.brake = Field<float>(v, 0x1F4);
     m.poolHandle = VehicleHandle(v);
     m.time = GetTickCount();
+    m.ambient = e.ambient;
     // Station : celle qu'ecoute le conducteur (cMusicManager 0x980038, station en cours +0x3984), sinon celle du vehicule.
     if (m.vclass == VCLASS_CAR) memcpy(m.damage, (uint8_t *)v + 0x2A0, sizeof(m.damage));
     m.radio = drv && drv == FindPlayerPed() ? (uint8_t)*(int *)(0x980038 + 0x3984) : Field<uint8_t>(v, 0x23C);
@@ -235,10 +236,18 @@ static void ApplyState(NetVehicle &e)
     if (EntityStatus(v) != STATUS_WRECKED) SetEntityStatus(v, STATUS_ABANDONED);
 }
 
+static void DeleteCopy(NetVehicle &e);
+
 static void OnVehicle(const MsgVehicle &m)
 {
     if (m.owner == g_localId) return;
     NetVehicle *e = FindById(m.id);
+    // Invite avec son propre monde (loin de l'hote) : la circulation partagee envoyee pour un autre invite ne le
+    // concerne pas, sinon elle se superposait a la sienne.
+    if (m.ambient && !g_cfg.host && !PopulationShared()) {
+        if (e) { DeleteCopy(*e); e->used = false; }
+        return;
+    }
     if (!e) { e = Alloc(m.id); if (!e) return; }
     if (e->owner == g_localId && e->veh && e->owner != m.owner)
         Log("vehicules : %08X repris par le joueur %d", m.id, m.owner);
@@ -300,15 +309,14 @@ void VehiclesAfterProcess()
     }
 }
 
-static void OnVehRemove(uint32_t id)
+// Copie : on la supprime, apres avoir fait descendre ses occupants (copies ou Tommy distants). Si c'est notre
+// vehicule a nous (ou que nous sommes dedans), on le garde et on l'oublie seulement.
+static void DeleteCopy(NetVehicle &e)
 {
-    NetVehicle *e = FindById(id);
-    if (!e || e->owner == g_localId) return;
     void *me = FindPlayerPed();
-    if (e->veh && e->ours && !(me && InVehicle(me) && PedVehicle(me) == e->veh)) {
-        // Copie : on la supprime, apres avoir fait descendre ses occupants (copies ou Tommy distants).
-        void *v = e->veh;
-        Unbind(*e);
+    if (e.veh && e.ours && !(me && InVehicle(me) && PedVehicle(me) == e.veh)) {
+        void *v = e.veh;
+        Unbind(e);
         void *occ[9] = { VehDriver(v) };
         for (int i = 0; i < 8; i++) occ[i + 1] = VehPassenger(v, i);
         for (void *p : occ) if (p) WarpOutOfVehicle(p, NULL);
@@ -316,22 +324,65 @@ static void OnVehRemove(uint32_t id)
         RemoveReferencesToDeletedObject(v);
         DeleteEntity(v);
     } else {
-        Unbind(*e);
+        Unbind(e);
     }
+}
+
+static void OnVehRemove(uint32_t id)
+{
+    NetVehicle *e = FindById(id);
+    if (!e || e->owner == g_localId) return;
+    DeleteCopy(*e);
     e->used = false;
+}
+
+// Un joueur est parti : ses copies disparaissent ; un vehicule a nous qu'il conduisait (ou dans lequel on est)
+// redevient a nous. Sans cela ses voitures restaient figees partout, et un jeu relance (meme numero de joueur,
+// compteur repris a zero) retombait sur ces vieux identifiants : on voyait l'ancienne voiture a la place de la nouvelle.
+static void PlayerLeft(int who)
+{
+    void *me = FindPlayerPed();
+    int dropped = 0, adopted = 0;
+    for (auto &e : g_vehs) {
+        if (!e.used || e.owner != who) continue;
+        bool inside = me && InVehicle(me) && PedVehicle(me) == e.veh;
+        if (e.veh && (!e.ours || inside)) {
+            e.owner = (uint8_t)g_localId;
+            e.ambient = false;
+            Field<uint8_t>(e.veh, 0x53) &= ~0x08;
+            adopted++;
+        } else {
+            DeleteCopy(e);
+            e.used = false;
+            dropped++;
+        }
+    }
+    if (dropped || adopted) Log("vehicules : joueur %d parti, %d copies retirees, %d vehicules repris", who, dropped, adopted);
 }
 
 void VehiclesInit()
 {
     g_onVehicle = OnVehicle;
     g_onVehRemove = OnVehRemove;
+    g_vehCounter = (GetTickCount() * 2654435761u) & 0xFFFFFF;   // pas les memes identifiants d'un lancement a l'autre
 }
 
 void VehiclesFrame(bool inGame)
 {
+    static bool wasConnected[MAX_PLAYERS];
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        bool c = i != g_localId && g_players[i].connected;
+        if (wasConnected[i] && !c && inGame) PlayerLeft(i);
+        wasConnected[i] = c;
+    }
     if (!inGame) {
-        // Hors partie (chargement, menu) : le monde est detruit par le jeu, on oublie tout.
-        for (auto &e : g_vehs) if (e.used) { e.veh = NULL; e.used = false; }
+        // Hors partie (chargement, menu) : le monde est detruit par le jeu, on oublie tout ; les autres apprennent
+        // tout de suite que nos vehicules n'existent plus (sinon leurs copies restaient figees).
+        for (auto &e : g_vehs) {
+            if (!e.used) continue;
+            if (e.owner == g_localId && g_localId >= 0) { MsgVehRemove r = { MSG_VEH_REMOVE, e.id }; NetSendToAll(&r, sizeof(r)); }
+            e.veh = NULL; e.used = false;
+        }
         return;
     }
     uint32_t now = GetTickCount();
@@ -339,7 +390,15 @@ void VehiclesFrame(bool inGame)
     void *myVeh = InVehicle(ped) ? PedVehicle(ped) : NULL;
     if (myVeh && VehDriver(myVeh) == ped && VehClass(myVeh) != VCLASS_TRAIN) {
         NetVehicle *e = FindByPtr(myVeh);
-        if (!e) {
+        // Deux joueurs au volant de la meme voiture en meme temps (chacun est monte dans sa copie avant de voir
+        // l'autre) : sans regle, chacun reprenait la voiture 30 fois par seconde et elle tremblait. Le plus petit
+        // numero de joueur la garde, l'autre descend.
+        if (e && e->owner != g_localId && e->haveState && e->state.driver == e->owner && e->owner < g_localId && now - e->lastRecv < 1000) {
+            Log("vehicules : %08X, le joueur %d etait deja au volant : je descends", e->id, e->owner);
+            WarpOutOfVehicle(ped, NULL);
+            e = NULL;
+            myVeh = NULL;
+        } else if (!e) {
             e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
             if (e) {
                 e->owner = (uint8_t)g_localId;
