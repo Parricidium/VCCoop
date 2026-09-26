@@ -27,6 +27,7 @@ struct Config {
     int msaa;           // Anticrenelage=4 : 0, 2, 4 ou 8 echantillons (au prochain lancement)
     bool aniso;         // FiltrageAnisotrope=1 : textures nettes au loin (16x, trilineaire)
     bool sunShadows;    // OmbresSoleil=1 : ombres projetees du soleil (carte d'ombre, gfx.cpp)
+    int shadowRes;      // OmbresResolution=4096 (ou 2048) : taille de la carte d'ombre
     bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
     float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;

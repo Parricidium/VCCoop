@@ -149,7 +149,7 @@ struct Asm {
     void dst(int type, int n, int mask = 0xF) { t.push_back(0x80000000u | (DWORD)type << 28 | (DWORD)mask << 16 | (DWORD)n); }
     void src(int type, int n, int swz = 0xE4, int mod = 0) { t.push_back(0x80000000u | (DWORD)type << 28 | (DWORD)mod << 24 | (DWORD)swz << 16 | (DWORD)n); }
 };
-static const int SWZ_ZZZZ = 0xAA, SWZ_XXXX = 0x00;
+static const int SWZ_ZZZZ = 0xAA, SWZ_XXXX = 0x00, SWZ_YYYY = 0x55, SWZ_AAAA = 0xFF;
 
 // vs de profondeur : oPos = v0 * c0..c3 (matrice transposee), oT0 = z (projection orthogonale : z lineaire 0..1).
 static std::vector<DWORD> VsDepth()
@@ -174,8 +174,9 @@ static std::vector<DWORD> PsDepth()
     a.op(OP_END);
     return a.t;
 }
-// vs recepteur : oPos = v0 * c0..c3 (comme le jeu) ; r1 = v0 * c4..c7 (vers la carte d'ombre, deja en UV) ;
-// oT0 = r1 (uv), oT1 = r1.z (profondeur vue du soleil).
+// vs recepteur : oPos = v0 * c0..c3 (comme le jeu) ; r1 = v0 * c4..c7 (vers la carte d'ombre, deja en UV).
+// oT0 = uv, oT2/oT3/oT4 = uv decalees d'un texel (c9, c10, c11 : filtrage 2x2), oT1 = (profondeur - biais c8.x,
+// profondeur - c8.y), oT5 = uv de l'objet.
 static std::vector<DWORD> VsRecv()
 {
     Asm a; a.op(0xFFFE0101);
@@ -183,26 +184,45 @@ static std::vector<DWORD> VsRecv()
     a.op(OP_MOV); a.dst(T_RASTOUT, 0); a.src(T_TEMP, 0);
     for (int i = 0; i < 4; i++) { a.op(OP_DP4); a.dst(T_TEMP, 1, 1 << i); a.src(T_INPUT, 0); a.src(T_CONST, 4 + i); }
     a.op(OP_MOV); a.dst(T_TEXOUT, 0); a.src(T_TEMP, 1);
-    a.op(OP_MOV); a.dst(T_TEXOUT, 1); a.src(T_TEMP, 1, SWZ_ZZZZ);
-    a.op(OP_MOV); a.dst(T_TEXOUT, 2); a.src(T_INPUT, 2);   // uv de l'objet
+    a.op(OP_MOV); a.dst(T_TEXOUT, 1); a.src(T_INPUT, 2);   // uv de l'objet (etages 0-3 seulement : au-dela, le pilote ne lit plus)
+    a.op(OP_ADD); a.dst(T_TEMP, 3); a.src(T_TEMP, 1); a.src(T_CONST, 11);   // second echantillon : + (dx, dy)
+    a.op(OP_MOV); a.dst(T_TEXOUT, 2); a.src(T_TEMP, 3);
+    // oT3 = (z - biais, 0.999 - z) : les deux positifs (texcrd ecrete les valeurs negatives a 0), c8 = (biais, 0.999, -1, 0).
+    a.op(OP_ADD); a.dst(T_TEMP, 2, 0x1); a.src(T_TEMP, 1, SWZ_ZZZZ); a.src(T_CONST, 8, SWZ_XXXX, 1);
+    a.op(OP_MAD); a.dst(T_TEMP, 2, 0x2); a.src(T_TEMP, 1, SWZ_ZZZZ); a.src(T_CONST, 8, SWZ_ZZZZ); a.src(T_CONST, 8, SWZ_YYYY);
+    a.op(OP_MOV); a.dst(T_TEMP, 2, 0xC); a.src(T_CONST, 8, 0xFF);
+    a.op(OP_MOV); a.dst(T_TEXOUT, 3); a.src(T_TEMP, 2);
     a.op(OP_END);
     return a.t;
 }
 // ps recepteur : r0 = carte (t0), r1 = profondeur (t1), r3 = texture de l'objet (t2) ; r2 = carte + biais (c0) -
 // profondeur ; couleur = r2 >= 0 ? c1 (eclaire, 1) : c2 (ombre) ; au-dela de la portee de la carte (profondeur >= 1,
 // c3) : eclaire ; alpha = celui de la texture (test alpha du jeu).
+// Phase 1 : 4 echantillons de la carte (t0, t2, t3, t4), r4 = (profondeur - biais, profondeur - 1), r5 = texture de
+// l'objet ; chaque echantillon compare : carte - (profondeur - biais) >= 0 -> 1 (c1) sinon 0 (c0).
+// Phase 2 : moyenne (x c2 = 0.25) -> facteur ; couleur = facteur * c3 + c4 (c4 = teinte d'ombre, c3 = 1 - c4) ;
+// au-dela de la portee (profondeur - 1 >= 0) : eclaire ; alpha = celui de la texture.
+// Une seule phase (le pilote refuse la seconde) : 2 echantillons en diagonale (t0, t4), 8 instructions.
+// r0/r1 = carte - (profondeur - biais) >= 0 -> 1 sinon 0 ; somme ; couleur = somme * c3 (= (1 - ombre) / 2) + c4 (ombre).
+// OmbresDebug (vccoop.ini) : 1 = tout a l'ombre (la passe dessine-t-elle ?), 2 = alpha force a 1, 3 = sans le test hors portee.
+static int g_debug;
 static std::vector<DWORD> PsRecv()
 {
     Asm a; a.op(0xFFFF0104);
     a.op(OP_TEX); a.dst(T_TEMP, 0); a.src(T_TEX, 0);
-    a.op(OP_TEXCOORD); a.dst(T_TEMP, 1, 0x7); a.src(T_TEX, 1);
-    a.op(OP_TEX); a.dst(T_TEMP, 3); a.src(T_TEX, 2);
-    a.op(OP_ADD); a.dst(T_TEMP, 2); a.src(T_TEMP, 0, SWZ_XXXX); a.src(T_CONST, 0);
-    a.op(OP_SUB); a.dst(T_TEMP, 2); a.src(T_TEMP, 2); a.src(T_TEMP, 1, SWZ_XXXX);
-    a.op(OP_CMP); a.dst(T_TEMP, 0); a.src(T_TEMP, 2, SWZ_XXXX); a.src(T_CONST, 1); a.src(T_CONST, 2);   // sur .x seul (sinon canal par canal)
-    a.op(OP_SUB); a.dst(T_TEMP, 4); a.src(T_TEMP, 1, SWZ_XXXX); a.src(T_CONST, 3);                     // profondeur - 1
-    a.op(OP_CMP); a.dst(T_TEMP, 0, 0x7); a.src(T_TEMP, 4, SWZ_XXXX); a.src(T_CONST, 1); a.src(T_TEMP, 0);
-    a.op(OP_MOV); a.dst(T_TEMP, 0, 0x8); a.src(T_TEMP, 3, 0xFF);
+    a.op(OP_TEX); a.dst(T_TEMP, 1); a.src(T_TEX, 2);
+    a.op(OP_TEXCOORD); a.dst(T_TEMP, 4, 0x7); a.src(T_TEX, 3);
+    a.op(OP_TEX); a.dst(T_TEMP, 5); a.src(T_TEX, 1);
+    for (int i = 0; i < 2; i++) {
+        a.op(OP_SUB); a.dst(T_TEMP, i); a.src(T_TEMP, i, SWZ_XXXX); a.src(T_TEMP, 4, SWZ_XXXX);
+        a.op(OP_CMP); a.dst(T_TEMP, i); a.src(T_TEMP, i, SWZ_XXXX); a.src(T_CONST, 1); a.src(T_CONST, 0);
+    }
+    if (g_debug == 1) { a.op(OP_MOV); a.dst(T_TEMP, 0); a.src(T_CONST, 0); }
+    else { a.op(OP_ADD); a.dst(T_TEMP, 0); a.src(T_TEMP, 0); a.src(T_TEMP, 1); }
+    a.op(OP_MAD); a.dst(T_TEMP, 0); a.src(T_TEMP, 0); a.src(T_CONST, 3); a.src(T_CONST, 4);
+    if (g_debug != 3) { a.op(OP_CMP); a.dst(T_TEMP, 0, 0x7); a.src(T_TEMP, 4, SWZ_YYYY, 1); a.src(T_CONST, 1); a.src(T_TEMP, 0); }   // -(0.999 - z) >= 0 : hors portee, eclaire
+    if (g_debug == 2) { a.op(OP_MOV); a.dst(T_TEMP, 0, 0x8); a.src(T_CONST, 1, SWZ_AAAA); }
+    else { a.op(OP_MOV); a.dst(T_TEMP, 0, 0x8); a.src(T_TEMP, 5, SWZ_AAAA); }
     a.op(OP_END);
     return a.t;
 }
@@ -224,7 +244,10 @@ static std::vector<DWORD> Decl(DWORD fvf)
 }
 
 // ======================================================================= Ombres du soleil
-enum { SHADOW_SIZE = 2048, MAX_RECORDS = 3000 };
+enum { MAX_RECORDS = 3000 };
+static int SHADOW_SIZE = 4096;   // OmbresResolution (2048 ou 4096)
+static const float SHADOW_RANGE = 250.0f;   // metres autour de la camera
+static float g_sunStrength;      // 0 (soleil au ras de l'horizon) .. 1 (plein jour) : les ombres apparaissent avec l'aube
 struct Record { void *vb, *ib, *tex; UINT stride, baseIndex; DWORD fvf; float world[16]; UINT type, minIdx, numVerts, start, count; bool indexed, blended; DWORD alphaTest, alphaRef, alphaFunc; };
 static std::vector<Record> g_records;
 static void *g_shadowTex, *g_shadowSurf, *g_shadowDs;   // carte d'ombre (image precedente), sa surface, son tampon de profondeur
@@ -240,6 +263,8 @@ static bool CreateShadowResources()
 {
     if (g_shadowReady || g_shadowFailed) return g_shadowReady;
     g_shadowFailed = true;
+    g_debug = GetPrivateProfileIntA("VCCoop", "OmbresDebug", 0, IniPath());
+    if (g_debug) Log("rendu : OmbresDebug=%d", g_debug);
     void *d3d = NULL;
     Vt<GetD3D_t>(VT_GETD3D)(g_dev, &d3d);
     UINT fmt = 34;   // D3DFMT_G16R16
@@ -248,7 +273,11 @@ static bool CreateShadowResources()
         if (FAILED(check(d3d, 0, 1, 22, 1, 3, 34))) { fmt = 21; Log("rendu : G16R16 refuse comme cible, carte d'ombre 8 bits (A8R8G8B8)"); }
         Release(d3d);
     }
-    if (FAILED(Vt<CreateTex_t>(VT_CREATETEX)(g_dev, SHADOW_SIZE, SHADOW_SIZE, 1, 1, fmt, 0, &g_shadowTex)) || !g_shadowTex) { Log("rendu : carte d'ombre impossible a creer"); return false; }
+    SHADOW_SIZE = g_cfg.shadowRes >= 4096 ? 4096 : 2048;
+    if (FAILED(Vt<CreateTex_t>(VT_CREATETEX)(g_dev, SHADOW_SIZE, SHADOW_SIZE, 1, 1, fmt, 0, &g_shadowTex)) || !g_shadowTex) {
+        SHADOW_SIZE = 2048;
+        if (FAILED(Vt<CreateTex_t>(VT_CREATETEX)(g_dev, SHADOW_SIZE, SHADOW_SIZE, 1, 1, fmt, 0, &g_shadowTex)) || !g_shadowTex) { Log("rendu : carte d'ombre impossible a creer"); return false; }
+    }
     if (FAILED(((GetSurfLevel_t)(*(void ***)g_shadowTex)[VT_TEX_GETSURFACE])(g_shadowTex, 0, &g_shadowSurf))) return false;
     if (FAILED(Vt<CreateDS_t>(VT_CREATEDS)(g_dev, SHADOW_SIZE, SHADOW_SIZE, 80, 0, &g_shadowDs))) { Log("rendu : tampon de profondeur d'ombre impossible (D16)"); return false; }
     DWORD caps[64] = {};
@@ -256,12 +285,26 @@ static bool CreateShadowResources()
     std::vector<DWORD> pd = PsDepth(), pr = PsRecv();
     HRESULT h1 = Vt<CreatePS_t>(VT_CREATEPS)(g_dev, pd.data(), &g_psDepth), h2 = Vt<CreatePS_t>(VT_CREATEPS)(g_dev, pr.data(), &g_psRecv);
     if (FAILED(h1) || FAILED(h2)) {
-        Asm t1; t1.op(0xFFFF0104); t1.op(OP_MOV); t1.dst(T_TEMP, 0); t1.src(T_CONST, 0); t1.op(OP_END);
-        Asm t2; t2.op(0xFFFF0101); t2.op(OP_MOV); t2.dst(T_TEMP, 0); t2.src(T_CONST, 0); t2.op(OP_END);
+        // Diagnostic : variantes du recepteur pour trouver l'instruction refusee.
         DWORD hh;
-        HRESULT h3 = Vt<CreatePS_t>(VT_CREATEPS)(g_dev, t1.t.data(), &hh), h4 = Vt<CreatePS_t>(VT_CREATEPS)(g_dev, t2.t.data(), &hh);
-        Log("rendu : pixel shaders refuses : profondeur %08lX, recepteur %08lX ; essai ps_1_4 mov %08lX, ps_1_1 mov %08lX ; caps vs %08lX ps %08lX",
-            h1, h2, h3, h4, caps[49], caps[51]);
+        HRESULT hv[6];
+        for (int v = 0; v < 6; v++) {
+            Asm a; a.op(0xFFFF0104);
+            a.op(OP_TEX); a.dst(T_TEMP, 0); a.src(T_TEX, 0);
+            a.op(OP_TEX); a.dst(T_TEMP, 1); a.src(T_TEX, 2);
+            a.op(OP_TEXCOORD); a.dst(T_TEMP, 4, 0x7); a.src(T_TEX, 1);
+            a.op(OP_TEX); a.dst(T_TEMP, 5); a.src(T_TEX, 5);
+            a.op(OP_SUB); a.dst(T_TEMP, 0); a.src(T_TEMP, 0, SWZ_XXXX); a.src(T_TEMP, 4, SWZ_XXXX);
+            if (v >= 1) { a.op(OP_CMP); a.dst(T_TEMP, 0); a.src(T_TEMP, 0, SWZ_XXXX); a.src(T_CONST, 1); a.src(T_CONST, 0); }
+            if (v >= 2) { a.op(OP_SUB); a.dst(T_TEMP, 1); a.src(T_TEMP, 1, SWZ_XXXX); a.src(T_TEMP, 4, SWZ_XXXX); a.op(OP_CMP); a.dst(T_TEMP, 1); a.src(T_TEMP, 1, SWZ_XXXX); a.src(T_CONST, 1); a.src(T_CONST, 0); }
+            if (v >= 3) { a.op(0xFFFD); a.op(OP_ADD); a.dst(T_TEMP, 0); a.src(T_TEMP, 0); a.src(T_TEMP, 1); }
+            if (v >= 4) { a.op(OP_CMP); a.dst(T_TEMP, 0, 0x7); a.src(T_TEMP, 4, SWZ_YYYY); a.src(T_CONST, 1); a.src(T_TEMP, 0); }
+            if (v >= 5) { a.op(OP_MOV); a.dst(T_TEMP, 0, 0x8); a.src(T_TEMP, 5, SWZ_AAAA); }
+            a.op(OP_END);
+            hv[v] = Vt<CreatePS_t>(VT_CREATEPS)(g_dev, a.t.data(), &hh);
+        }
+        Log("rendu : pixel shaders refuses : profondeur %08lX, recepteur %08lX ; variantes %08lX %08lX %08lX %08lX %08lX %08lX",
+            h1, h2, hv[0], hv[1], hv[2], hv[3], hv[4], hv[5]);
         return false;
     }
     g_shadowFailed = false;
@@ -289,12 +332,12 @@ static bool VsFor(DWORD fvf, bool recv, DWORD &handle)
 
 static Vec3 SunDir()
 {
-    // Soleil : se leve a 6 h a l'est, culmine a 13 h, se couche a 20 h ; un peu incline vers le sud.
+    // Soleil : au ras de l'horizon a 6 h 30 (aube du jeu), culmine a 13 h, se couche vers 19 h 30 ; incline vers le sud.
     float t = ClockHours() + ClockMinutes() / 60.0f;
-    float a = (t - 6.0f) / 14.0f;           // 0 lever .. 1 coucher
-    float el = sinf(a * 3.14159265f);        // hauteur
+    float a = (t - 6.5f) / 13.0f;            // 0 lever .. 1 coucher
+    float el = sinf(a * 3.14159265f) * 0.9f; // hauteur (60 degres au plus)
     float az = a * 3.14159265f;              // est -> ouest
-    Vec3 d = { cosf(az) * 0.9f, -0.4f, el };
+    Vec3 d = { cosf(az) * 0.9f, -0.45f, el };
     float l = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
     return { d.x / l, d.y / l, d.z / l };
 }
@@ -311,7 +354,7 @@ static void ReceiverPass(const Record &r)
     M4 view; memcpy(view.m, g_view, 64);
     M4 proj; memcpy(proj.m, g_proj, 64);
     M4 wvp = Transpose(Mul(Mul(world, view), proj));
-    M4 bias = Identity(); bias.m[0] = 0.5f; bias.m[5] = -0.5f; bias.m[12] = 0.5f + 0.5f / SHADOW_SIZE; bias.m[13] = 0.5f + 0.5f / SHADOW_SIZE;
+    M4 bias = Identity(); bias.m[0] = 0.5f; bias.m[5] = -0.5f; bias.m[12] = 0.5f; bias.m[13] = 0.5f;
     M4 shadow = Transpose(Mul(Mul(world, g_sunViewProjPrev), bias));
     SetVSConst_t setc = Vt<SetVSConst_t>(VT_SETVSCONST);
     SetRS_t rs = Vt<SetRS_t>(VT_SETRS);
@@ -333,12 +376,20 @@ static void ReceiverPass(const Record &r)
     tss(g_dev, 0, TSS_MAG, 1); tss(g_dev, 0, TSS_MIN, 1); tss(g_dev, 0, TSS_MIP, 0);   // point
     tss(g_dev, 0, TSS_ADDRU, 5); tss(g_dev, 0, TSS_ADDRV, 5); tss(g_dev, 0, TSS_BORDER, 0xFFFFFFFF);   // hors carte : eclaire
     o_SetTexture(g_dev, 0, g_shadowTex);
-    o_SetTexture(g_dev, 2, r.tex);
+    o_SetTexture(g_dev, 1, r.tex);
+    o_SetTexture(g_dev, 2, g_shadowTex);
+    tss(g_dev, 2, TSS_MAG, 1); tss(g_dev, 2, TSS_MIN, 1); tss(g_dev, 2, TSS_MIP, 0); tss(g_dev, 2, TSS_ADDRU, 5); tss(g_dev, 2, TSS_ADDRV, 5); tss(g_dev, 2, TSS_BORDER, 0xFFFFFFFF);
     setc(g_dev, 0, wvp.m, 4);
     setc(g_dev, 4, shadow.m, 4);
-    float c0[4] = { 0.0008f, 0.0008f, 0.0008f, 0.0008f }, c1[4] = { 1, 1, 1, 1 }, c2[4] = { 0.55f, 0.55f, 0.6f, 1 }, c3[4] = { 0.999f, 0.999f, 0.999f, 0.999f };   // biais ~70 cm sur 900 m
+    float texel = 1.0f / SHADOW_SIZE;
+    float c8[4] = { 0.0006f, 0.999f, -1, 0 }, c9[4] = { texel, 0, 0, 0 }, c10[4] = { 0, texel, 0, 0 }, c11[4] = { texel, texel, 0, 0 };   // biais ~55 cm sur 900 m
+    setc(g_dev, 8, c8, 1); setc(g_dev, 9, c9, 1); setc(g_dev, 10, c10, 1); setc(g_dev, 11, c11, 1);
+    float dark = 1.0f - 0.45f * g_sunStrength;
+    float p0[4] = { 0, 0, 0, 0 }, p1[4] = { 1, 1, 1, 1 }, p2[4] = { 0.5f, 0.5f, 0.5f, 0.5f };
+    float db = dark * 0.92f + 0.08f;   // ombre un peu bleutee
+    float p3[4] = { (1 - dark) * 0.5f, (1 - dark) * 0.5f, (1 - db) * 0.5f, 0 }, p4[4] = { dark, dark, db, 1 };
     SetVSConst_t setp = Vt<SetVSConst_t>(VT_SETPSCONST);
-    setp(g_dev, 0, c0, 1); setp(g_dev, 1, c1, 1); setp(g_dev, 2, c2, 1); setp(g_dev, 3, c3, 1);
+    setp(g_dev, 0, p0, 1); setp(g_dev, 1, p1, 1); setp(g_dev, 2, p2, 1); setp(g_dev, 3, p3, 1); setp(g_dev, 4, p4, 1);
     o_SetVS(g_dev, vs);
     o_SetPS(g_dev, g_psRecv);
     g_inOurDraw = true;
@@ -348,6 +399,7 @@ static void ReceiverPass(const Record &r)
     o_SetVS(g_dev, g_vs);
     o_SetPS(g_dev, g_ps);
     o_SetTexture(g_dev, 0, tex0);
+    o_SetTexture(g_dev, 1, NULL);
     o_SetTexture(g_dev, 2, NULL);
     Release(tex0);
     for (int i = 0; i < 10; i++) rs(g_dev, states[i], saved[i]);
@@ -476,12 +528,22 @@ static HRESULT WINAPI h_BeginScene(void *dev)
     ReleaseRecords();
     // Soleil de cette image : projection orthogonale de 300 m autour de la camera, vue depuis le soleil.
     Vec3 sun = SunDir();
-    g_sunUp = g_cfg.sunShadows && sun.z > 0.08f && GameState() == GS_PLAYING && *(int *)0x978810 == 0;
+    g_sunStrength = (sun.z - 0.02f) / 0.22f;   // apparait avec l'aube, plein a 14 degres
+    if (g_sunStrength > 1) g_sunStrength = 1;
+    g_sunUp = g_cfg.sunShadows && g_sunStrength > 0.0f && GameState() == GS_PLAYING && *(int *)0x978810 == 0;
     if (g_sunUp) {
         Vec3 cam = *(Vec3 *)(Camera() + 0x30);
         Vec3 eye = { cam.x + sun.x * 400.0f, cam.y + sun.y * 400.0f, cam.z + sun.z * 400.0f };
         Vec3 up = fabsf(sun.z) > 0.95f ? Vec3{ 0, 1, 0 } : Vec3{ 0, 0, 1 };
-        g_sunViewProj = Mul(LookAt(eye, cam, up), Ortho(300.0f, 300.0f, 1.0f, 900.0f));
+        M4 vp = Mul(LookAt(eye, cam, up), Ortho(SHADOW_RANGE, SHADOW_RANGE, 1.0f, 900.0f));
+        // Grille de la carte alignee sur ses texels : sinon les bords des ombres tremblaient a chaque mouvement de camera.
+        float cx = cam.x * vp.m[0] + cam.y * vp.m[4] + cam.z * vp.m[8] + vp.m[12];
+        float cy = cam.x * vp.m[1] + cam.y * vp.m[5] + cam.z * vp.m[9] + vp.m[13];
+        float step = 2.0f / SHADOW_SIZE;
+        M4 snap = Identity();
+        snap.m[12] = -fmodf(cx, step);
+        snap.m[13] = -fmodf(cy, step);
+        g_sunViewProj = Mul(vp, snap);
     } else g_shadowValid = false;
     return o_BeginScene(dev);
 }

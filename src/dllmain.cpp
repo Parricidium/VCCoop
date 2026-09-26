@@ -53,6 +53,7 @@ static void LoadConfig()
     g_cfg.msaa = GetPrivateProfileIntA("VCCoop", "Anticrenelage", 4, ini);
     g_cfg.aniso = GetPrivateProfileIntA("VCCoop", "FiltrageAnisotrope", 1, ini) != 0;
     g_cfg.sunShadows = GetPrivateProfileIntA("VCCoop", "OmbresSoleil", 1, ini) != 0;
+    g_cfg.shadowRes = GetPrivateProfileIntA("VCCoop", "OmbresResolution", 4096, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;
     g_cfg.showNames = GetPrivateProfileIntA("VCCoop", "AfficherPseudos", 1, ini) != 0;

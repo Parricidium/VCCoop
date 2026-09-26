@@ -117,8 +117,8 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   21:9, 32:9) with a wider field of view, HUD and menus in proportion (`Fenetre`, `GrandEcran`).
 - **Video options** (all local, `0` = original rendering): draw distance (`DistanceAffichage`, 100 to
   400 %), anti-aliasing (`Anticrenelage`, MSAA 2x/4x/8x), anisotropic filtering 16x + trilinear
-  (`FiltrageAnisotrope`), **sun shadows** (`OmbresSoleil`): a 2048² shadow map rendered from the sun every
-  frame (300 m around the camera) and compared per pixel — buildings, palms, vehicles and characters cast real
+  (`FiltrageAnisotrope`), **sun shadows** (`OmbresSoleil`, `OmbresResolution` 4096 or 2048): a shadow map rendered from the sun every
+  frame (250 m around the camera, grid snapped to its texels) and compared per pixel with 2 taps — buildings, palms, vehicles and characters cast real
   shadows that move with the time of day, foliage cut out by its texture. Done on the game's own Direct3D 8
   device with hand-assembled vs_1_1 / ps_1_4 shaders, so no wrapper and no extra DLL.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
@@ -299,8 +299,9 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   21:9, 32:9) avec un champ de vision élargi, HUD et menus en proportion (`Fenetre`, `GrandEcran`).
 - **Options vidéo** (toutes locales, `0` = rendu d'origine) : distance d'affichage
   (`DistanceAffichage`, 100 à 400 %), anticrénelage (`Anticrenelage`, MSAA 2x/4x/8x), filtrage
-  anisotrope 16x + trilinéaire (`FiltrageAnisotrope`), **ombres du soleil** (`OmbresSoleil`) : une carte
-  d'ombre 2048² rendue depuis le soleil à chaque image (300 m autour de la caméra) et comparée par pixel ;
+  anisotrope 16x + trilinéaire (`FiltrageAnisotrope`), **ombres du soleil** (`OmbresSoleil`, `OmbresResolution` 4096 ou 2048) : une carte
+  d'ombre rendue depuis le soleil à chaque image (250 m autour de la caméra, grille alignée sur ses texels) et
+  comparée par pixel avec 2 échantillons ;
   bâtiments, palmiers, véhicules et personnages projettent de vraies ombres qui suivent l'heure, feuillages
   découpés par leur texture. Fait sur le périphérique Direct3D 8 du jeu avec des shaders vs_1_1 / ps_1_4
   assemblés à la main : ni wrapper, ni DLL supplémentaire.
