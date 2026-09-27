@@ -10,12 +10,13 @@
 #include "seats.h"
 #include "interp.h"
 #include "population.h"
+#include "combat.h"
 #include <math.h>
 #include <string.h>
 
 using namespace game;
 
-enum { MAX_NET_VEHICLES = 64 };
+enum { MAX_NET_VEHICLES = 128 };   // le pool du jeu en compte 110 ; a 64, la circulation partagee remplissait tout
 
 struct NetVehicle {
     bool used;
@@ -33,6 +34,7 @@ struct NetVehicle {
     uint32_t hostHandle;   // reference de pool chez l'hote (traduction des commandes de mission), meme si un invite l'a reprise
     int model;             // modele au moment de l'association : s'il change, la case du pool a ete reutilisee (entree perimee)
     uint32_t idleSince;    // proprietaire d'une copie : depuis quand elle est vide et immobile
+    float appliedHealth;   // copie : derniere sante du proprietaire posee (une baisse locale = quelqu'un l'abime ici)
 };
 static NetVehicle g_vehs[MAX_NET_VEHICLES];
 static uint32_t g_vehCounter;
@@ -54,6 +56,27 @@ static NetVehicle *Alloc(uint32_t id)
 {
     for (auto &e : g_vehs)
         if (!e.used) { memset(&e, 0, sizeof(e)); e.used = true; e.id = id; return &e; }
+    return NULL;
+}
+
+static void Unbind(NetVehicle &e);
+// Pour le vehicule du joueur local : table pleine -> on evince une voiture de circulation partagee a nous (les
+// autres apprennent son retrait), sinon personne ne le voyait rouler (pas d'identifiant, double cache).
+static NetVehicle *AllocPriority(uint32_t id, void *myVeh)
+{
+    if (NetVehicle *e = Alloc(id)) return e;
+    for (auto &e : g_vehs) {
+        if (!e.used || e.owner != g_localId || !e.ambient || e.veh == myVeh || VehDriver(e.veh)) continue;
+        MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
+        NetSendToAll(&r, sizeof(r));
+        Unbind(e);
+        memset(&e, 0, sizeof(e));
+        e.used = true;
+        e.id = id;
+        Log("vehicules : table pleine, une voiture de circulation cede sa place");
+        return &e;
+    }
+    Log("vehicules : table pleine, vehicule du joueur non annonce");
     return NULL;
 }
 
@@ -96,6 +119,18 @@ uint32_t NetVehicleId(void *veh)
     return e ? e->id : 0;
 }
 
+// Un autre joueur a abime notre vehicule chez lui (balles, batte, feu sur sa copie) : meme perte de sante ici ;
+// en dessous de 250 le jeu allume lui-meme le moteur, puis l'epave part chez tout le monde par MsgVehicle.
+void ApplyVehicleDamage(uint32_t id, float damage)
+{
+    NetVehicle *e = FindById(id);
+    if (!e || e->owner != g_localId || !e->veh || damage <= 0.0f || EntityStatus(e->veh) == STATUS_WRECKED) return;
+    float &h = VehHealth(e->veh);
+    h -= damage;
+    if (h < 0.0f) h = 0.0f;
+    if (g_cfg.logScripts) Log("vehicules : %08X abime par un autre joueur (-%.0f) -> sante %.0f", id, damage, h);
+}
+
 // --- Envoi (vehicules dont on est proprietaire) ---
 static void SendVehicle(NetVehicle &e)
 {
@@ -120,7 +155,7 @@ static void SendVehicle(NetVehicle &e)
     m.brake = Field<float>(v, 0x1F4);
     m.poolHandle = VehicleHandle(v);
     m.time = GetTickCount();
-    m.ambient = e.ambient;
+    m.ambient = e.ambient && m.driver == 0xFF;   // une voiture conduite par un joueur n'est jamais "de la circulation"
     m.wrecked = EntityStatus(v) == STATUS_WRECKED;
     // Station : celle qu'ecoute le conducteur (cMusicManager 0x980038, station en cours +0x3984), sinon celle du vehicule.
     if (m.vclass == VCLASS_CAR) memcpy(m.damage, (uint8_t *)v + 0x2A0, sizeof(m.damage));
@@ -187,7 +222,7 @@ static void SyncDamage(void *v, const uint8_t *od)
     }
     // Pas pendant que le joueur local monte ou descend (etats 0x37..0x3F) : la portiere est a lui a ce moment-la.
     void *me = FindPlayerPed();
-    if (me && PedState(me) >= 0x37 && PedState(me) <= 0x3F) return;
+    if (me && PedVehicle(me) == v && (EnteringState(PedState(me)) || ExitingState(PedState(me)))) return;
     static const int doorNode[6] = { 0x11, 0x12, 0x0F, 0x0B, 0x10, 0x0C };
     static const int panelNode[5] = { 0x0D, 0x09, 0x0E, 0x0A, 0x13 };
     bool fix = false;
@@ -223,7 +258,20 @@ static void ApplyState(NetVehicle &e)
     // Position, orientation, volant et roues : apres la physique (VehiclesAfterProcess).
     Field<uint8_t>(v, 0x1A0) = m.color1;   // SET_CAR_COLOUR peut les changer en cours de route
     Field<uint8_t>(v, 0x1A1) = m.color2;
+    // Sante tombee chez nous depuis la derniere fois (balles, batte, flammes du joueur local sur la copie : le jeu
+    // baisse +0x204 sans passer par les chocs) : l'ecart part chez le proprietaire, qui l'applique a la vraie
+    // voiture ; la copie reprend la sante du proprietaire. Seulement si notre Tommy est a portee (nos propres
+    // personnages tirent aussi sur les copies, mais eux sont copies chez le proprietaire et y tirent deja).
+    float local = VehHealth(v);
+    void *me0 = FindPlayerPed();
+    // (Seulement juste apres un tir a balles du joueur local : un feu local sur la copie, une explosion rejouee la
+    // font aussi baisser, et ces degats-la existent deja chez le proprietaire ; sans ce filtre sa voiture se vidait.)
+    if (me0 && e.appliedHealth > 0.0f && local < e.appliedHealth - 0.5f && EntityStatus(v) != STATUS_WRECKED && LocalBulletRecently()) {
+        float dx = Pos(v).x - Pos(me0).x, dy = Pos(v).y - Pos(me0).y;
+        if (dx * dx + dy * dy < 60.0f * 60.0f) SendVehicleDamage(m.owner, m.id, e.appliedHealth - local);
+    }
     VehHealth(v) = m.health;
+    e.appliedHealth = m.health;
     // Degats : ceux du proprietaire (2 fois par seconde au plus, une reparation + reapplication coute un peu).
     Field<uint8_t>(v, 0x53) |= 0x08;   // bCollisionProof : pas de degats de choc chez nous pour une copie
     if (m.vclass == VCLASS_CAR && VehClass(v) == VCLASS_CAR && GetTickCount() - e.lastDamageSync > 500) {
@@ -431,10 +479,11 @@ void VehiclesFrame(bool inGame)
             e = NULL;
             myVeh = NULL;
         } else if (!e) {
-            e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
+            e = AllocPriority(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF), myVeh);
             if (e) {
                 e->owner = (uint8_t)g_localId;
                 Bind(*e, myVeh);
+                Field<uint8_t>(myVeh, 0x53) &= ~0x08;   // ancienne copie gardee (proprietaire parti au menu) : s'abime a nouveau
                 Log("vehicules : je prends %08X (modele %d, couleurs %d/%d)", e->id, ModelIndex(myVeh),
                     Field<uint8_t>(myVeh, 0x1A0), Field<uint8_t>(myVeh, 0x1A1));
             }
@@ -443,6 +492,9 @@ void VehiclesFrame(bool inGame)
             Field<uint8_t>(myVeh, 0x53) &= ~0x08;   // c'etait une copie : elle peut de nouveau s'abimer
             Log("vehicules : je reprends %08X", e->id);
         }
+        // Voiture de la circulation partagee prise par l'hote : elle n'est plus "ambiante" (un invite a plus de
+        // 210 m la supprimait, et l'hote disparaissait avec).
+        if (e && e->ambient) { e->ambient = false; Log("vehicules : %08X n'est plus une voiture de circulation (joueur au volant)", e->id); }
         if (e && now - e->lastSend >= 33) SendVehicle(*e);
     }
 
@@ -458,7 +510,7 @@ void VehiclesFrame(bool inGame)
         }
     }
     if (!myVeh && PedVehicle(ped) && !InVehicle(ped) && EnteringState(PedState(ped)) && VehClass(PedVehicle(ped)) != VCLASS_TRAIN && !FindByPtr(PedVehicle(ped))) {
-        NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
+        NetVehicle *e = AllocPriority(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF), PedVehicle(ped));
         if (e) {
             e->owner = (uint8_t)g_localId;
             Bind(*e, PedVehicle(ped));
@@ -555,7 +607,13 @@ void VehiclesFrame(bool inGame)
         if (!e.haveState) continue;
         if (!e.veh) {
             void *v = CreateCopy(e.state);
-            if (v) { Bind(e, v); e.ours = true; }
+            if (v) {
+                Bind(e, v);
+                e.ours = true;
+                // Deja une epave chez son proprietaire : une carcasse a froid (statut epave, sante 0), sans la
+                // boule de feu de EXPLODE_CAR (elle re-explosait a chaque retour dans la zone partagee).
+                if (e.state.wrecked) { e.blown = true; VehHealth(v) = 0.0f; SetEntityStatus(v, STATUS_WRECKED); }
+            }
         }
         if (e.veh) ApplyState(e);
     }

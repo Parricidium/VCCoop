@@ -6,6 +6,7 @@
 #include "interp.h"
 #include "camera.h"
 #include "net.h"
+#include "anims.h"
 #include <stdio.h>
 
 Config g_cfg;
@@ -126,6 +127,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallConditions();
     InstallInterp();
     InstallEnterHooks();
+    InstallAnimGuards();
     InstallAsiLoader();
     InstallPlayers();
     InstallCamera();

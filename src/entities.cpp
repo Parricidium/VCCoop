@@ -146,6 +146,12 @@ bool IsGhostPed(void *ped)
     return false;
 }
 
+void *GhostPedOf(uint8_t owner, uint32_t handle)
+{
+    Ghost *g = FindGhost(owner, handle);
+    return g ? g->ped : NULL;
+}
+
 static void DestroyGhost(Ghost &g)
 {
     if (g.ped) {
@@ -192,6 +198,7 @@ static void CreateGhost(Ghost &g)
     WorldAdd(ped);
     g.ped = ped;
     g.lastMoveState = -1;
+    g.lastShots = m.shots;   // sinon jusqu'a 3 balles fantomes a la creation
     g.anims = {};
     RegisterReference(ped, &g.ped);
     Log("entites : copie du personnage %08X (%s) creee", m.handle, m.modelName);
@@ -236,9 +243,10 @@ static void UpdateGhost(Ghost &g)
     PedState(ped) = 0;   // etat "aucun" : l'IA ne remet pas le deplacement a "immobile" (cf. coop.cpp)
     // Se battre, tomber, se relever... comme chez l'hote ; nos propres coups n'y font rien (c'est l'hote qui decide).
     ClearLocalReactions(ped, g.anims);
-    if (ApplyActionAnims(ped, m.anims, 2, g.anims)) return;
-    SetMoveStateFn(ped, m.moveState);
+    if (ApplyActionAnims(ped, m.anims, 2, g.anims)) { EnsureLiveAnim(ped); return; }
+    SetMoveStateFn(ped, m.moveState ? m.moveState : 1);
     SetMoveAnim(ped);
+    EnsureLiveAnim(ped);
 }
 
 static void OnPed(const MsgPed &m)

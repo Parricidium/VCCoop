@@ -7,6 +7,7 @@
 #include "net.h"
 #include "game.h"
 #include "entities.h"
+#include "vehicles.h"
 #include "combat.h"
 #include "mirror.h"
 #include "saveshare.h"
@@ -16,7 +17,12 @@
 using namespace game;
 
 enum { RL_DAMAGE_PED = 10, RL_DAMAGE_PLAYER = 11, RL_DAMAGE_PVP = 12, RL_FIGHT_REACT = 13, RL_FIGHT_REACT_PED = 14,
-       RL_PROJECTILE = 15 };
+       RL_PROJECTILE = 15, RL_VEH_DAMAGE = 16, RL_DAMAGE_BY_NPC = 17 };
+// Un joueur abime la copie d'un vehicule (balles, batte, feu) : l'ecart de sante part au proprietaire.
+struct RlVehDamage { uint8_t type, owner; uint32_t id; float damage; };
+// Un personnage LOCAL d'un invite (sa police, un passant a lui) touche le Tommy d'un autre joueur : le coup part
+// chez la victime (par l'hote), avec la reference du personnage chez son proprietaire (sa copie chez la victime).
+struct RlDamageByNpc { uint8_t type, victim, owner, dir; uint32_t npcHandle; int32_t weapon, piece; float damage; };
 
 #pragma pack(push, 1)
 struct RlDamagePed { uint8_t type, attacker, dir; uint32_t hostHandle; int32_t weapon, piece; float damage; uint8_t owner; };
@@ -44,6 +50,7 @@ static bool g_bypass;
 typedef bool(__fastcall *Fire_t)(void *weapon, void *edx, void *shooter, void *source);
 static Fire_t o_Fire;
 static uint8_t g_localShots;
+static uint32_t g_lastBulletAt;
 static bool g_cosmetic;
 
 // Tirs des personnages (policiers d'un invite recherche, personnages de mission) : comptes par reference de pool,
@@ -70,13 +77,20 @@ static bool __fastcall h_Fire(void *weapon, void *edx, void *shooter, void *sour
 {
     bool r = o_Fire(weapon, edx, shooter, source);
     if (r && !g_cosmetic && shooter) {
-        if (shooter == FindPlayerPed()) g_localShots++;
+        if (shooter == FindPlayerPed()) {
+            g_localShots++;
+            int w = Field<int>(weapon, 0);   // CWeapon::m_eWeaponType
+            if ((w >= 17 && w <= 29) || w == 32 || w == 33) g_lastBulletAt = GetTickCount();
+        }
         else if (IsPedEntity(shooter) && !IsPuppet(shooter) && !IsGhostPed(shooter)) NoteShot(shooter);
     }
     return r;
 }
 
 uint8_t LocalShotCount() { return g_localShots; }
+// Le joueur local vient de tirer a balles (pas une explosion, pas le lance-flammes) : une copie de vehicule qui perd
+// de la sante juste apres, c'est lui (vehicles.cpp) ; le reste (feu local, explosion rejouee) ne compte pas.
+bool LocalBulletRecently() { return g_lastBulletAt && GetTickCount() - g_lastBulletAt < 1500; }
 
 // Armes a balles seulement (colt 17 .. fusil laser 29, M60 32, minigun 33) : grenades, roquettes, lance-flammes
 // exploseraient localement et divergeraient d'une machine a l'autre.
@@ -121,18 +135,16 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
     // Les coups portes par le Tommy d'un autre joueur sont decides sur sa machine et arrivent par le reseau :
     // ici ils ne font rien (evite les doubles degats et le tir ami involontaire).
     if (byPuppet) return false;
-    // Balles d'une copie de personnage (ses tirs sont rejoues ici) : celles des personnages de l'hote nous arrivent
-    // deja par le reseau (RL_DAMAGE_PLAYER), on ne les compte pas deux fois ; celles de la police d'un autre invite
-    // ne viennent que d'ici, elles comptent.
-    if (ped == me && damager && IsPedEntity(damager) && IsGhostPed(damager)) {
-        uint8_t owner;
-        uint32_t handle;
-        if (GhostOwner(damager, owner, handle) && owner == 0 && !g_cfg.host) return false;
-    }
+    // Balles d'une copie de personnage (ses tirs sont rejoues ici, pour le visuel) : les degats sont decides la ou
+    // tourne l'IA de ce personnage et arrivent par le reseau (RL_DAMAGE_PLAYER, RL_DAMAGE_BY_NPC). Avant, la police
+    // d'un invite tirait "a plat" chez l'hote avec de vraies balles, sur des gens qu'elle ne visait pas chez lui.
+    if (damager && IsPedEntity(damager) && IsGhostPed(damager)) return false;
     // Nous touchons le Tommy d'un autre joueur (coup, balle, voiture) : rien ici, le coup part chez lui.
     int victim = PuppetPlayer(ped);
     if (victim >= 0 && damager && (damager == me || damager == PedVehicle(me))) {
-        if (g_cfg.friendlyFire && !explosion) {
+        // Pas les chocs de vehicule (39 percute, 40 ecrase) : le jeu donne 1000 points pour un passant ecrase et la
+        // victime en mourait sur le coup ; elle subit deja la collision avec la copie de la voiture chez elle.
+        if (g_cfg.friendlyFire && !explosion && weapon != 39 && weapon != 40) {
             RlDamagePvp d = { RL_DAMAGE_PVP, (uint8_t)g_localId, (uint8_t)victim, dir, weapon, piece, damage };
             if (g_cfg.host) NetSendReliableTo(victim, &d, sizeof(d));
             else NetSendReliable(&d, sizeof(d));
@@ -153,7 +165,17 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
         }
     }
     if (!g_cfg.host) {
-        if (IsPuppet(ped)) return false;
+        int pid = PuppetPlayer(ped);
+        if (pid >= 0) {
+            // Un de NOS personnages (notre police quand on est recherche) touche le Tommy d'un autre joueur : chez lui
+            // (par l'hote), avec sa copie de ce personnage comme auteur.
+            if (damager && IsPedEntity(damager) && damager != me && !IsPuppet(damager)) {
+                RlDamageByNpc d = { RL_DAMAGE_BY_NPC, (uint8_t)pid, (uint8_t)g_localId, dir, PedHandle(damager), weapon, piece, damage };
+                NetSendReliable(&d, sizeof(d));
+                if (g_cfg.logScripts) Log("combat : mon personnage %08X touche le joueur %d (%.0f, arme %d)", d.npcHandle, pid, damage, weapon);
+            }
+            return false;
+        }
     } else {
         int pid = PuppetPlayer(ped);
         if (pid > 0) {
@@ -192,6 +214,14 @@ static void *g_ghostVictim;   // invite : copie d'un personnage de l'hote que no
 static void SendToOwner(uint8_t owner, const void *d, int len)
 {
     if (g_cfg.host) NetSendReliableTo(owner, d, len); else NetSendReliable(d, len);
+}
+
+void SendVehicleDamage(uint8_t owner, uint32_t id, float damage)
+{
+    static uint32_t lastLog;
+    RlVehDamage d = { RL_VEH_DAMAGE, owner, id, damage };
+    SendToOwner(owner, &d, sizeof(d));
+    if (GetTickCount() - lastLog > 2000) { lastLog = GetTickCount(); Log("combat : vehicule %08X abime ici de %.0f, envoye a son proprietaire %d", id, damage, owner); }
 }
 
 static void SendGhostReact(void *ghost, uint8_t kind, int a, int b, int c, int p0, int p1)
@@ -412,8 +442,15 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         if (!ped) return;
         (void)from;
         void *attacker = PuppetPed(d.attacker);
+        // Ecrase / percute par sa voiture : l'auteur est le vehicule (le jeu lit sa vitesse), pas le pantin.
+        if ((d.weapon == 39 || d.weapon == 40) && attacker && InVehicle(attacker) && PedVehicle(attacker)) attacker = PedVehicle(attacker);
         bool wasAlive = Health(ped) > 0.0f, cop = PedType(ped) == 6;
+        // "Seulement blesse par le joueur" (SET_CHAR_ONLY_DAMAGED_BY_PLAYER 02A9, bit 0x20 de +0x53, verifie dans
+        // CPed::InflictDamage) : le pantin n'est pas le joueur, le jeu refusait le coup ; leve le temps du coup.
+        uint8_t &fl = Field<uint8_t>(ped, 0x53), savedFl = fl;
+        fl &= ~0x20;
         ApplyDamage(ped, attacker, d.weapon, d.damage, d.piece, d.dir);
+        fl = savedFl;
         if (g_cfg.logScripts) Log("combat : joueur %d touche %08X (%.0f, arme %d) -> sante %.0f", from, d.hostHandle, d.damage, d.weapon, Health(ped));
         // Le jeu n'enregistre pas de crime pour un coup porte par un pantin : on donne les etoiles nous-memes (elles
         // sont partagees ensuite). Passant tue : 1 etoile, 3 en deux minutes : 2 ; policier touche : 2, tue : 3.
@@ -447,6 +484,17 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         if (!me || !g_cfg.friendlyFire) return;
         ApplyDamage(me, PuppetPed(d.attacker), d.weapon, d.damage, d.piece, d.dir);
         if (g_cfg.logScripts) Log("combat : touche par le joueur %d (%.0f, arme %d) -> sante %.0f", d.attacker, d.damage, d.weapon, Health(me));
+    } else if (data[0] == RL_VEH_DAMAGE && len >= (int)sizeof(RlVehDamage)) {
+        const RlVehDamage &d = *(const RlVehDamage *)data;
+        if (d.owner != g_localId) { if (g_cfg.host && d.owner < MAX_PLAYERS) NetSendReliableTo(d.owner, &d, sizeof(d)); return; }
+        ApplyVehicleDamage(d.id, d.damage);
+    } else if (data[0] == RL_DAMAGE_BY_NPC && len >= (int)sizeof(RlDamageByNpc)) {
+        const RlDamageByNpc &d = *(const RlDamageByNpc *)data;
+        if (d.victim != g_localId) { if (g_cfg.host && d.victim < MAX_PLAYERS) NetSendReliableTo(d.victim, &d, sizeof(d)); return; }
+        void *me = FindPlayerPed();
+        if (!me) return;
+        ApplyDamage(me, GhostPedOf(d.owner, d.npcHandle), d.weapon, d.damage, d.piece, d.dir);
+        if (g_cfg.logScripts) Log("combat : touche par un personnage du joueur %d (%.0f, arme %d) -> sante %.0f", d.owner, d.damage, d.weapon, Health(me));
     } else if (data[0] == RL_DAMAGE_PLAYER && !g_cfg.host && len >= (int)sizeof(RlDamagePlayer)) {
         const RlDamagePlayer &d = *(const RlDamagePlayer *)data;
         void *me = FindPlayerPed();

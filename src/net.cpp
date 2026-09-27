@@ -50,8 +50,6 @@ void (*g_onJoin)(int peer);
 bool g_peerRejoin[MAX_PLAYERS];
 void (*g_onNotice)(const char *fr, const char *en, int player);
 static bool g_everAccepted;   // invite : deja accepte par l'hote pendant cette session
-static uint32_t g_session;    // invite : numero de la connexion en cours (nouveau a chaque reconnexion)
-static uint32_t g_peerSession[MAX_PLAYERS];   // hote : session de chaque invite
 static uint32_t NewSession() { return (GetTickCount() * 2654435761u) ^ (GetCurrentProcessId() << 7) ^ (uint32_t)rand(); }
 uint32_t g_netMuteUntil, g_netMuteSendUntil;   // autotests : coupure totale / envoi seulement
 uint16_t g_myPing;
@@ -66,12 +64,25 @@ struct RlStream {
     uint32_t acked;          // plus grand numero acquitte (cumulatif)
     uint32_t expected;       // reception : prochain numero attendu
     uint32_t lastResend;
+    uint32_t stuckSince;     // emission : depuis quand le meme numero est renvoye sans acquittement
+    uint32_t gapSince;       // reception : depuis quand on recoit des numeros au-dela de celui attendu
 };
 static RlStream g_rl[MAX_PLAYERS];
 
 static void SendTo(const sockaddr_in &to, const void *data, int len);
 static void RlReset(RlStream &r) { memset(&r, 0, sizeof(r)); r.nextSeq = 1; r.expected = 1; }
-enum { TIMEOUT_MS = 8000 };
+// Un invite qui charge une sauvegarde ou gele un instant ne presente plus d'image pendant plusieurs secondes ; les
+// messages de vie partent d'un fil a part (NetKeepAlive), le delai n'a donc plus a etre court.
+enum { TIMEOUT_MS = 15000 };
+// Generation du flux fiable : les 8 bits bas de la session de l'invite (MsgHello.session), connue des deux cotes. Un
+// paquet ou un accuse d'une autre generation (ancien flux, avant une reconnexion) est ignore sans acquitter : avant,
+// un accuse perime faisait croire a l'hote que les premiers messages du nouveau flux etaient livres, et l'invite
+// attendait pour toujours le n1 (plus aucune commande de mission, ni argent, ni variables : le bug de JD du 26/09).
+static uint32_t g_session;    // invite : numero de la connexion en cours (nouveau a chaque reconnexion)
+static uint32_t g_peerSession[MAX_PLAYERS];   // hote : session de chaque invite
+static uint8_t RlGen(int peer) { return (uint8_t)(g_cfg.host ? g_peerSession[peer] : g_session); }
+enum { RL_HDR = 6 };   // type, generation, seq (4)
+static void Disconnect(int i);
 
 bool NetIsHost() { return g_cfg.host; }
 
@@ -94,64 +105,93 @@ static void SendTo(const sockaddr_in &to, const void *data, int len)
 
 static const sockaddr_in *PeerAddr(int peer);
 
+static void RlSendOne(int peer, const RlOut &o)
+{
+    uint8_t pkt[RL_HDR + MAX_RELIABLE_PAYLOAD];
+    pkt[0] = MSG_RELIABLE;
+    pkt[1] = RlGen(peer);
+    memcpy(pkt + 2, &o.seq, 4);
+    memcpy(pkt + RL_HDR, o.data, o.len);
+    if (const sockaddr_in *a = PeerAddr(peer)) SendTo(*a, pkt, RL_HDR + o.len);
+}
+
 static void RlPush(int peer, const void *data, int len)
 {
     RlStream &r = g_rl[peer];
-    if (r.nextSeq - r.acked > RL_QUEUE) { Log("reseau : file fiable pleine pour %d, message perdu", peer); return; }
+    if (r.nextSeq - r.acked > RL_QUEUE) {
+        // Perdre un message au milieu d'un flux ordonne le casse pour de bon (trou invisible) : on coupe le pair,
+        // il reviendra avec une nouvelle session et tout lui sera renvoye.
+        Log("reseau : file fiable pleine pour %d, coupure pour resynchroniser", peer);
+        Disconnect(peer);
+        return;
+    }
     if (g_cfg.logScripts && ((const uint8_t *)data)[0] == 4) Log("reseau : fiable n%u vers %d, %d octets", r.nextSeq, peer, len);
     RlOut &o = r.queue[r.nextSeq % RL_QUEUE];
     o.seq = r.nextSeq++;
     o.len = (uint16_t)len;
     memcpy(o.data, data, len);
-    uint8_t pkt[8 + MAX_RELIABLE_PAYLOAD];
-    pkt[0] = MSG_RELIABLE;
-    memcpy(pkt + 1, &o.seq, 4);
-    memcpy(pkt + 5, o.data, len);
-    if (const sockaddr_in *a = PeerAddr(peer)) SendTo(*a, pkt, 5 + len);
+    RlSendOne(peer, o);
 }
 
 static void RlResend(int peer, uint32_t now)
 {
     RlStream &r = g_rl[peer];
-    if (r.acked + 1 >= r.nextSeq || now - r.lastResend < 150) return;
-    r.lastResend = now;
-    const sockaddr_in *a = PeerAddr(peer);
-    if (!a) return;
-    int sent = 0;
-    for (uint32_t s = r.acked + 1; s < r.nextSeq && sent < 32; s++, sent++) {
-        RlOut &o = r.queue[s % RL_QUEUE];
-        uint8_t pkt[8 + MAX_RELIABLE_PAYLOAD];
-        pkt[0] = MSG_RELIABLE;
-        memcpy(pkt + 1, &o.seq, 4);
-        memcpy(pkt + 5, o.data, o.len);
-        SendTo(*a, pkt, 5 + o.len);
+    if (r.acked + 1 >= r.nextSeq) { r.stuckSince = 0; return; }
+    if (!r.stuckSince) r.stuckSince = now;
+    // Le meme premier message renvoye depuis 10 s sans accuse : le flux du pair est perdu (ou il n'accuse pas).
+    // Hote : on lui demande de se reconnecter (nouvelle session, etat complet renvoye). Invite : l'hote ne repond
+    // pas a nos messages fiables, on refrappe a la porte.
+    if (now - r.stuckSince > 10000) {
+        Log("reseau : flux fiable vers %d bloque (n%u sans accuse depuis 10 s)", peer, r.acked + 1);
+        r.stuckSince = now;
+        if (g_cfg.host) { uint8_t m = MSG_RESYNC; if (const sockaddr_in *a = PeerAddr(peer)) SendTo(*a, &m, 1); }
+        else Disconnect(0);
+        return;
     }
+    if (now - r.lastResend < 150) return;
+    r.lastResend = now;
+    int sent = 0;
+    for (uint32_t s = r.acked + 1; s < r.nextSeq && sent < 32; s++, sent++) RlSendOne(peer, r.queue[s % RL_QUEUE]);
 }
 
-// Reception : n'accepte que le numero attendu (les autres seront renvoyes), acquitte toujours.
+// Reception : n'accepte que le numero attendu (les autres seront renvoyes), acquitte toujours ; une autre
+// generation est ignoree sans accuse.
 static void RlReceive(int peer, const uint8_t *buf, int len)
 {
-    if (len < 6) return;
+    if (len < RL_HDR + 1 || len - RL_HDR > MAX_RELIABLE_PAYLOAD) return;
     RlStream &r = g_rl[peer];
-    uint32_t seq;
-    memcpy(&seq, buf + 1, 4);
-    if (g_cfg.logScripts && buf[5] == 4) Log("reseau : fiable n%u (attendu %u) type %d, %d octets", seq, r.expected, buf[5], len - 5);
+    if (buf[1] != RlGen(peer)) return;
+    uint32_t seq, now = GetTickCount();
+    memcpy(&seq, buf + 2, 4);
+    if (g_cfg.logScripts && buf[RL_HDR] == 4) Log("reseau : fiable n%u (attendu %u) type %d, %d octets", seq, r.expected, buf[RL_HDR], len - RL_HDR);
     if (seq == r.expected) {
         r.expected++;
-        if (g_onReliable) g_onReliable(peer, buf + 5, len - 5);
+        r.gapSince = 0;
+        if (g_onReliable) g_onReliable(peer, buf + RL_HDR, len - RL_HDR);
+    } else if (seq > r.expected) {
+        // On ne recoit plus que la suite : le message attendu ne viendra jamais (ancien flux, file pleine chez
+        // l'autre). Invite : on repart d'une nouvelle session, l'hote renverra tout.
+        if (!r.gapSince) r.gapSince = now;
+        else if (now - r.gapSince > 5000) {
+            Log("reseau : flux fiable de %d desynchronise (attendu n%u, recu n%u depuis 5 s)", peer, r.expected, seq);
+            r.gapSince = 0;
+            if (!g_cfg.host) { Disconnect(0); return; }
+            uint8_t m = MSG_RESYNC;
+            if (const sockaddr_in *a = PeerAddr(peer)) SendTo(*a, &m, 1);
+        }
     }
-    uint8_t ack[5] = { MSG_ACK };
+    uint8_t ack[RL_HDR] = { MSG_ACK, RlGen(peer) };
     uint32_t a = r.expected - 1;
-    memcpy(ack + 1, &a, 4);
-    if (const sockaddr_in *addr = PeerAddr(peer)) SendTo(*addr, ack, 5);
+    memcpy(ack + 2, &a, 4);
+    if (const sockaddr_in *addr = PeerAddr(peer)) SendTo(*addr, ack, RL_HDR);
 }
 
 static void RlAck(int peer, const uint8_t *buf, int len)
 {
-    if (len < 5) return;
+    if (len < RL_HDR || buf[1] != RlGen(peer)) return;
     uint32_t a;
-    memcpy(&a, buf + 1, 4);
-    if (a > g_rl[peer].acked && a < g_rl[peer].nextSeq) g_rl[peer].acked = a;
+    memcpy(&a, buf + 2, 4);
+    if (a > g_rl[peer].acked && a < g_rl[peer].nextSeq) { g_rl[peer].acked = a; g_rl[peer].stuckSince = 0; }
 }
 
 void NetSendReliableTo(int peer, const void *data, int len)
@@ -180,6 +220,9 @@ bool NetStart()
     g_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     u_long nb = 1;
     ioctlsocket(g_sock, FIONBIO, &nb);
+    int bufSize = 1 << 20;   // rafales (sauvegarde partagee ~200 Ko, mission 0) : les tampons par defaut en perdaient
+    setsockopt(g_sock, SOL_SOCKET, SO_RCVBUF, (const char *)&bufSize, sizeof(bufSize));
+    setsockopt(g_sock, SOL_SOCKET, SO_SNDBUF, (const char *)&bufSize, sizeof(bufSize));
 
     sockaddr_in local = {};
     local.sin_family = AF_INET;
@@ -232,7 +275,9 @@ static bool StaleState(NetPlayer &p, const MsgState &s)
 static void Disconnect(int i)
 {
     g_players[i].connected = false;
-    if (!g_cfg.host && i == 0) { g_localId = -1; g_session = NewSession(); }   // l'hote a disparu : on refrappe
+    // L'hote a disparu (ou notre flux est perdu) : on refrappe avec une nouvelle session et un flux fiable neuf, en
+    // meme temps que l'hote remettra le sien a zero en voyant cette session.
+    if (!g_cfg.host && i == 0) { g_localId = -1; g_session = NewSession(); RlReset(g_rl[0]); }
 }
 
 static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
@@ -241,6 +286,12 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
     for (int i = 1; i < MAX_PLAYERS; i++)
         if (g_players[i].connected && SameAddr(g_peerAddr[i], from)) id = i;
 
+    if (buf[0] == MSG_HELLO && len >= 2 && len < (int)sizeof(MsgHello)) {   // version plus ancienne (message plus court)
+        MsgFull f = { MSG_FULL, 2, NET_VERSION };
+        SendTo(from, &f, sizeof(f));
+        Log("reseau : un invite d'une autre version (%d) frappe a la porte", buf[1]);
+        return;
+    }
     if (buf[0] == MSG_HELLO && len >= (int)sizeof(MsgHello)) {
         const MsgHello *h = (const MsgHello *)buf;
         // Invite deja connu qui refrappe avec une nouvelle session : il a perdu le contact (coupure d'un seul cote)
@@ -270,8 +321,10 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
                     if (g_onJoin) g_onJoin(i);
                 }
         if (id < 0) {
-            uint8_t full = MSG_FULL;
-            SendTo(from, &full, 1);
+            MsgFull f = { MSG_FULL, (uint8_t)(h->version == NET_VERSION ? 1 : 2), NET_VERSION };
+            SendTo(from, &f, sizeof(f));
+            static uint32_t lastLog;
+            if (GetTickCount() - lastLog > 5000) { lastLog = GetTickCount(); Log("reseau : %s refuse (%s, version %d)", h->name, f.reason == 1 ? "partie pleine" : "version differente", h->version); }
             return;
         }
         g_players[id].lastSeen = GetTickCount();
@@ -335,9 +388,11 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
     case MSG_ACK:
         RlAck(0, buf, len);
         break;
+    case MSG_RESYNC:
+        if (g_localId >= 0) { Log("reseau : l'hote demande une resynchronisation"); Disconnect(0); }
+        break;
     case MSG_WELCOME:
         if (len >= (int)sizeof(MsgWelcome) && g_localId != ((const MsgWelcome *)buf)->id) {
-            RlReset(g_rl[0]);
             g_localId = ((const MsgWelcome *)buf)->id;
             g_players[0].connected = true;
             Log("reseau : accepte par l'hote, joueur %d", g_localId);
@@ -345,9 +400,19 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
             g_everAccepted = true;
         }
         break;
-    case MSG_FULL:
-        Log("reseau : l'hote refuse (partie pleine ou version differente)");
+    case MSG_FULL: {
+        static uint32_t lastLog;
+        const MsgFull *f = (const MsgFull *)buf;
+        bool version = len >= (int)sizeof(MsgFull) && f->reason == 2;
+        if (GetTickCount() - lastLog > 5000) {
+            lastLog = GetTickCount();
+            if (version) Log("reseau : l'hote refuse : version differente (la sienne %d, la notre %d)", f->hostVersion, NET_VERSION);
+            else Log("reseau : l'hote refuse : partie pleine");
+            if (g_onNotice) g_onNotice(version ? "version differente de l'hote : meme zip VCCoop pour tous" : "partie pleine",
+                                       version ? "different version from the host: same VCCoop zip for everybody" : "game is full", 0);
+        }
         break;
+    }
     case MSG_STATE:
         if (len >= (int)sizeof(MsgState)) {
             const MsgState *s = (const MsgState *)buf;
@@ -433,6 +498,16 @@ void NetPoll()
             Disconnect(i);
         }
     }
+}
+
+// Depuis le fil du chien de garde (toutes les 3 s) : un signe de vie meme quand le fil du jeu ne presente plus
+// d'image (chargement d'une sauvegarde, gel) ; sinon l'autre cote nous declarait parti et detruisait tout.
+void NetKeepAlive()
+{
+    if (g_sock == INVALID_SOCKET || g_localId < 0) return;
+    MsgPing p = { MSG_PING, GetTickCount() };
+    if (g_cfg.host) { for (int i = 1; i < MAX_PLAYERS; i++) if (g_players[i].connected) SendTo(g_peerAddr[i], &p, sizeof(p)); }
+    else SendTo(g_hostAddr, &p, sizeof(p));
 }
 
 void NetSendToGuests(const void *data, int len)

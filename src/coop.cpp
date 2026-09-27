@@ -15,6 +15,7 @@
 #include "anims.h"
 #include "players.h"
 #include "camera.h"
+#include "overlay.h"
 
 int WantedLevel(void *ped);   // plus bas : etoiles de recherche
 #include <math.h>
@@ -145,13 +146,17 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     void *want = s.inVehicle ? NetVehicleById(s.vehicleId) : NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;
     uint32_t now = GetTickCount();
+    // Son vehicule est une epave chez nous (il y est mort, ou elle a explose) : on ne l'y installe pas (le jeu
+    // detruisait aussitot le pantin, qui etait recree a chaque image) ; il reste cache le temps qu'il en sorte.
+    if (want && EntityStatus(want) == STATUS_WRECKED && !cur) return false;
     if (pp.entering) {
         // La voiture demarre chez lui avant que son double soit assis : on le pose tout de suite (sinon il courait derriere).
         Vec3 ws = want ? MoveSpeed(want) : Vec3{ 0, 0, 0 };
         bool driving = want && (ws.x * ws.x + ws.y * ws.y > 0.01f);
         if (cur) { pp.entering = false; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
         // Chez lui c'est fini depuis 2 s et notre double n'y est toujours pas : on le pose.
-        else if (now - pp.busySince > 6000 || !PedVehicle(ped) || driving || (s.inVehicle && now - pp.busySince > 3500)) {
+        else if (!(EnteringState(PedState(ped)) && now - pp.busySince < 12000) &&
+                 (now - pp.busySince > 6000 || !PedVehicle(ped) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = Pos(ped);
@@ -162,14 +167,22 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     }
     if (pp.exiting) {
         if (!cur) { pp.exiting = false; Field<int>(ped, 0x164) = 0; pp.lastMoveState = -1; Log("coop : Tommy %d est descendu (animation)", s.id); }
-        else if (now - pp.busySince > 4000) {
+        // Jamais pendant que l'animation de sortie joue (etat 60 : porte, ou rampe hors d'une voiture retournee,
+        // plusieurs secondes) : la couper laissait le personnage sans animation (plantage 0x403ED2).
+        else if ((PedState(ped) != 60 && now - pp.busySince > 4000) || now - pp.busySince > 12000) {
             pp.exiting = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
             WarpOutOfVehicle(ped, &at);
             cur = NULL;
-            Log("coop : Tommy %d : descente animee abandonnee", s.id);
-        } else return true;
+            Log("coop : Tommy %d : descente animee abandonnee (etat %d)", s.id, PedState(ped));
+        } else {
+            // Le jeu refuse de sortir tant que le vehicule bouge (CanPedExitCar) : la copie est pilotee par le reseau,
+            // on la tient immobile le temps qu'il accepte.
+            MoveSpeed(cur) = { 0, 0, 0 };
+            TurnSpeed(cur) = { 0, 0, 0 };
+            return true;
+        }
     }
     if (!cur && !s.inVehicle && s.enterId) {
         void *veh = NetVehicleById(s.enterId);
@@ -191,18 +204,38 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     }
     if (cur && s.exiting && (s.inVehicle ? cur == want : true)) {
         int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
+        MoveSpeed(cur) = { 0, 0, 0 };
+        TurnSpeed(cur) = { 0, 0, 0 };
         MirrorLocal(0x01D3, 2, a);
         pp.exiting = true;
         pp.busySince = now;
+        pp.anims.count = 0;
         Log("coop : Tommy %d descend (animation)", s.id);
         return true;
+    }
+    // Deja dehors chez lui (sortie posee directement, ou animation deja finie) et notre double encore a bord : il
+    // descend quand meme avec l'animation du jeu, sauf si la voiture roule (il en a saute).
+    if (cur && !s.inVehicle && !s.enterId) {
+        Vec3 cs = MoveSpeed(cur);
+        if (cs.x * cs.x + cs.y * cs.y < 0.01f) {
+            int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
+            MoveSpeed(cur) = { 0, 0, 0 };
+            TurnSpeed(cur) = { 0, 0, 0 };
+            MirrorLocal(0x01D3, 2, a);
+            pp.exiting = true;
+            pp.busySince = now;
+            pp.anims.count = 0;
+            Log("coop : Tommy %d descend (animation, deja dehors chez lui)", s.id);
+            return true;
+        }
     }
     // Passager : n'importe quelle place de passager convient (chaque machine range ses passagers a sa facon).
     if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (s.seat == 0))) {
         Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
         WarpOutOfVehicle(ped, &at);
         pp.lastMoveState = -1;
-        Log("coop : Tommy %d descend du vehicule", s.id);
+        pp.anims.count = 0;
+        Log("coop : Tommy %d descend du vehicule (pose)", s.id);
         cur = NULL;
     }
     if (want && !cur && s.seat == 0) EvictNpcDriver(want, s);
@@ -221,6 +254,16 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     AreaCode(ped) = s.area;
     HoldWeapon(ped, s.weapon);
     (void)np;
+    // Sa demarche : le groupe d'animation de son Tommy (player, player2armed, playercsaw...), pas celui du passant
+    // dont le pantin porte le modele.
+    if (s.animGroup && Field<int>(ped, 0x1F4) != s.animGroup && AnimAvailable(s.animGroup, 0)) {
+        Field<int>(ped, 0x1F4) = s.animGroup;
+        Field<int>(ped, 0x250) = -1;   // SetMoveAnim refond la marche avec le nouveau groupe
+    }
+    // Mort / arrete : il reste couche (animation recue) et ne bloque plus le passage.
+    bool down = s.down || s.health <= 0.0f;
+    uint8_t &col = Field<uint8_t>(ped, 0x51);
+    if (down) col &= ~0x01; else col |= 0x01;
     if (UpdatePuppetVehicle(pp, s)) {
         pp.anims.count = 0;
         if (pp.entering || pp.exiting) return;   // le jeu joue la scene : on ne touche a rien
@@ -228,6 +271,7 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
         // sa moto, tire dehors...) ne compte pas. Si on le retrouve hors de l'etat "conduite" ou sans son animation
         // assise, on le reinstalle a sa place (sinon il etait traine sous la moto, couche).
         void *veh = PedVehicle(ped);
+        if (!veh) return;
         // Ses tirs en drive-by (le jeu tire depuis le vehicule quand le tireur est a bord).
         for (int n = 0; pp.lastShots != s.shots && n < 3; n++) { pp.lastShots++; PuppetShoot(ped, s.weapon); }
         pp.lastShots = s.shots;
@@ -245,7 +289,9 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     // Position et cap : places apres la physique, par interpolation (PuppetsAfterProcess).
     // En vehicule mais sans copie locale (pas encore creee, ou passager) : cache en attendant.
     uint8_t &flags = Field<uint8_t>(ped, 0x52);
-    if (s.inVehicle) flags &= ~0x04; else flags |= 0x04;
+    // Cache pendant une cinematique (la sienne ou la notre) : les pantins etaient plantes debout dans la scene.
+    bool cutscene = s.cutscene || *(bool *)0xA10AB2;
+    if (s.inVehicle || cutscene) flags &= ~0x04; else flags |= 0x04;
     // Visee et tirs : bras leve tant qu'il vise, chaque nouveau tir est rejoue (3 au plus par image).
     if (s.aiming) SetAimFlag(ped, s.heading);
     else if (IsAimingGun(ped)) ClearAimFlag(ped);
@@ -260,10 +306,11 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     // marche (elle la ferait disparaitre). Les reactions que notre jeu lui donne (nos coups) sont effacees : on voit
     // celles qu'il vit chez lui.
     ClearLocalReactions(ped, pp.anims);
-    if (ApplyActionAnims(ped, s.anims, 3, pp.anims)) return;
+    if (ApplyActionAnims(ped, s.anims, 3, pp.anims) || down) { EnsureLiveAnim(ped); return; }
     int before = MoveState(ped);
-    SetMoveStateFn(ped, s.moveState);
+    SetMoveStateFn(ped, s.moveState ? s.moveState : 1);   // 0 ("aucun") : SetMoveAnim ne poserait rien
     SetMoveAnim(ped);
+    EnsureLiveAnim(ped);
     if (s.moveState != pp.lastMoveState) {
         if (g_cfg.logScripts) Log("coop : Tommy %d deplacement %d -> %d (il etait a %d)", s.id, pp.lastMoveState, s.moveState, before);
         pp.lastMoveState = s.moveState;
@@ -333,7 +380,14 @@ static void UpdatePuppets(bool inGame)
             Log("coop : %s change de tenue (%s -> %s)", np.state.name, pp.outfit, np.state.outfit);
             DestroyPuppet(pp);
         }
-        if (!pp.ped) { RemovePlayerBlip(pp.blip); CreatePuppet(pp, np.state); }   // detruit par le jeu : son point aussi
+        if (!pp.ped) {   // detruit par le jeu : son point aussi ; pas plus d'une creation par seconde s'il disparait aussitot
+            static uint32_t createdAt[MAX_PLAYERS];
+            uint32_t now = GetTickCount();
+            if (now - createdAt[i] < 1000) continue;
+            createdAt[i] = now;
+            RemovePlayerBlip(pp.blip);
+            CreatePuppet(pp, np.state);
+        }
         if (pp.ped) UpdatePuppet(pp, np);
     }
 }
@@ -347,6 +401,10 @@ static void FollowHostFade(bool inGame)
     if (g_cfg.host || !inGame || g_localId <= 0) return;
     const NetPlayer &h = g_players[0];
     if (!h.connected || !h.state.inGame || GetTickCount() < g_localDownUntil) return;
+    // Hote mort ou arrete : son ecran noir n'est pas le notre.
+    static uint32_t hostDownUntil;
+    if (h.state.down) hostDownUntil = GetTickCount() + 1500;
+    if (GetTickCount() < hostDownUntil) return;
     float f = h.state.fade;
     if (f < 0.0f) f = 0.0f;
     if (f > 255.0f) f = 255.0f;
@@ -391,6 +449,12 @@ static void SendLocalState(bool inGame)
         s.moveState = (uint8_t)MoveState(ped);
         s.pedState = (uint8_t)PedState(ped);
         s.fade = CamFade();
+        s.animGroup = (uint8_t)Field<int>(ped, 0x1F4);
+        s.cutscene = *(bool *)0xA10AB2 ? 1 : 0;
+        {
+            int wb = *(int *)(0x94AD28 + 0xCC);   // CWorld::Players[0].m_nPlayerState : 1 mort, 2 arrete
+            s.down = (Health(ped) <= 0.0f || PedState(ped) == 54 || PedState(ped) == 55 || wb == 1 || wb == 2) ? 1 : 0;
+        }
         s.weapon = (uint8_t)WeaponTypeInSlot(ped, CurrentWeaponSlot(ped));
         s.shots = LocalShotCount();
         // Montee / descente en cours (animation du jeu) : les autres la jouent sur notre double.
@@ -405,7 +469,7 @@ static void SendLocalState(bool inGame)
         s.shared = PopulationShared() ? 1 : 0;
         s.ping = g_cfg.host ? 0 : g_myPing;
         s.wanted = (uint8_t)WantedLevel(ped);
-        if (!s.inVehicle && !s.aiming) CollectAnimSlots(ped, s.anims, 3);
+        if (!s.inVehicle) CollectAnimSlots(ped, s.anims, 3);   // aussi en visee : rechargement, accroupi, coup recu
         if (s.inVehicle && PedVehicle(ped)) {
             s.vehicleId = NetVehicleId(PedVehicle(ped));
             int seat = SeatOf(PedVehicle(ped), ped);
@@ -521,8 +585,25 @@ static void GatherToHost(bool inGame)
     const NetPlayer &h = g_players[0];
     if (!h.connected || !h.state.inGame) return;
     void *ped = FindPlayerPed();
-    if (InVehicle(ped)) return;
     float hh = h.state.heading;
+    if (InVehicle(ped)) {
+        // En vehicule : la demande restait en attente sans limite et le teleportait des qu'il descendait, des minutes
+        // plus tard, n'importe ou. Au volant et pas trop loin : la voiture vient avec lui, 8 m derriere l'hote ;
+        // sinon on renonce.
+        void *veh = PedVehicle(ped);
+        float dx = h.state.pos[0] - Pos(ped).x, dy = h.state.pos[1] - Pos(ped).y;
+        gathered = true;
+        if (veh && VehDriver(veh) == ped && dx * dx + dy * dy < 150.0f * 150.0f && !h.state.inVehicle) {
+            Pos(veh) = { h.state.pos[0] + sinf(hh) * 8.0f, h.state.pos[1] - cosf(hh) * 8.0f, h.state.pos[2] + 0.5f };
+            MoveSpeed(veh) = { 0, 0, 0 };
+            TurnSpeed(veh) = { 0, 0, 0 };
+            SetHeadingMatrix(veh, hh);
+            AreaCode(ped) = h.state.area;
+            MirrorFollowHostArea(h.state.area);
+            Log("coop : pose en voiture derriere l'hote");
+        } else Log("coop : regroupement abandonne (en vehicule)");
+        return;
+    }
     // Derriere l'hote (d'ou il vient, donc un endroit libre), decale d'un pas par joueur.
     float back = 1.5f + 0.8f * (g_localId - 1), side = (g_localId % 2 ? 0.6f : -0.6f);
     Pos(ped) = { h.state.pos[0] + sinf(hh) * back + cosf(hh) * side, h.state.pos[1] - cosf(hh) * back + sinf(hh) * side,
@@ -632,12 +713,25 @@ static void BoardingFrame()
         }
     }
     if (g_leaving && me) {
+        static uint32_t lastAsk;
         if (!InVehicle(me)) { Log("coop : descendu (animation, %u ms)", now - g_leavingSince); g_leaving = NULL; }
-        else if (now - g_leavingSince > 3000 || (now - g_leavingSince > 700 && !ExitingState(PedState(me)))) {
-            ((void(__thiscall *)(void *))0x521720)(me);
-            WarpOutOfVehicle(me, NULL);
-            Log("coop : je descends (pose directement)");
-            g_leaving = NULL;
+        else if (ExitingState(PedState(me))) { if (now - g_leavingSince > 15000) { g_leaving = NULL; Log("coop : descente trop longue, on laisse faire"); } }
+        else {
+            // CPed::SetExitCar refuse tant que la voiture bouge (CanPedExitCar 0x5B8180 : retournee et qui tangue, sur
+            // le flanc...) : on attend qu'elle se pose en redonnant l'objectif, au lieu de poser le joueur dehors
+            // sans animation (ce qui laissait son double sans animation chez les autres : plantage 0x403ED2).
+            bool calm = ((bool(__thiscall *)(void *, char))0x5B8180)(g_leaving, 0);
+            if ((calm && now - g_leavingSince > 1500) || now - g_leavingSince > 10000) {
+                ((void(__thiscall *)(void *))0x521720)(me);
+                WarpOutOfVehicle(me, NULL);
+                Log("coop : je descends (pose directement, vehicule %s)", calm ? "au repos" : "encore en mouvement");
+                g_leaving = NULL;
+            } else if (now - lastAsk > 1000) {
+                lastAsk = now;
+                int32_t a[2] = { (int32_t)PedHandle(me), (int32_t)VehicleHandle(g_leaving) };
+                MirrorLocal(0x01D3, 2, a);
+                if (!calm) Log("coop : le vehicule bouge encore, descente en attente");
+            }
         }
     }
 }
@@ -789,6 +883,7 @@ void CoopFrame()
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
     MirrorFrame(inGame);
+    OverlayFrame(inGame);
     SendLocalState(inGame);
     FollowHostFade(inGame);
     if (g_cfg.host && inGame) SendWorld();

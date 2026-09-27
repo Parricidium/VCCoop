@@ -12,3 +12,5 @@ extern bool g_testPassengerFire;   // autotest : un coup de poing du joueur loca
 void PuppetShoot(void *ped, int weapon);   // tir visuel du Tommy d'un autre joueur (ou d'une copie de personnage)
 uint8_t PedShotCount(void *ped);           // tirs reels de ce personnage chez nous (pour les rejouer sur sa copie)
 bool ApplyDamage(void *ped, void *damager, int weapon, float damage, int piece, uint8_t dir);   // sans renvoi reseau
+void SendVehicleDamage(uint8_t owner, uint32_t id, float damage);   // vehicles.cpp : la copie a perdu de la sante ici
+bool LocalBulletRecently();   // le joueur local a tire a balles depuis moins de 1,5 s

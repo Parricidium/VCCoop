@@ -8,6 +8,7 @@
 #include "game.h"
 #include "mirror.h"
 #include "conditions.h"
+#include "overlay.h"
 #include <string.h>
 
 using namespace game;
@@ -39,8 +40,38 @@ static bool InSideMissionVehicle()
     return false;
 }
 
-static bool g_sideMission;
+static bool g_sideMission, g_buyMission;
 bool GuestSideMission() { return g_sideMission; }
+
+// --- Achat d'immeubles par l'invite ---
+// Les icones d'immeuble (CREATE_PROTECTION_PICKUP 0517 verrouillee / 0518 a vendre) sont creees par le script
+// principal et INITIAL de chaque machine ; leur reference est ecrite dans une globale. Quand l'invite en ramasse
+// une, son script principal lance la mission d'achat (BUYPRO1..SKUMBUY) : elle tourne chez lui, avec son argent,
+// et ecrit ses propres drapeaux de possession (gardes par overlay.cpp).
+static uint32_t g_propPickups[32];
+static int g_propAt;
+static uint32_t g_propCollectedAt;
+bool IsPropertyPickup(uint32_t handle) { for (uint32_t h : g_propPickups) if (h && h == handle) return true; return false; }
+void NotePropertyCollected() { g_propCollectedAt = GetTickCount(); }
+static bool PropertyBuyPending() { return g_propCollectedAt && GetTickCount() - g_propCollectedAt < 3000; }
+
+// Position du dernier parametre (la sortie) d'une commande a n parametres, -1 si ce n'est pas une globale.
+static int LastGlobalParam(int ip, int n)
+{
+    uint8_t *ss = ScriptSpace();
+    int at = ip + 2;
+    for (int i = 0; i < n; i++) {
+        uint8_t t = ss[at];
+        if (i == n - 1) return t == 2 ? *(uint16_t *)(ss + at + 1) : -1;
+        switch (t) {
+        case 1: case 6: at += 5; break;
+        case 2: case 3: case 5: at += 3; break;
+        case 4: at += 2; break;
+        default: at += 8; break;   // etiquette
+        }
+    }
+    return -1;
+}
 
 static char __fastcall h_ProcessOneCommand(void *script)
 {
@@ -50,10 +81,23 @@ static char __fastcall h_ProcessOneCommand(void *script)
         g_sideMission = false;
         Log("script : fin de la mission secondaire (%.8s)", (char *)script + 8);
     }
-    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && InSideMissionVehicle()) {
+    if (!g_cfg.host && op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85) && g_buyMission) {
+        g_buyMission = false;
+        OverlayBuyEnd();
+    }
+    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && (InSideMissionVehicle() || PropertyBuyPending())) {
         g_sideMission = true;
-        Log("script : l'invite lance une mission secondaire (par %.8s)", (char *)script + 8);
+        g_buyMission = PropertyBuyPending() && !InSideMissionVehicle();
+        g_propCollectedAt = 0;
+        if (g_buyMission) OverlayBuyStart();
+        Log("script : l'invite lance une mission %s (par %.8s)", g_buyMission ? "d'achat d'immeuble" : "secondaire", (char *)script + 8);
         return o_ProcessOneCommand(script);
+    }
+    if (!g_cfg.host && (op == 0x0517 || op == 0x0518)) {   // icone d'immeuble : on retient sa reference
+        int gofs = LastGlobalParam(ip, op == 0x0517 ? 5 : 6);
+        char r = o_ProcessOneCommand(script);
+        if (gofs > 0) { g_propPickups[g_propAt++ % 32] = *(uint32_t *)(ScriptSpace() + gofs); if (g_cfg.logScripts) Log("script : icone d'immeuble %08X (globale %d)", g_propPickups[(g_propAt - 1) % 32], gofs / 4); }
+        return r;
     }
     if (!g_cfg.host && op == OP_START_MISSION) {
         static uint32_t lastLog;

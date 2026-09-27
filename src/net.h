@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 11 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 12 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -22,7 +22,10 @@ enum MsgType : uint8_t {
     MSG_PONG,        // hote -> invite : la meme heure, renvoyee
     MSG_RDV,         // point de rendez-vous d'un joueur (players.cpp), relaye par l'hote
     MSG_TIMERS,      // hote -> invites : valeur des minuteurs / compteurs de mission a l'ecran (mirror.cpp)
+    MSG_RESYNC,      // hote -> invite : ton flux fiable est perdu, reconnecte-toi (nouvelle session, tout est renvoye)
 };
+// Refus : reason 1 = partie pleine, 2 = version differente (hostVersion = la sienne).
+struct MsgFull { uint8_t type, reason, hostVersion; };
 struct MsgPing { uint8_t type; uint32_t time; };
 struct MsgRdv { uint8_t type, player, active; float pos[3]; };
 
@@ -63,6 +66,9 @@ struct MsgState {
     uint8_t exiting;     // en train de descendre (animation en cours)
     uint8_t enterSeat;   // 0 : au volant, 1 : passager
     uint8_t modsPct;     // invite : mods de l'hote telecharges (%)
+    uint8_t animGroup;   // groupe d'animation de son Tommy (player, player2armed, playerbbbat... : demarche de Tommy, pas d'un passant)
+    uint8_t cutscene;    // une cinematique tourne chez lui (son double est cache pendant ce temps chez les autres)
+    uint8_t down;        // mort ou arrete (fondu de son ecran a ne pas suivre, double sans collision)
 };
 struct MsgWorld {
     uint8_t type;
@@ -125,6 +131,7 @@ bool NetStart();        // selon g_cfg (hote ou invite)
 void NetPoll();         // lit tous les paquets en attente
 void NetSendState(const MsgState &s);
 void NetSendBye();      // on quitte : previent l'hote (ou tous les invites) tout de suite, sans attendre le delai
+void NetKeepAlive();    // signe de vie envoye depuis un autre fil (watchdog.cpp), meme si le jeu ne presente plus d'image
 void NetSendToGuests(const void *data, int len);   // hote seulement
 extern void (*g_onWorld)(const MsgWorld &w);       // invite : appele a la reception d'un MsgWorld
 extern void (*g_onState)(const MsgState &s);       // chaque etat de joueur recu (pour son interpolation)
