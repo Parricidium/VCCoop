@@ -346,12 +346,26 @@ static void OnVehicle(const MsgVehicle &m)
 // proprietaire (un vehicule "abandonne" a le volant droit et freine, ses roues ne tournaient pas).
 void VehiclesAfterProcess()
 {
+    void *meP = FindPlayerPed();
     for (auto &e : g_vehs) {
         if (!e.used || e.owner == g_localId || !e.veh || !e.haveState) continue;
         void *v = e.veh;
         const MsgVehicle &m = e.state;
         Snap n;
         if (!TrackSample(e.track, m.owner, n)) continue;
+        // Diagnostic : passager d'une copie (copie qui s'enfonce dans la route, etincelles chez JD) : toutes les 3 s,
+        // ou l'on est, ou le proprietaire la met, ou la physique l'avait mise, contacts des roues, pneus, sante.
+        if (meP && InVehicle(meP) && PedVehicle(meP) == v) {
+            static uint32_t lastDiag;
+            if (GetTickCount() - lastDiag > 3000) {
+                lastDiag = GetTickCount();
+                const uint8_t *dm = (const uint8_t *)v + 0x2A0;
+                Log("vehicules : passager de %08X : proprietaire z %.2f, physique z %.2f, recu z %.2f, contact %.2f %.2f %.2f %.2f, pneus %d%d%d%d, sante %.0f/%.0f, statut %d, vitesse %.2f",
+                    m.id, m.pos[2], Pos(v).z, n.pos[2], Field<float>(v, 0x4A4), Field<float>(v, 0x4A8), Field<float>(v, 0x4AC), Field<float>(v, 0x4B0),
+                    WheelStatus(dm, 0), WheelStatus(dm, 1), WheelStatus(dm, 2), WheelStatus(dm, 3), VehHealth(v), m.health, EntityStatus(v),
+                    sqrtf(m.speed[0] * m.speed[0] + m.speed[1] * m.speed[1]));
+            }
+        }
         float jx = n.pos[0] - Pos(v).x, jy = n.pos[1] - Pos(v).y, jz = n.pos[2] - Pos(v).z;
         if (jx * jx + jy * jy + jz * jz > 400.0f) Teleport(v, { n.pos[0], n.pos[1], n.pos[2] });   // grand ecart : secteurs a jour
         Pos(v) = { n.pos[0], n.pos[1], n.pos[2] };

@@ -164,10 +164,16 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         // La voiture demarre chez lui avant que son double soit assis : on le pose tout de suite (sinon il courait derriere).
         Vec3 ws = want ? MoveSpeed(want) : Vec3{ 0, 0, 0 };
         bool driving = want && (ws.x * ws.x + ws.y * ws.y > 0.01f);
+        void *target = PedVehicle(ped);
+        // La copie visee est pilotee par le reseau : tenue immobile, sinon l'IA la croit en mouvement et tourne autour
+        // (une montee a pris 9,5 s chez JD) ; pas si quelqu'un la conduit ici.
+        if (target && !cur && !LocallyDriven(target, ped)) { MoveSpeed(target) = { 0, 0, 0 }; TurnSpeed(target) = { 0, 0, 0 }; }
+        int st = PedState(ped);
+        bool atDoor = st == 58 || st == 59;   // porte ouverte, en train de s'asseoir : on laisse finir
         if (cur) { pp.entering = false; pp.seatedAt = now; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
-        // Chez lui c'est fini depuis 2 s et notre double n'y est toujours pas : on le pose.
-        else if (!(EnteringState(PedState(ped)) && now - pp.busySince < 12000) &&
-                 (now - pp.busySince > 6000 || (!PedVehicle(ped) && now - pp.busySince > 2500) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
+        // Chez lui c'est fini depuis 3,5 s et notre double n'y est toujours pas (il cherche encore la portiere) : on le pose.
+        else if (!(atDoor && now - pp.busySince < 10000) &&
+                 (now - pp.busySince > 8000 || (!target && now - pp.busySince > 2500) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = Pos(ped);
