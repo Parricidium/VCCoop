@@ -162,8 +162,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     if (want && EntityStatus(want) == STATUS_WRECKED && !cur) return false;
     if (pp.entering) {
         // La voiture demarre chez lui avant que son double soit assis : on le pose tout de suite (sinon il courait derriere).
-        Vec3 ws = want ? MoveSpeed(want) : Vec3{ 0, 0, 0 };
-        bool driving = want && (ws.x * ws.x + ws.y * ws.y > 0.01f);
+        bool driving = want && NetVehicleMoving(want);
         void *target = PedVehicle(ped);
         // La copie visee est pilotee par le reseau : tenue immobile, sinon l'IA la croit en mouvement et tourne autour
         // (une montee a pris 9,5 s chez JD) ; pas si quelqu'un la conduit ici.
@@ -236,8 +235,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     // Deja dehors chez lui (sortie posee directement, ou animation deja finie) et notre double encore a bord : il
     // descend quand meme avec l'animation du jeu, sauf si la voiture roule (il en a saute).
     if (cur && !s.inVehicle && !s.enterId && !LocallyDriven(cur, ped)) {
-        Vec3 cs = MoveSpeed(cur);
-        if (cs.x * cs.x + cs.y * cs.y < 0.01f) {
+        if (!NetVehicleMoving(cur)) {
             int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
             MoveSpeed(cur) = { 0, 0, 0 };
             TurnSpeed(cur) = { 0, 0, 0 };
