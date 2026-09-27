@@ -3,6 +3,14 @@
 </p>
 
 <p align="center">
+  <a href="https://store.rockstargames.com/fr/game/buy-grand-theft-auto-the-trilogy"><img src="https://img.shields.io/badge/Buy%20GTA%20Vice%20City%20legitimately-Rockstar%20Store-FCAF17?style=for-the-badge&logo=rockstargames&logoColor=black" alt="Buy GTA Vice City on the Rockstar Store"></a>
+</p>
+<p align="center">
+  <b>This mod needs a legitimately owned copy of Grand Theft Auto: Vice City.</b><br>
+  <a href="https://store.rockstargames.com/fr/game/buy-grand-theft-auto-the-trilogy">Buy it on the Rockstar Store</a> (also on Steam). No game data is included here.
+</p>
+
+<p align="center">
   <a href="https://github.com/Parricidium/VCCoop/releases/latest"><img src="https://img.shields.io/github/v/release/Parricidium/VCCoop?label=Download&style=for-the-badge" alt="Download the latest release"></a>
   <a href="https://ko-fi.com/parricidium"><img src="https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support me on Ko-fi"></a>
 </p>
@@ -222,7 +230,7 @@ bureau, caméra libre à la souris en véhicule avec visée façon GTA V, distan
 menus personnalisés, et **mods partagés** : des modèles de voitures ou de bâtiments déposés dans un
 dossier sont chargés par le jeu et envoyés tout seuls aux autres joueurs.
 
-> Il faut posséder GTA Vice City (Steam, rétrogradé en 1.0). Aucun fichier du jeu n'est fourni.
+> Il faut posséder une copie légitime de GTA Vice City (rétrogradée en 1.0) : [l'acheter sur le Rockstar Store](https://store.rockstargames.com/fr/game/buy-grand-theft-auto-the-trilogy) (aussi sur Steam). Aucun fichier du jeu n'est fourni.
 
 ## Téléchargement et installation
 
