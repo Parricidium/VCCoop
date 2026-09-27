@@ -105,7 +105,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     wsprintfA(logPath, "%svccoop.log", GameDir());
     LogInit(logPath);
     LoadConfig();
-    Log("VCCoop charge, dossier %s", GameDir());
+    Log("VCCoop %s charge, dossier %s", VCCOOP_VERSION, GameDir());
     InstallCrashLog();
 
     if (!IsVersion10()) {
