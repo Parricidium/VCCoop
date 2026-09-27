@@ -42,6 +42,9 @@ struct Puppet {
     int blip;           // son point de couleur sur le radar (-1 : aucun)
     bool entering, exiting;   // montee / descente animee en cours (objectif donne au personnage, le jeu joue la scene)
     uint32_t busySince;
+    uint32_t seatedAt;        // derniere installation dans un vehicule (montee finie ou pose)
+    uint32_t exitedAt;        // derniere descente animee finie...
+    uint32_t exitedFrom;      // ...et de quel vehicule reseau (pas reassis dedans tant que son etat dit encore "a bord")
 };
 
 // La tenue de Tommy est le modele 0, propre a chaque instance : le Tommy d'un autre joueur utilise un
@@ -161,10 +164,10 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         // La voiture demarre chez lui avant que son double soit assis : on le pose tout de suite (sinon il courait derriere).
         Vec3 ws = want ? MoveSpeed(want) : Vec3{ 0, 0, 0 };
         bool driving = want && (ws.x * ws.x + ws.y * ws.y > 0.01f);
-        if (cur) { pp.entering = false; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
+        if (cur) { pp.entering = false; pp.seatedAt = now; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
         // Chez lui c'est fini depuis 2 s et notre double n'y est toujours pas : on le pose.
         else if (!(EnteringState(PedState(ped)) && now - pp.busySince < 12000) &&
-                 (now - pp.busySince > 6000 || (!PedVehicle(ped) && now - pp.busySince > 1000) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
+                 (now - pp.busySince > 6000 || (!PedVehicle(ped) && now - pp.busySince > 2500) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = Pos(ped);
@@ -174,7 +177,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         else return true;
     }
     if (pp.exiting) {
-        if (!cur) { pp.exiting = false; Field<int>(ped, 0x164) = 0; pp.lastMoveState = -1; Log("coop : Tommy %d est descendu (animation)", s.id); }
+        if (!cur) { pp.exiting = false; pp.exitedAt = now; Field<int>(ped, 0x164) = 0; pp.lastMoveState = -1; Log("coop : Tommy %d est descendu (animation)", s.id); }
         // Jamais pendant que l'animation de sortie joue (etat 60 : porte, ou rampe hors d'une voiture retournee,
         // plusieurs secondes) : la couper laissait le personnage sans animation (plantage 0x403ED2).
         else if ((PedState(ped) != 60 && now - pp.busySince > 4000) || now - pp.busySince > 12000) {
@@ -191,6 +194,9 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
             return true;
         }
     }
+    // Notre animation de montee est finie avant la sienne (son etat dit encore "en train de monter") : il reste
+    // assis (avant : pose dehors puis reassis quand son etat passait a "a bord" : la voiture partait vide).
+    if (cur && !s.inVehicle && s.enterId && NetVehicleById(s.enterId) == cur) return true;
     if (!cur && !s.inVehicle && s.enterId) {
         void *veh = NetVehicleById(s.enterId);
         // Passager : l'IA du jeu refuse de faire monter un personnage en passager d'une voiture conduite par un
@@ -210,10 +216,11 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
             }
         }
     }
-    if (cur && s.exiting && (s.inVehicle ? cur == want : true)) {
+    if (cur && s.exiting && (s.inVehicle ? cur == want : true) && now - pp.seatedAt > 1000) {
         int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
         if (!LocallyDriven(cur, ped)) { MoveSpeed(cur) = { 0, 0, 0 }; TurnSpeed(cur) = { 0, 0, 0 }; }
         MirrorLocal(0x01D3, 2, a);
+        pp.exitedFrom = NetVehicleId(cur);
         pp.exiting = true;
         pp.busySince = now;
         pp.anims.count = 0;
@@ -229,6 +236,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
             MoveSpeed(cur) = { 0, 0, 0 };
             TurnSpeed(cur) = { 0, 0, 0 };
             MirrorLocal(0x01D3, 2, a);
+            pp.exitedFrom = NetVehicleId(cur);
             pp.exiting = true;
             pp.busySince = now;
             pp.anims.count = 0;
@@ -245,8 +253,12 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         Log("coop : Tommy %d descend du vehicule (pose)", s.id);
         cur = NULL;
     }
+    // Notre animation de descente est finie avant la sienne (son etat dit encore "a bord") : on ne le reassoit pas
+    // (avant : reassis, puis redescendu une seconde fois quand son etat passait a "dehors").
+    if (want && !cur && s.vehicleId == pp.exitedFrom && now - pp.exitedAt < 3000 && !s.enterId) return false;
     if (want && !cur && s.seat == 0) EvictNpcDriver(want, s);
     if (want && !cur && WarpIntoSeat(ped, want, s.seat)) {
+        pp.seatedAt = now;
         Log("coop : Tommy %d monte dans %08X (place %d)", s.id, s.vehicleId, s.seat);
         cur = want;
     }

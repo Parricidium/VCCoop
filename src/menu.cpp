@@ -347,7 +347,7 @@ static void BuildCoopPage()
         if (lobby && g_cfg.host) { items[n++] = { ACT_NEWGAME, "VCC_NW" }; items[n++] = { ACT_LOADGAME, "VCC_LD" }; }
         else if (lobby) items[n++] = { ACT_INFO, "VCC_WT" };
         if (g_cfg.host) items[n++] = { ACT_OPTCOOP, "VCC_OC" };   // salon et en partie : l'hote regle la coop
-        if (inGame) items[n++] = { ACT_OPTVIDEO, "VCC_OV" };      // en partie (Echap > COOP) : options video
+        if (inGame || lobby) items[n++] = { ACT_OPTVIDEO, "VCC_OV" };   // salon et en partie (Echap > COOP) : options video
     }
     items[n++] = { (uint16_t)(g_sub == SUB_MAIN ? ACT_GOBACK : ACT_BACKSUB), "FEDS_TB" };
     MenuScreen &c = Screens()[PAGE_COOP];
