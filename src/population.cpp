@@ -134,7 +134,12 @@ void PopulationFrame(bool inGame)
     // personnage (m_nAreaCode) n'est pas tenu a jour par le jeu apres un chargement ou une porte : compare a la zone
     // de l'hote, il coupait la population partagee a 2 m de lui (plus de police ni de circulation de l'hote).
     (void)me;
-    bool hostHere = h.connected && h.state.inGame && h.state.area == (uint8_t)*(int *)0x978810;
+    // Zone differente (l'hote passe une porte, cinematique d'interieur) : on ne bascule qu'apres 3 s de desaccord,
+    // sinon la population etait detruite et recreee a chaque porte.
+    static uint32_t areaMismatchSince;
+    bool sameArea = h.state.area == (uint8_t)*(int *)0x978810;
+    if (sameArea) areaMismatchSince = 0; else if (!areaMismatchSince) areaMismatchSince = GetTickCount();
+    bool hostHere = h.connected && h.state.inGame && (sameArea || (g_shared && GetTickCount() - areaMismatchSince < 3000));
     float dx = h.state.pos[0] - Pos(me).x, dy = h.state.pos[1] - Pos(me).y;
     float d2 = dx * dx + dy * dy;
     // Mission secondaire en cours (taxi...) : il lui faut ses propres passants (clients, cibles) ; population locale.
