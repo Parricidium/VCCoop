@@ -307,7 +307,8 @@ void AutotestFrame()
     // Voiture RETOURNEE (sur le toit) : l'hote s'y installe au volant ; l'invite (Autotest=passager) monte a cote
     // puis en redescend avec G : la sortie en rampant doit se jouer chez les deux (avant : pose directement chez
     // l'invite, pantin pose sans animation chez l'hote, plantage 0x403ED2 quelques images plus tard).
-    if (_stricmp(g_cfg.autotest, "tonneau") == 0) {
+    bool drive = _stricmp(g_cfg.autotest, "rouler") == 0;
+    if (drive || _stricmp(g_cfg.autotest, "tonneau") == 0) {
         static void *car;
         static int lastState = -1;
         uint32_t t = frame - controlSince;
@@ -320,7 +321,7 @@ void AutotestFrame()
             AutomobileCtor(v, MI_LANDSTAL, 1);
             float h = Heading(me);
             Pos(v) = { Pos(me).x - sinf(h) * 2.5f, Pos(me).y + cosf(h) * 2.5f, Pos(me).z + 0.3f };   // a moins de 6 m de l'invite (touche G)
-            SetHeadingMatrix(v, h + 1.5708f);
+            SetHeadingMatrix(v, drive ? h : h + 1.5708f);   // 'rouler' : dans le sens de la marche (sinon face au mur)
             SetEntityStatus(v, STATUS_ABANDONED);
             WorldAdd(v);
             car = v;
@@ -331,6 +332,11 @@ void AutotestFrame()
         // Le passager (l'invite) est a bord : 40 images plus tard la voiture est retournee sur le toit, 1,2 m en
         // l'air (elle retombe et tangue encore quand l'invite veut descendre, 6 s apres avoir appuye sur G).
         if (car && !boardedAt && Field<uint8_t>(car, 0x1CC) > 0) { boardedAt = frame; Log("autotest : passager a bord"); }
+        if (drive) {   // roule 8 s (a fond), freine 3 s, et ainsi de suite
+            if (car && boardedAt && ((frame - boardedAt) % 330) < 240) Press(PAD_CROSS, 255);
+            if (car && boardedAt && (frame - boardedAt) % 90 == 0 && InVehicle(me)) Log("autotest : je roule, z %.2f, vitesse %.2f", Pos(car).z, sqrtf(MoveSpeed(car).x * MoveSpeed(car).x + MoveSpeed(car).y * MoveSpeed(car).y));
+            return;
+        }
         if (car && boardedAt && frame - boardedAt == 40) {
             Vec3 r = Field<Vec3>(car, 0x04);
             Field<Vec3>(car, 0x04) = { -r.x, -r.y, 0 };
@@ -373,7 +379,8 @@ void AutotestFrame()
         return;
     }
     bool withF = _stricmp(g_cfg.autotest, "passagerf") == 0;   // meme chose avec la touche F (manette : triangle)
-    if (withF || _stricmp(g_cfg.autotest, "passager") == 0) {
+    bool stay = _stricmp(g_cfg.autotest, "passagerreste") == 0;   // monte et reste a bord
+    if (withF || stay || _stricmp(g_cfg.autotest, "passager") == 0) {
         static bool boarded, left;
         static uint32_t boardedAt;
         if (boarded && withF && frame - boardedAt == 30) Log("autotest : a bord=%d (place %d)", InVehicle(FindPlayerPed()),
@@ -388,7 +395,7 @@ void AutotestFrame()
         }
         if (boarded && withF) g_testPassengerFire = frame - boardedAt > 60 && frame - boardedAt < 120;
         if (boarded && withF && frame - boardedAt == 125) Log("autotest : tirs apres 2 s : %u", (unsigned)LocalShotCount());
-        if (boarded && !left && frame - boardedAt > 180) {
+        if (boarded && !left && !stay && frame - boardedAt > 180) {
             left = true;
             Log("autotest : touche %s (descendre)", withF ? "F" : "G");
             if (withF) Press(PAD_TRIANGLE, 255); else TogglePassenger();

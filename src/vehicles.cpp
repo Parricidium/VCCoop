@@ -119,6 +119,15 @@ uint32_t NetVehicleId(void *veh)
     return e ? e->id : 0;
 }
 
+// Copie : roule-t-elle chez son proprietaire ? (sa vitesse physique est tenue a zero ici)
+bool NetVehicleMoving(void *veh)
+{
+    NetVehicle *e = FindByPtr(veh);
+    if (!e) { Vec3 s = MoveSpeed(veh); return s.x * s.x + s.y * s.y > 0.01f; }
+    if (e->owner == g_localId || !e->haveState) { Vec3 s = MoveSpeed(veh); return s.x * s.x + s.y * s.y > 0.01f; }
+    return e->state.speed[0] * e->state.speed[0] + e->state.speed[1] * e->state.speed[1] > 0.01f;
+}
+
 // Un autre joueur a abime notre vehicule chez lui (balles, batte, feu sur sa copie) : meme perte de sante ici ;
 // en dessous de 250 le jeu allume lui-meme le moteur, puis l'epave part chez tout le monde par MsgVehicle.
 void ApplyVehicleDamage(uint32_t id, float damage)
@@ -376,8 +385,12 @@ void VehiclesAfterProcess()
         Field<Vec3>(v, 0x24) = up;
         // "right" recalcule pour une matrice bien orthogonale apres le melange des deux etats.
         Field<Vec3>(v, 0x04) = { n.fwd[1] * up.z - n.fwd[2] * up.y, n.fwd[2] * up.x - n.fwd[0] * up.z, n.fwd[0] * up.y - n.fwd[1] * up.x };
-        MoveSpeed(v) = { n.vel[0], n.vel[1], n.vel[2] };
-        TurnSpeed(v) = { m.turn[0], m.turn[1], m.turn[2] };
+        // Pas de vitesse pour la physique du jeu : la position vient du reseau a chaque image. Avec la vitesse recue
+        // (jusqu'a 30 m/s), le jeu deplacait la copie d'une image (bosses, collisions avec la route : jusqu'a 16 cm
+        // de haut en bas) avant qu'on la remette en place : tremblements et etincelles pour le passager (JD, 27/09).
+        // Ceux qui veulent savoir si elle roule lisent la vitesse recue (NetVehicleMoving).
+        MoveSpeed(v) = { 0, 0, 0 };
+        TurnSpeed(v) = { 0, 0, 0 };
         Field<float>(v, 0x1EC) = m.steer;
         Field<float>(v, 0x1F0) = m.gas;
         Field<float>(v, 0x1F4) = m.brake;
