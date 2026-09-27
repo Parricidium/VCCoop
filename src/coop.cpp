@@ -269,8 +269,12 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     }
     // Mort / arrete : il reste couche (animation recue) et ne bloque plus le passage.
     bool down = s.down || s.health <= 0.0f;
-    uint8_t &col = Field<uint8_t>(ped, 0x51);
-    if (down) col &= ~0x01; else col |= 0x01;
+    // (Seulement a pied : assis dans un vehicule, le jeu coupe lui-meme la collision du personnage ; la remettre a
+    // chaque image faisait un corps solide DANS la voiture de l'hote, qui devenait inconduisible et delogeait le pantin.)
+    if (!InVehicle(ped)) {
+        uint8_t &col = Field<uint8_t>(ped, 0x51);
+        if (down) col &= ~0x01; else col |= 0x01;
+    }
     if (UpdatePuppetVehicle(pp, s)) {
         pp.anims.count = 0;
         if (pp.entering || pp.exiting) return;   // le jeu joue la scene : on ne touche a rien

@@ -130,7 +130,11 @@ void PopulationFrame(bool inGame)
     }
     const NetPlayer &h = g_players[0];
     void *me = FindPlayerPed();
-    bool hostHere = h.connected && h.state.inGame && h.state.area == AreaCode(me);
+    // Meme zone affichee que l'hote (CGame::currArea des deux cotes : l'hote envoie la sienne). Le code de zone du
+    // personnage (m_nAreaCode) n'est pas tenu a jour par le jeu apres un chargement ou une porte : compare a la zone
+    // de l'hote, il coupait la population partagee a 2 m de lui (plus de police ni de circulation de l'hote).
+    (void)me;
+    bool hostHere = h.connected && h.state.inGame && h.state.area == (uint8_t)*(int *)0x978810;
     float dx = h.state.pos[0] - Pos(me).x, dy = h.state.pos[1] - Pos(me).y;
     float d2 = dx * dx + dy * dy;
     // Mission secondaire en cours (taxi...) : il lui faut ses propres passants (clients, cibles) ; population locale.
