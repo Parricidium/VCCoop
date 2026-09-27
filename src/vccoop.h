@@ -65,6 +65,8 @@ void WatchdogFrame();
 // script.cpp
 void InstallScriptHooks();
 bool GuestSideMission();   // invite : il joue une mission secondaire (taxi, ambulance...) chez lui
+bool IsPropertyPickup(uint32_t handle);   // script.cpp : icone d'immeuble creee par le script principal
+void NotePropertyCollected();             // conditions.cpp : l'invite vient d'en ramasser une (achat a suivre)
 // combat.cpp
 void InstallCombatHooks();
 

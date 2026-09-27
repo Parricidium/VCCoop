@@ -4,6 +4,7 @@
 #include "vccoop.h"
 #include "game.h"
 #include "seats.h"
+#include <math.h>
 
 using namespace game;
 
@@ -73,11 +74,20 @@ void WarpOutOfVehicle(void *ped, const Vec3 *at)
     if (vehAnim) Field<float>(vehAnim, 0x1C) = -1000.0f;   // blendDelta : disparait tout de suite
     vehAnim = NULL;
     ((void(__thiscall *)(void *))0x50CCF0)(ped);   // les animations restantes se terminent normalement
-    SetMoveStateFn(ped, 0);
+    SetMoveStateFn(ped, 1);   // PEDMOVE_STILL (avec 0, l'etat envoye aux autres ne leur laissait poser aucune animation)
     BlendAnimation(Field<void *>(ped, 0x4C), Field<int>(ped, 0x1F4), 3, 1000.0f);   // debout, au repos
     Vec3 p;
     if (at) p = *at;
-    else if (veh) { Vec3 v = Pos(veh); p = { v.x + Field<Vec3>(veh, 0x04).x * 2.0f, v.y + Field<Vec3>(veh, 0x04).y * 2.0f, v.z + 0.5f }; }
+    else if (veh) {
+        // A cote du vehicule, a l'horizontale : "droite" projetee au sol (sur le flanc ou sur le toit, elle pointait
+        // en l'air ou sous le sol et le personnage tombait ou passait sous la route).
+        Vec3 v = Pos(veh), r = Field<Vec3>(veh, 0x04);
+        float l = sqrtf(r.x * r.x + r.y * r.y);
+        if (l < 0.3f) { r = Field<Vec3>(veh, 0x14); l = sqrtf(r.x * r.x + r.y * r.y); }
+        if (l < 0.01f) { r = { 1, 0, 0 }; l = 1.0f; }
+        bool upsideDown = Field<Vec3>(veh, 0x24).z < 0.0f;
+        p = { v.x + r.x / l * 2.5f, v.y + r.y / l * 2.5f, v.z + (upsideDown ? 0.3f : 0.5f) };
+    }
     else p = Pos(ped);
     Teleport(ped, p);
 }

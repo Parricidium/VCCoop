@@ -2,6 +2,7 @@
 // (EIP et chaine EBP) pour retrouver la fonction dans Ghidra.
 #include "util.h"
 #include "vccoop.h"
+#include "net.h"
 #include <stdlib.h>
 
 static DWORD g_mainThreadId;
@@ -64,6 +65,7 @@ static DWORD WINAPI WatchdogThread(LPVOID)
     int stalls = 0, ticks = 0;
     for (;;) {
         Sleep(3000);
+        NetKeepAlive();
         if (g_watchRequest) {
             static bool vehAdded;
             if (!vehAdded) { AddVectoredExceptionHandler(1, OnSingleStep); vehAdded = true; }

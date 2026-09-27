@@ -10,6 +10,7 @@
 #include "game.h"
 #include "saveshare.h"
 #include "mirror.h"
+#include "overlay.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -143,6 +144,7 @@ static void GuestLoad()
         CurrSaveSlot() = COOP_SLOT;
         MenuRequestPage(12);
         g_loadPending = false;
+        OverlayLoadedHostSave();   // son argent, ses armes et ses immeubles seront remis une fois en jeu
     } else if (state == GS_PLAYING && !MenuActive()) {
         // En partie : comme un joueur (Pause puis Charger) : on ouvre le menu (m_bStartUpFrontEndRequested,
         // menu +0x12) ; au prochain passage, la branche "menu actif" ci-dessus passe par l'ecran 12.

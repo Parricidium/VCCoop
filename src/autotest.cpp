@@ -304,6 +304,46 @@ void AutotestFrame()
         if (st != lastState) { lastState = st; Log("autotest : etat %d, vehicule %p, a bord %d", st, PedVehicle(me), InVehicle(me)); }
         return;
     }
+    // Voiture RETOURNEE (sur le toit) : l'hote s'y installe au volant ; l'invite (Autotest=passager) monte a cote
+    // puis en redescend avec G : la sortie en rampant doit se jouer chez les deux (avant : pose directement chez
+    // l'invite, pantin pose sans animation chez l'hote, plantage 0x403ED2 quelques images plus tard).
+    if (_stricmp(g_cfg.autotest, "tonneau") == 0) {
+        static void *car;
+        static int lastState = -1;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        int MI_LANDSTAL = g_cfg.testModel ? g_cfg.testModel : 130;
+        static uint32_t boardedAt;
+        if (!car && t > 60 && t < 100) {
+            if (!HasModelLoaded(MI_LANDSTAL)) { RequestModel(MI_LANDSTAL, 1); return; }
+            void *v = VehicleAlloc();
+            AutomobileCtor(v, MI_LANDSTAL, 1);
+            float h = Heading(me);
+            Pos(v) = { Pos(me).x - sinf(h) * 2.5f, Pos(me).y + cosf(h) * 2.5f, Pos(me).z + 0.3f };   // a moins de 6 m de l'invite (touche G)
+            SetHeadingMatrix(v, h + 1.5708f);
+            SetEntityStatus(v, STATUS_ABANDONED);
+            WorldAdd(v);
+            car = v;
+            RegisterReference(v, &car);
+            Log("autotest : voiture creee");
+        }
+        if (car && t == 150) { WarpIntoSeat(me, car, 0); Log("autotest : au volant (conducteur %d)", VehDriver(car) == me); }
+        // Le passager (l'invite) est a bord : 40 images plus tard la voiture est retournee sur le toit, 1,2 m en
+        // l'air (elle retombe et tangue encore quand l'invite veut descendre, 6 s apres avoir appuye sur G).
+        if (car && !boardedAt && Field<uint8_t>(car, 0x1CC) > 0) { boardedAt = frame; Log("autotest : passager a bord"); }
+        if (car && boardedAt && frame - boardedAt == 40) {
+            Vec3 r = Field<Vec3>(car, 0x04);
+            Field<Vec3>(car, 0x04) = { -r.x, -r.y, 0 };
+            Field<Vec3>(car, 0x24) = { 0, 0, -1 };
+            Pos(car).z += 1.2f;
+            MoveSpeed(car) = { 0, 0, 0 };
+            TurnSpeed(car) = { 0.02f, 0, 0 };
+            Log("autotest : voiture retournee sur le toit");
+        }
+        int st = PedState(me);
+        if (st != lastState) { lastState = st; Log("autotest : etat %d, vehicule %p, a bord %d", st, PedVehicle(me), InVehicle(me)); }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "moto") == 0) {
         static void *bike;
         static uint32_t seated;

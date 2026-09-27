@@ -17,3 +17,5 @@ bool ApplyActionAnims(void *ped, const AnimSlot *slots, int n, AnimMirror &m);
 // Efface les reactions (touche, a terre, se relever) que notre jeu met de lui-meme sur un personnage distant :
 // chez lui, il ne les vit pas forcement ; on ne montre que celles recues.
 void ClearLocalReactions(void *ped, AnimMirror &m);
+void EnsureLiveAnim(void *ped);   // plus aucune animation vivante : remet l'attente (sinon plantage 0x403ED2)
+void InstallAnimGuards();         // detours des callbacks d'image du moteur (liste vide)

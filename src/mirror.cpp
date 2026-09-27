@@ -84,6 +84,12 @@ static const OpSig g_ops[] = {
     { 0x03BF, "*", "SET_EVERYONE_IGNORE_PLAYER" },
     { 0x0055, "vvvv", "SET_PLAYER_COORDINATES" },
     { 0x0109, "vv", "ADD_SCORE" },   // argent des missions (ArgentPartage) : chacun recoit la meme somme
+    { 0x0394, "*", "PLAY_MISSION_PASSED_TUNE" },
+    { 0x0318, "*", "SET_LATEST_MISSION_PASSED" },
+    { 0x030C, "*", "PLAYER_MADE_PROGRESS" },
+    { 0x0317, "*", "INCREMENT_MISSION_ATTEMPTS" },
+    // Icones d'immeuble a vendre (Shakedown les recree) : sortie ecrite dans la globale de l'invite (kind 'z').
+    { 0x0518, "vvvvlk", "CREATE_PROTECTION_PICKUP" },
     { 0x0213, "vvvvvk", "CREATE_PICKUP" },
     { 0x032B, "vvvvvvk", "CREATE_PICKUP_WITH_AMMO" },
     { 0x02E1, "vvvvk", "CREATE_MONEY_PICKUP" },
@@ -129,6 +135,30 @@ static uint8_t g_globSnap[GLOBALS_END];
 static bool g_globSnapValid;
 static bool g_missionRunning;   // hote : une mission est en cours
 static int g_hostMission;       // hote : son numero
+// Missions de l'hote qui ne sont pas reproduites chez les invites : les missions secondaires de vehicule (taxi,
+// ambulance, pompiers, justicier, pizza : chacun joue les siennes) et les achats d'immeubles (chacun achete les
+// siens, avec son argent).
+static bool IsSideMission(int m) { return m == 75 || m == 76 || m == 77 || m == 78 || m == 92; }
+static bool IsBuyMission(int m) { return m >= 36 && m <= 50; }   // BUYPRO1..SKUMBUY (table de main.scm)
+static bool g_hostQuiet;        // hote : la mission en cours n'est pas reproduite
+// Variables "par joueur" : jamais envoyees aux invites. Les drapeaux de possession des immeubles (ecrits par les
+// missions d'achat 39..50, releves dans main.scm, plus tout ce qu'une mission d'achat change chez l'hote).
+static uint8_t g_perPlayer[0x8620 / 4 / 8 + 1];
+static bool PerPlayer(int off) { return (g_perPlayer[(off / 4) >> 3] >> ((off / 4) & 7)) & 1; }
+static void SetPerPlayer(int off) { g_perPlayer[(off / 4) >> 3] |= (uint8_t)(1 << ((off / 4) & 7)); }
+static uint8_t g_buySnap[0x8620];
+static void InitPerPlayer()
+{
+    static const int idx[] = { 338, 307, 1092, 999, 1271, 1303, 1798, 1304, 1799, 1300, 1795, 1305, 1800, 1301, 1796, 1302, 1797, 1299, 1794 };
+    for (int i : idx) SetPerPlayer(i * 4);
+}
+// Sorties (marqueur, objet, pickup) des commandes reproduites : leurs references chez l'hote. Une reference d'entree
+// qui n'en vient pas (entite creee par le script principal, dont l'invite a la sienne dans la meme globale) est
+// envoyee comme adresse de globale ('g') : l'invite lit alors sa propre reference.
+static uint32_t g_hostOuts[512];
+static int g_hostOutAt;
+static void RememberHostOut(uint32_t h) { g_hostOuts[g_hostOutAt++ % 512] = h; }
+static bool IsHostOut(uint32_t h) { for (uint32_t x : g_hostOuts) if (x == h) return true; return false; }
 
 static void TrackTimer(uint16_t op, uint16_t offset);
 static int g_timerCount;
@@ -148,19 +178,16 @@ static int g_activeBlipCount;
 
 static bool CreatesBlip(uint16_t op) { return op == 0x0186 || op == 0x0187 || op == 0x018A || op == 0x02A7 || op == 0x02A8 || op == 0x04CE; }
 
-static void RememberActiveBlip(uint16_t op, const uint8_t *cmd, int len)
+static void RememberActiveBlip(uint16_t op, const uint8_t *cmd, int len, uint32_t h)
 {
-    if (op == 0x0164) {   // REMOVE_BLIP : parametre 'B' (1 octet de genre + 4 de valeur) apres l'entete de 4 octets
-        uint32_t h;
-        memcpy(&h, cmd + 5, 4);
+    if (op == 0x0164) {   // REMOVE_BLIP : h = reference du marqueur chez l'hote
         for (int i = 0; i < g_activeBlipCount; i++)
             if (g_activeBlips[i].hostBlip == h) { g_activeBlips[i] = g_activeBlips[--g_activeBlipCount]; break; }
         return;
     }
     if (!CreatesBlip(op) || len > 64 || g_activeBlipCount >= 64) return;
-    // La sortie 'b' est le dernier parametre : ses 4 derniers octets sont la reference du marqueur chez l'hote.
     ActiveBlip &b = g_activeBlips[g_activeBlipCount++];
-    memcpy(&b.hostBlip, cmd + len - 4, 4);
+    b.hostBlip = h;
     b.len = len;
     memcpy(b.cmd, cmd, len);
 }
@@ -197,7 +224,7 @@ bool MirrorBefore(void *script, int ip, uint16_t op)
     const OpSig *sig = FindOp(op);
     if (!sig) return false;
     if (op == 0x0109 && !g_cfg.shareMoney) return false;
-    if (g_missionRunning && g_hostMission == 0 && !g_captureOnly) return false;   // INITIAL : chaque invite joue la sienne
+    if (g_missionRunning && (g_hostMission == 0 || g_hostQuiet) && !g_captureOnly) return false;   // INITIAL, secondaires, achats : chacun joue les siennes
     if (sig->sig[0] == '*') { g_pending = sig; g_pendingIp = ip; return true; }
     uint8_t *ss = ScriptSpace();
     int at = ip + 2, n = 0;
@@ -273,20 +300,36 @@ void MirrorAfter(void *script)
     buf[len++] = RL_SCRIPT_CMD;
     memcpy(buf + len, &sig->op, 2); len += 2;
     buf[len++] = (uint8_t)g_paramCount;
+    uint32_t entity = 0;   // reference chez l'hote du marqueur cree ou retire (liste des marqueurs actifs)
     for (int i = 0; i < g_paramCount; i++) {
         ParamRef &p = g_params[i];
         if (p.type == 0xFF) { buf[len++] = 'e'; continue; }   // fin de liste
-        buf[len++] = (uint8_t)p.kind;
-        if (p.kind == 'l') { memcpy(buf + len, ScriptSpace() + p.where, 8); len += 8; continue; }
+        if (p.kind == 'l') { buf[len++] = 'l'; memcpy(buf + len, ScriptSpace() + p.where, 8); len += 8; continue; }
         int32_t v = p.literal;
-        if (p.kind == 'g') v = p.where;
+        char kind = p.kind;
+        if (kind == 'g') v = p.where;
         else if (p.type == 2) v = *(int32_t *)(ScriptSpace() + p.where);
         else if (p.type == 3) v = Field<int32_t>(script, 0x30 + p.where * 4);
+        if (kind == 'B' || kind == 'b') entity = (uint32_t)v;
+        // Objet / marqueur / pickup du script principal (pas une sortie reproduite) : l'invite a le sien dans la
+        // meme globale.
+        if ((kind == 'O' || kind == 'B' || kind == 'K') && p.type == 2 && !IsHostOut((uint32_t)v)) { kind = 'g'; v = p.where; }
+        if (kind == 'b' || kind == 'o' || kind == 'k') {
+            RememberHostOut((uint32_t)v);
+            if (p.type == 2) {   // sortie dans une globale : l'invite y ecrira sa propre reference ('x' 'y' 'z')
+                buf[len++] = (uint8_t)(kind == 'b' ? 'x' : kind == 'o' ? 'y' : 'z');
+                memcpy(buf + len, &v, 4); len += 4;
+                uint16_t o = (uint16_t)p.where;
+                memcpy(buf + len, &o, 2); len += 2;
+                continue;
+            }
+        }
+        buf[len++] = (uint8_t)kind;
         memcpy(buf + len, &v, 4); len += 4;
     }
     if (!g_captureOnly) {
         NetSendReliable(buf, len);
-        RememberActiveBlip(sig->op, buf, len);
+        RememberActiveBlip(sig->op, buf, len, entity);
         if (g_params[0].kind == 'g') TrackTimer(sig->op, (uint16_t)g_params[0].where);
     }
     // Autotest : dernier objectif / point de contact poses par les missions (coordonnees x, y, z en tete).
@@ -320,6 +363,12 @@ void MirrorMissionStart(int mission)
     if (!g_globSnapValid) { memcpy(g_globSnap, ScriptSpace(), GLOBALS_END); g_globSnapValid = true; }
     g_missionRunning = true;
     g_hostMission = mission;
+    g_hostQuiet = IsSideMission(mission) || IsBuyMission(mission);
+    if (g_hostQuiet) {
+        if (IsBuyMission(mission)) memcpy(g_buySnap, ScriptSpace(), GLOBALS_END);
+        Log("miroir : mission %d (%s) jouee par l'hote seul, non reproduite", mission, IsBuyMission(mission) ? "achat d'immeuble" : "secondaire");
+        return;
+    }
     uint8_t b[4] = { RL_MISSION_START, GatherFlag(), (uint8_t)mission, (uint8_t)(mission >> 8) };
     NetSendReliable(b, 4);
     Log("miroir : debut de mission %d envoye (regroupement %d)", mission, b[1]);
@@ -341,7 +390,7 @@ static void SendGlobals(int peer, bool changedOnly)
         uint32_t now = *(uint32_t *)(ScriptSpace() + off);
         uint32_t before = *(uint32_t *)(g_globSnap + off);
         if (changedOnly ? (now == before || !IsFlagValue(before)) : now == 0) continue;
-        if (!IsFlagValue(now)) continue;
+        if (!IsFlagValue(now) || PerPlayer(off)) continue;
         uint16_t o = (uint16_t)off;
         memcpy(buf + len, &o, 2); memcpy(buf + len + 2, &now, 4);
         len += 6; total++;
@@ -372,7 +421,7 @@ static void SendStableChanges()
     buf[0] = RL_GLOBALS;
     for (int off = GLOBALS_BEGIN; off + 4 <= GLOBALS_END; off += 4) {
         uint32_t now = *(uint32_t *)(ScriptSpace() + off), sent = *(uint32_t *)(g_globSnap + off), prev = *(uint32_t *)(g_globPrev + off);
-        if (now == sent || now != prev || !IsFlagValue(now) || !IsFlagValue(sent)) continue;
+        if (now == sent || now != prev || !IsFlagValue(now) || !IsFlagValue(sent) || PerPlayer(off)) continue;
         *(uint32_t *)(g_globSnap + off) = now;
         uint16_t o = (uint16_t)off;
         memcpy(buf + len, &o, 2); memcpy(buf + len + 2, &now, 4);
@@ -414,6 +463,20 @@ static void HostSyncNewcomers(bool inGame)
 void MirrorMissionEnd()
 {
     g_missionRunning = false;
+    if (g_hostQuiet) {
+        g_hostQuiet = false;
+        g_timerCount = 0;
+        if (IsBuyMission(g_hostMission)) {
+            // Ce que la mission d'achat a change (drapeaux de possession) reste a l'hote : jamais envoye.
+            int n = 0;
+            for (int off = GLOBALS_BEGIN; off + 4 <= GLOBALS_END; off += 4)
+                if (off != 313 * 4 && *(uint32_t *)(ScriptSpace() + off) != *(uint32_t *)(g_buySnap + off) && !PerPlayer(off)) { SetPerPlayer(off); n++; }
+            Log("miroir : mission d'achat %d finie, %d variables gardees par joueur", g_hostMission, n);
+        }
+        SendGlobalChanges();
+        Log("miroir : fin de la mission %d (non reproduite)", g_hostMission);
+        return;
+    }
     SendGlobalChanges();
     uint8_t b[4] = { RL_MISSION_END, GatherFlag(), (uint8_t)g_hostMission, (uint8_t)(g_hostMission >> 8) };
     NetSendReliable(b, 4);
@@ -494,7 +557,11 @@ static Pending g_queue[QUEUE_SIZE];
 static int g_qHead, g_qTail;   // anneau
 static uint8_t g_script[0x100];  // notre CRunningScript prive
 static bool g_scriptReady;
-enum { SCRATCH = 0x370E8 + 0x40 };   // zone des missions de ScriptSpace : jamais utilisee chez l'invite
+// Brouillon ou l'on ecrit la commande a rejouer : la FIN de la zone des missions de ScriptSpace. Le jeu charge
+// chaque mission a +0x370E8 (35000 octets reserves, la plus grosse de main.scm en fait 32408) ; ecrire au debut de
+// cette zone corrompait le code de la mission en cours (celle de l'hote, ou INITIAL / une mission secondaire /
+// un achat d'immeuble chez l'invite).
+enum { SCRATCH = 0x370E8 + 35000 - 0x100 };
 
 static bool Translate(char kind, uint32_t host, uint32_t &guest)
 {
@@ -572,10 +639,12 @@ static bool Execute(const uint8_t *d, int len, bool force)
             return true;
         }
     }
+    // En pleine course de taxi (ou autre mission secondaire jouee ici) : la mission de l'hote ne nous teleporte pas.
+    if (op == 0x0055 && d[0] == RL_SCRIPT_CMD && GuestSideMission()) { Log("miroir : teleportation de l'hote ignoree (mission secondaire en cours)"); return true; }
     uint8_t *ss = ScriptSpace();
     int w = SCRATCH;
     memcpy(ss + w, &op, 2); w += 2;
-    struct Out { char kind; uint32_t host; int local; } outs[4];
+    struct Out { char kind; uint32_t host; int local; int gofs; } outs[4];
     int outCount = 0;
     for (int i = 0; i < n; i++) {
         char kind = (char)d[at++];
@@ -587,15 +656,22 @@ static bool Execute(const uint8_t *d, int len, bool force)
             ss[w] = 2;
             *(uint16_t *)(ss + w + 1) = (uint16_t)v;
             w += 3;
-            GuestTrackTimer(op, (uint16_t)v);
+            if (op == 0x014E || op == 0x014F || op == 0x0150 || op == 0x0151 || op == 0x03C3 || op == 0x03C4) GuestTrackTimer(op, (uint16_t)v);
             continue;
         }
-        if (kind == 'b' || kind == 'o' || kind == 'k') {
+        if (kind == 'b' || kind == 'o' || kind == 'k' || kind == 'x' || kind == 'y' || kind == 'z') {
+            int gofs = -1;
+            if (kind == 'x' || kind == 'y' || kind == 'z') {   // sortie a ecrire aussi dans notre globale
+                uint16_t o;
+                memcpy(&o, d + at, 2); at += 2;
+                gofs = o;
+                kind = kind == 'x' ? 'b' : kind == 'y' ? 'o' : 'k';
+            }
             ss[w] = 3;                                   // variable locale de notre script
             *(uint16_t *)(ss + w + 1) = (uint16_t)outCount;
             w += 3;
             int idx = outCount++;
-            outs[idx] = { kind, v, idx };
+            outs[idx] = { kind, v, idx, gofs };
             continue;
         }
         // Teleportation du joueur par la mission : chaque invite est pose un peu a cote (pas sur l'hote).
@@ -603,7 +679,11 @@ static bool Execute(const uint8_t *d, int len, bool force)
         uint32_t g;
         if (!Translate(kind, v, g)) {
             if (!force) return false;
-            g = (uint32_t)-1;
+            // Toujours pas d'equivalent chez nous apres 3 s : la commande est sautee. (Avant : executee avec -1,
+            // que CPool::GetAt ne verifie pas : pointeur faux, plantage possible dans le gestionnaire d'opcode.)
+            const OpSig *s = FindOp(op);
+            Log("miroir : %s ignoree (reference %c %08X introuvable chez nous)", s ? s->name : "?", kind, v);
+            return true;
         }
         ss[w] = 1;
         memcpy(ss + w + 1, &g, 4);
@@ -627,6 +707,7 @@ static bool Execute(const uint8_t *d, int len, bool force)
 
     for (int i = 0; i < outCount; i++) {
         uint32_t g = Field<uint32_t>(g_script, 0x30 + i * 4);
+        if (outs[i].gofs >= GLOBALS_BEGIN && outs[i].gofs + 4 <= GLOBALS_END) *(uint32_t *)(ss + outs[i].gofs) = g;
         if (outs[i].kind == 'b') MapSet(g_blips, g_blipCount, 128, outs[i].host, g);
         else if (outs[i].kind == 'k') MapSet(g_pickups, g_pickupCount, 128, outs[i].host, g);
         else MapSet(g_objs, g_objCount, 128, outs[i].host, g);
@@ -732,6 +813,21 @@ void MirrorInit()
 {
     g_onReliable = OnReliable;
     g_onJoin = MirrorPlayerJoined;
+    InitPerPlayer();
+}
+
+// Argent (ADD_SCORE 0109) arrive pendant que l'invite n'est pas en partie (chargement, menu) : garde et donne a
+// son retour, au lieu d'etre jete avec le reste de la file.
+static int g_pendingMoney;
+static void KeepPendingMoney(const Pending &p)
+{
+    if (p.data[0] != RL_SCRIPT_CMD || p.len < 14) return;
+    uint16_t op;
+    memcpy(&op, p.data + 1, 2);
+    if (op != 0x0109 || p.data[4] != 'v' || p.data[9] != 'v') return;
+    int32_t amount;
+    memcpy(&amount, p.data + 10, 4);
+    g_pendingMoney += amount;
 }
 
 void MirrorFrame(bool inGame)
@@ -752,13 +848,21 @@ void MirrorFrame(bool inGame)
         // Hors partie (salon, chargement), la presentation des missions de l'hote n'a pas de sens : rejouees d'un coup
         // a l'arrivee (cameras fixes, textes, sons de l'intro...), elles faisaient planter la camera. On ne garde que
         // les variables de l'histoire ; l'hote renvoie l'etat complet (et les marqueurs) quand on arrive en partie.
-        int kept = g_qHead;
-        for (int i = g_qHead; i != g_qTail; i = (i + 1) % QUEUE_SIZE)
+        int kept = g_qHead, dropped = 0;
+        for (int i = g_qHead; i != g_qTail; i = (i + 1) % QUEUE_SIZE) {
             if (g_queue[i].data[0] == RL_GLOBALS) { if (kept != i) g_queue[kept] = g_queue[i]; kept = (kept + 1) % QUEUE_SIZE; }
+            else { KeepPendingMoney(g_queue[i]); dropped++; }
+        }
         g_qTail = kept;
+        if (dropped) Log("miroir : %d commandes ignorees hors partie (argent garde : %d)", dropped, g_pendingMoney);
         return;
     }
     uint32_t now = GetTickCount();
+    if (g_pendingMoney) {
+        *(int *)(0x94AD28 + 0xA0) += g_pendingMoney;   // CWorld::Players[0].m_nMoney
+        Log("miroir : %d $ recus pendant le chargement, ajoutes", g_pendingMoney);
+        g_pendingMoney = 0;
+    }
     while (g_qHead != g_qTail) {
         Pending &p = g_queue[g_qHead];
         if (!p.since) p.since = now;

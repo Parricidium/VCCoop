@@ -103,12 +103,15 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   markers, pickups, objects (briefcases, bombs...), on-screen timers and counters, the area of the city
   or interior being shown. Story progress is sent to the guests as missions are passed, and a guest
   who joins later receives the host's save and the current state.
-- **Combat**: player-vs-player damage (punches, bullets, cars, explosions) if friendly fire is on;
-  bullets and punches on the host's characters count on the host; grenades, molotovs and rockets are
-  replayed on every machine; other players' shots are visible, including drive-by.
+- **Combat**: player-vs-player damage (punches, bullets, explosions) if friendly fire is on;
+  bullets and punches on the host's characters count on the host, even on "only damaged by player"
+  mission targets; a guest's police hurts the other players for real; grenades, molotovs and rockets
+  are replayed on every machine; other players' shots are visible, including drive-by; a dead player
+  stays down and no longer blocks the way.
 - **Vehicles**: every vehicle driven by a player is shared — position and physics interpolated,
   steering, wheel spin, radio station of the driver, colours, visible damage (doors, panels, lights,
-  tyres), wrecks. Players get in and out with the game's own animations, door included.
+  tyres), wrecks, and health lost to another player's bullets. Players get in and out with the game's
+  own animations, door included, crawling out of an overturned car included.
 - **Shared world**: near the host (150 m) a guest sees the same pedestrians and traffic; farther
   away (210 m) they have their own city. Parked mission vehicles, pickups and shop icons are set up
   locally by each player.
@@ -117,10 +120,15 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Death**: a dead or busted guest reappears at the nearest hospital / police station, keeping
   weapons and money (`GarderArmes`), or next to the host (`ReapparitionHote=1`).
 - **Side missions**: a guest can run taxi, ambulance, firefighter, vigilante and pizza missions on
-  their side, in the right vehicle.
+  their side, in the right vehicle; the host's own side missions are not mirrored either.
+- **Properties per player**: a guest can buy safehouses and businesses with their own money
+  (the purchase mission runs on their side); the host's purchases stay the host's, the icon remains
+  on sale for the others. A guest's money, weapons and properties are kept in
+  `joueur-<nickname>.ini` next to `vccoop.ini` and restored after every load of the host's save.
 - **Reconnection**: a guest who loses the connection comes back by themselves, without reloading, and
-  receives the full state again. A player who quits disappears at once on the other machines, with
-  their vehicles.
+  receives the full state again; a reliable stream that gets out of step is detected within seconds and
+  resynchronised (mission rewards received during a loading screen are kept). A player who quits
+  disappears at once on the other machines, with their vehicles.
 - **Widescreen**: borderless fullscreen at desktop resolution by default, real aspect ratio (16:9,
   21:9, 32:9) with a wider field of view, HUD and menus in proportion (`Fenetre`, `GrandEcran`).
 - **Video options** (all local, `0` = original rendering): draw distance (`DistanceAffichage`, 100 to
@@ -183,8 +191,8 @@ port in **TCP**. Over the Internet the host forwards both on their router, or ev
 
 Test build. A report with the `logs\` files of **both** players helps a lot.
 
-1. **Vehicle damage caused by a non-owner** is approximate: the owner's state wins; fire is not
-   synchronised.
+1. **Vehicle damage caused by a non-owner**: bullets are sent to the owner, but body damage from
+   collisions with a copy is not; fire is not synchronised.
 2. **Passengers seen from the outside** are seated directly (once seated on their side): the game's
    AI refuses the passenger-entry animation towards a player-driven car. Drivers have the full
    animation.
@@ -195,6 +203,11 @@ Test build. A report with the `logs\` files of **both** players helps a lot.
 6. **No kick and no password** for the lobby (by choice for now).
 7. **Mods**: `.col` and `.ifp` replacements are untested; map additions (new buildings) and added
    vehicles are not supported.
+8. **Properties**: a property the host owns in a save that a guest loads is owned by the guest too
+   (the game's save holds it); a guest's purchase on a property that is still on sale in the host's
+   save can be bought again after a reload (it costs again).
+9. **The game's own AI ignores guests**: enemies, gangs and the host's police only target the host;
+   a pedestrian hit by a guest does not fight back.
 
 ## Building
 
@@ -284,13 +297,16 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   marqueurs radar, pickups, objets (mallettes, bombes...), minuteurs et compteurs à l'écran, zone
   affichée (ville ou intérieur). L'avancement de l'histoire part aux invités au fil des missions ; un
   invité qui arrive plus tard reçoit la sauvegarde de l'hôte et l'état courant.
-- **Combat** : dégâts entre joueurs (coups, balles, voitures, explosions) si le tir ami est activé ;
-  balles et coups sur les personnages de l'hôte comptent chez lui ; grenades, cocktails et roquettes
-  rejoués chez tout le monde ; tirs des autres joueurs visibles, drive-by compris.
+- **Combat** : dégâts entre joueurs (coups, balles, explosions) si le tir ami est activé ;
+  balles et coups sur les personnages de l'hôte comptent chez lui, même sur les cibles de mission
+  « blessées seulement par le joueur » ; la police d'un invité blesse vraiment les autres joueurs ;
+  grenades, cocktails et roquettes rejoués chez tout le monde ; tirs des autres joueurs visibles,
+  drive-by compris ; un joueur mort reste au sol et ne bloque plus le passage.
 - **Véhicules** : tout véhicule conduit par un joueur est partagé : position et physique
   interpolées, volant, rotation des roues, station de radio du conducteur, couleurs, dégâts visibles
-  (portes, panneaux, phares, pneus), épaves. Montée et descente avec les animations du jeu, portière
-  comprise.
+  (portes, panneaux, phares, pneus), épaves, et santé perdue sous les balles d'un autre joueur. Montée
+  et descente avec les animations du jeu, portière comprise, sortie en rampant d'une voiture
+  retournée comprise.
 - **Monde partagé** : près de l'hôte (150 m) un invité voit les mêmes passants et la même
   circulation ; plus loin (210 m) il retrouve sa propre ville. Véhicules garés de mission, pickups et
   icônes des boutiques sont posés en local chez chacun.
@@ -299,10 +315,15 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Mort** : un invité mort ou arrêté réapparaît à l'hôpital / au commissariat le plus proche, avec ses
   armes et son argent (`GarderArmes`), ou près de l'hôte (`ReapparitionHote=1`).
 - **Missions secondaires** : un invité peut jouer taxi, ambulance, pompiers, justicier et pizzas de son
-  côté, dans le bon véhicule.
+  côté, dans le bon véhicule ; celles de l'hôte ne sont pas reproduites non plus.
+- **Immeubles par joueur** : un invité peut acheter planques et commerces avec son propre argent (la
+  mission d'achat tourne chez lui) ; les achats de l'hôte restent à l'hôte, l'icône reste à vendre
+  pour les autres. Argent, armes et immeubles d'un invité sont gardés dans `joueur-<pseudo>.ini` à
+  côté de `vccoop.ini` et remis après chaque chargement de la sauvegarde de l'hôte.
 - **Reconnexion** : un invité qui perd la connexion revient tout seul, sans recharger, et reçoit à
-  nouveau l'état complet. Un joueur qui quitte disparaît tout de suite chez les autres, avec ses
-  véhicules.
+  nouveau l'état complet ; un flux fiable désynchronisé est détecté en quelques secondes et
+  resynchronisé (l'argent des missions reçu pendant un chargement est gardé). Un joueur qui quitte
+  disparaît tout de suite chez les autres, avec ses véhicules.
 - **Grand écran** : plein écran fenêtré à la résolution du bureau par défaut, vrai format (16:9,
   21:9, 32:9) avec un champ de vision élargi, HUD et menus en proportion (`Fenetre`, `GrandEcran`).
 - **Options vidéo** (toutes locales, `0` = rendu d'origine) : distance d'affichage
@@ -372,8 +393,8 @@ VPN, ZeroTier, Hamachi). Les invités règlent l'adresse de l'hôte dans le menu
 
 Version de test. Un rapport avec les fichiers `logs\` des **deux** joueurs aide beaucoup.
 
-1. **Dégâts de véhicule faits par un non-propriétaire** : approximatifs, l'état du propriétaire
-   l'emporte ; le feu n'est pas synchronisé.
+1. **Dégâts de véhicule faits par un non-propriétaire** : les balles sont envoyées au propriétaire,
+   pas la tôle froissée par un choc contre une copie ; le feu n'est pas synchronisé.
 2. **Passagers vus de l'extérieur** : posés directement sur le siège (une fois assis chez eux) ;
    l'IA du jeu refuse l'animation d'entrée en passager vers une voiture conduite par un joueur. Les
    conducteurs ont l'animation complète.
@@ -385,6 +406,12 @@ Version de test. Un rapport avec les fichiers `logs\` des **deux** joueurs aide 
 6. **Pas de kick ni de mot de passe** pour le salon (choix, pour l'instant).
 7. **Mods** : remplacements `.col` et `.ifp` non testés ; ajouts de carte (nouveaux bâtiments) et
    véhicules ajoutés non pris en charge.
+8. **Immeubles** : un immeuble que l'hôte possède dans la sauvegarde qu'un invité charge appartient
+   aussi à l'invité (c'est la sauvegarde du jeu qui le porte) ; un achat de l'invité sur un immeuble
+   encore à vendre dans la sauvegarde de l'hôte peut être racheté après un rechargement (il coûte à
+   nouveau).
+9. **L'IA du jeu ignore les invités** : ennemis, gangs et police de l'hôte ne visent que l'hôte ; un
+   passant frappé par un invité ne riposte pas.
 
 ## Compiler
 
