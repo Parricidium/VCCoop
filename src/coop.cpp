@@ -140,6 +140,14 @@ static void EvictNpcDriver(void *veh, const MsgState &s)
 // dans cette voiture" des scripts (SET_CHAR_OBJ_ENTER_CAR_AS_DRIVER 01D5) et le jeu joue portiere et animation ;
 // pareil pour descendre (SET_CHAR_OBJ_LEAVE_CAR 01D3). Pendant ce temps on ne touche a rien. Si ca traine (porte
 // bloquee, voiture partie), on le pose directement comme avant.
+// Vehicule conduit ici par le joueur local ou par un autre pantin : sa physique est a lui, on n'y touche pas
+// (immobiliser la voiture de l'hote le temps qu'un pantin en descende la rendait inconduisible).
+static bool LocallyDriven(void *veh, void *self)
+{
+    void *drv = VehDriver(veh);
+    return drv && drv != self && (drv == FindPlayerPed() || IsPuppet(drv));
+}
+
 static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
 {
     void *ped = pp.ped;
@@ -156,7 +164,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         if (cur) { pp.entering = false; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
         // Chez lui c'est fini depuis 2 s et notre double n'y est toujours pas : on le pose.
         else if (!(EnteringState(PedState(ped)) && now - pp.busySince < 12000) &&
-                 (now - pp.busySince > 6000 || !PedVehicle(ped) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
+                 (now - pp.busySince > 6000 || (!PedVehicle(ped) && now - pp.busySince > 1000) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = Pos(ped);
@@ -177,10 +185,9 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
             cur = NULL;
             Log("coop : Tommy %d : descente animee abandonnee (etat %d)", s.id, PedState(ped));
         } else {
-            // Le jeu refuse de sortir tant que le vehicule bouge (CanPedExitCar) : la copie est pilotee par le reseau,
-            // on la tient immobile le temps qu'il accepte.
-            MoveSpeed(cur) = { 0, 0, 0 };
-            TurnSpeed(cur) = { 0, 0, 0 };
+            // Le jeu refuse de sortir tant que le vehicule bouge (CanPedExitCar) : une copie pilotee par le reseau
+            // est tenue immobile le temps qu'il accepte (jamais un vehicule que quelqu'un conduit ici).
+            if (!LocallyDriven(cur, ped)) { MoveSpeed(cur) = { 0, 0, 0 }; TurnSpeed(cur) = { 0, 0, 0 }; }
             return true;
         }
     }
@@ -189,7 +196,8 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         // Passager : l'IA du jeu refuse de faire monter un personnage en passager d'une voiture conduite par un
         // joueur (essaye dans les deux sens) : il sera pose a sa place quand il sera assis chez lui.
         bool passenger = s.enterSeat != 0;
-        if (veh && !passenger) {
+        // Moto : l'objectif "monter au volant" n'aboutit pas (le double etait pose puis repris a chaque image) : pose direct.
+        if (veh && !passenger && VehClass(veh) != VCLASS_BIKE) {
             EvictNpcDriver(veh, s);
             bool ok = !VehDriver(veh);
             if (ok) {
@@ -204,8 +212,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     }
     if (cur && s.exiting && (s.inVehicle ? cur == want : true)) {
         int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
-        MoveSpeed(cur) = { 0, 0, 0 };
-        TurnSpeed(cur) = { 0, 0, 0 };
+        if (!LocallyDriven(cur, ped)) { MoveSpeed(cur) = { 0, 0, 0 }; TurnSpeed(cur) = { 0, 0, 0 }; }
         MirrorLocal(0x01D3, 2, a);
         pp.exiting = true;
         pp.busySince = now;
@@ -215,7 +222,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     }
     // Deja dehors chez lui (sortie posee directement, ou animation deja finie) et notre double encore a bord : il
     // descend quand meme avec l'animation du jeu, sauf si la voiture roule (il en a saute).
-    if (cur && !s.inVehicle && !s.enterId) {
+    if (cur && !s.inVehicle && !s.enterId && !LocallyDriven(cur, ped)) {
         Vec3 cs = MoveSpeed(cur);
         if (cs.x * cs.x + cs.y * cs.y < 0.01f) {
             int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
