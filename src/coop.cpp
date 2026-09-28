@@ -54,6 +54,7 @@ struct Puppet {
 // Une tenue de passant (choisie avec F7) est un modele normal : on l'utilise tel quel (le charger dans un emplacement
 // special plante, cf. players.cpp). Renvoie le modele a utiliser, -1 tant qu'il charge.
 enum { MI_PUPPET_BASE = 126 };
+static void PuppetPhone(void *ped);   // telephone en main quand l'autre joueur telephone
 static int EnsurePuppetModel(int player, const char *outfit)
 {
     int regular = RegularPedModel(outfit);
@@ -246,6 +247,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
                 pp.entering = true;
                 pp.busySince = now;
                 pp.anims.count = 0;
+                EnsureLiveAnim(ped);   // montee refusee par le moteur au dernier moment (moto) : jamais sans animation
                 Log("coop : Tommy %d monte dans %08X (animation, %s%s)", s.id, s.enterId, passenger ? "passager" : "au volant",
                     VehClass(veh) == VCLASS_BIKE ? ", moto" : "");
                 return true;
@@ -397,7 +399,8 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     // marche (elle la ferait disparaitre). Les reactions que notre jeu lui donne (nos coups) sont effacees : on voit
     // celles qu'il vit chez lui.
     ClearLocalReactions(ped, pp.anims);
-    if (ApplyActionAnims(ped, s.anims, 3, pp.anims) || down) { EnsureLiveAnim(ped); return; }
+    if (ApplyActionAnims(ped, s.anims, 3, pp.anims) || down) { EnsureLiveAnim(ped); PuppetPhone(ped); return; }
+    PuppetPhone(ped);
     int before = MoveState(ped);
     SetMoveStateFn(ped, s.moveState ? s.moveState : 1);   // 0 ("aucun") : SetMoveAnim ne poserait rien
     SetMoveAnim(ped);
@@ -405,6 +408,33 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     if (s.moveState != pp.lastMoveState) {
         if (g_cfg.logScripts) Log("coop : Tommy %d deplacement %d -> %d (il etait a %d)", s.id, pp.lastMoveState, s.moveState, before);
         pp.lastMoveState = s.moveState;
+    }
+}
+
+// Telephone portable dans la main du double : quand l'autre joueur telephone (appel de mission), ses animations de
+// telephone arrivent mais pas l'objet, que le jeu ne pose que dans l'etat "repond au portable" (CPed::AnswerMobile
+// 0x4F5710 : modele MI_MOBILE 0x102 dans m_pWeaponModel +0x1F0, m_wepModelID +0x530, a 85 % de ANIM_STD_PHONE_IN).
+static void PuppetPhone(void *ped)
+{
+    void *clump = Field<void *>(ped, 0x4C);
+    if (!clump) return;
+    auto assoc = [&](int id) { return ((void *(__cdecl *)(void *, int))0x407780)(clump, id); };   // RpAnimBlendClumpGetAssociation
+    void *in = assoc(164), *talk = assoc(166);   // ANIM_STD_PHONE_IN / ANIM_STD_PHONE_TALK
+    void *&model = Field<void *>(ped, 0x1F0);
+    int &modelId = Field<int>(ped, 0x530);
+    bool want = talk || (in && Field<float>(in, 0x20) >= 0.85f);
+    if (want && modelId != 0x102) {
+        void *mi = ModelInfo(0x102);
+        if (!mi) return;
+        if (model) ((void(__thiscall *)(void *, int))0x4FFD80)(ped, -1);   // CPed::RemoveWeaponModel : l'arme range
+        void *inst = ((void *(__thiscall *)(void *))(*(void ***)mi)[3])(mi);   // CreateInstance
+        if (!inst) return;
+        model = inst;
+        ((void(__thiscall *)(void *))0x53F1B0)(mi);   // AddRef
+        modelId = 0x102;
+    } else if (!want && modelId == 0x102 && model) {
+        ((void(__thiscall *)(void *, int))0x4FFD80)(ped, 0x102);
+        SetCurrentWeapon(ped, WeaponTypeInSlot(ped, CurrentWeaponSlot(ped)));   // son arme revient en main
     }
 }
 

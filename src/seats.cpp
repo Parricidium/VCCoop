@@ -119,7 +119,10 @@ bool StartEnterAnimated(void *ped, void *veh, int seat, bool walk)
     if (EntityStatus(veh) == STATUS_WRECKED || (Field<uint8_t>(veh, 0x1FB) & 0x10)) return false;
     if (Field<Vec3>(veh, 0x24).z < 0.3f) return false;   // sur le flanc ou le toit
     int lock = Field<int>(veh, 0x230);
-    if (lock == 2 || lock == 4 || lock == 5 || lock == 7) return false;
+    // Verrous du jeu (CVehicle::CanPedOpenLocks) ; le double d'un joueur compte comme un joueur : "ferme aux joueurs
+    // seulement" (3) aussi (avant, chez l'hote, le double montait dans la voiture de Jury Fury que le jeu refusait
+    // chez l'invite lui-meme).
+    if (lock == 2 || lock == 3 || lock == 4 || lock == 5 || lock == 7) return false;
     int slot = -1;
     bool jack = false;
     if (seat == 0) {

@@ -783,6 +783,12 @@ static bool Execute(const uint8_t *d, int len, bool force)
         }
     }
     if (op == 0x02E4 && d[0] == RL_SCRIPT_CMD) { const uint8_t *label = FirstLabel(d, len); Log("miroir : cinematique %.8s de l'hote", label ? (const char *)label : "?"); }
+    // Son de mission (dialogue, telephone) : l'hote attend HAS_MISSION_AUDIO_LOADED avant de le jouer ; chez nous le
+    // LOAD rejoue juste avant n'a souvent pas fini : on attend qu'il le soit (3 s au plus), sinon le son etait perdu.
+    if (op == 0x03D1 && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v' && !force) {
+        int32_t slot; memcpy(&slot, d + 5, 4);
+        if (slot >= 1 && slot <= 2 && ((char(__thiscall *)(void *, int))0x5F9800)((void *)0x78D718, slot - 1) != 1) return false;
+    }
     // Fils du script principal : seulement ceux que rien d'autre ne lance chez l'invite, et une seule fois.
     if (op == 0x004F && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v') {
         static const struct { int32_t label; const char *name; } allowed[] = {

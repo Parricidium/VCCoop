@@ -1182,7 +1182,10 @@ static float SkyLum()
 }
 static void __cdecl h_StoreCarLight(void *car, int id, void *tex, float *pos, float fx, float fy, float sx, float sy, int r, int g, int b, float maxAngle)
 {
-    if (car && pos && tex && tex == *(void **)0xA1073C && g_lightsLive) {
+    // Phare avant : identifiant vehicule + 22 (voitures : texture des phares ; motos, CBike::PreRender : texture
+    // d'explosion, elles etaient donc oubliees). + 25 = la tache rouge des feux arriere, laissee au jeu.
+    bool head = tex && (tex == *(void **)0xA1073C || id == (int)((uintptr_t)car + 22));
+    if (car && pos && head && g_lightsLive) {
         const float *m = (const float *)((uint8_t *)car + 4);   // right, forward, up, position (lignes de 4)
         Vec3 p = { m[12], m[13], m[14] }, fwd = { m[4], m[5], m[6] }, up = { m[8], m[9], m[10] };
         // La tache est posee 6 m devant les phares : on retrouve l'avant du vehicule.
@@ -1198,6 +1201,8 @@ static void __cdecl h_StoreCarLight(void *car, int id, void *tex, float *pos, fl
             // pour retrouver la tache du jeu (et plus).
             float k = 2.5f * (1.0f + 0.6f * g_night);   // (la passe applique x0,4 a toutes les lumieres)
             g_lightList[g_lightCount++] = { o.x, o.y, o.z, d.x, d.y, d.z, 14.0f, 1.15f * k, 1.1f * k, 0.95f * k, 1, 0.80f };
+            static bool bikeLogged;
+            if (!bikeLogged && tex != *(void **)0xA1073C) { bikeLogged = true; Log("rendu : phare de moto (%s) eclaire la route", ModelName(ModelIndex(car))); }
         }
         return;
     }

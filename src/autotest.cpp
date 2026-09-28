@@ -315,17 +315,19 @@ void AutotestFrame()
         }
         int MI_CAR = g_cfg.testModel ? g_cfg.testModel : 130;
         if (!other && t > 90 && t < 140) {
-            if (!HasModelLoaded(MI_CAR)) { RequestModel(MI_CAR, 1); return; }
+            if (!HasModelLoaded(MI_CAR) || !HasModelLoaded(130)) { RequestModel(MI_CAR, 1); RequestModel(130, 1); return; }
             float h = Heading(me), fx = -sinf(h), fy = cosf(h);
+            // Moto (Angel, Pizzaboy, PCJ, Faggio, Freeway, Sanchez) : le constructeur de CBike.
+            bool bike = MI_CAR == 166 || MI_CAR == 178 || (MI_CAR >= 191 && MI_CAR <= 193) || MI_CAR == 198;
             void *v = VehicleAlloc();
-            AutomobileCtor(v, MI_CAR, 1);
+            if (bike) BikeCtor(v, MI_CAR, VEHICLE_MISSION); else AutomobileCtor(v, MI_CAR, 1);
             Pos(v) = { Pos(me).x + fx * 2.5f, Pos(me).y + fy * 2.5f, Pos(me).z + 0.3f };
             SetHeadingMatrix(v, h);
             SetEntityStatus(v, STATUS_ABANDONED);
             WorldAdd(v);
             car = v; RegisterReference(v, &car);
             void *w = VehicleAlloc();
-            AutomobileCtor(w, MI_CAR, 1);
+            AutomobileCtor(w, 130, 1);   // cible eclairee : une voiture
             Pos(w) = { Pos(me).x + fx * 11.0f + fy * 1.5f, Pos(me).y + fy * 11.0f - fx * 1.5f, Pos(me).z + 0.3f };
             SetHeadingMatrix(w, h + 1.5708f);
             SetEntityStatus(w, STATUS_ABANDONED);
