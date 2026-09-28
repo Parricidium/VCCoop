@@ -134,6 +134,7 @@ void ApplyVehicleDamage(uint32_t id, float damage)
 {
     NetVehicle *e = FindById(id);
     if (!e || e->owner != g_localId || !e->veh || damage <= 0.0f || EntityStatus(e->veh) == STATUS_WRECKED) return;
+    if (Field<uint8_t>(e->veh, 0x53) & 0x02) return;   // pare-balles (SET_CAR_PROOFS des missions)
     float &h = VehHealth(e->veh);
     h -= damage;
     if (h < 0.0f) h = 0.0f;
@@ -166,6 +167,11 @@ static void SendVehicle(NetVehicle &e)
     m.time = GetTickCount();
     m.ambient = e.ambient && m.driver == 0xFF;   // une voiture conduite par un joueur n'est jamais "de la circulation"
     m.wrecked = EntityStatus(v) == STATUS_WRECKED;
+    uint8_t f9 = Field<uint8_t>(v, 0x1F9);
+    m.vflags = ((f9 & 0x40) ? 1 : 0) | ((f9 & 0x10) ? 2 : 0) | (Field<uint8_t>(v, 0x245) ? 4 : 0) | (Field<int16_t>(v, 0x240) ? 8 : 0) |
+               (VehClass(v) == VCLASS_CAR && (Field<uint8_t>(v, 0x501) & 1) ? 16 : 0);
+    m.doorLock = (int8_t)Field<int>(v, 0x230);
+    if (VehClass(v) == VCLASS_BIKE) { m.lean = Field<float>(v, 0x46C); m.pedLean = Field<float>(v, 0x478); }
     // Station : celle qu'ecoute le conducteur (cMusicManager 0x980038, station en cours +0x3984), sinon celle du vehicule.
     if (m.vclass == VCLASS_CAR) memcpy(m.damage, (uint8_t *)v + 0x2A0, sizeof(m.damage));
     m.radio = drv && drv == FindPlayerPed() ? (uint8_t)*(int *)(0x980038 + 0x3984) : Field<uint8_t>(v, 0x23C);
@@ -175,6 +181,16 @@ static void SendVehicle(NetVehicle &e)
     else if (m.vclass != VCLASS_BOAT) for (int i = 0; i < 4; i++) m.wheelSpin[i] = Field<float>(v, 0x4F0 + i * 4) / step;
     NetSendToAll(&m, sizeof(m));
     e.lastSend = GetTickCount();
+}
+
+// Copie : gelee pour la physique du jeu (CPhysical bIsFrozen, 0x11B bit 0 : ApplyMoveSpeed/ApplyTurnSpeed ne la
+// deplacent plus, verifie dans l'exe 0x4B877D...) et a l'epreuve des explosions locales (0x52 bit 0x02 ; elle
+// explose quand son proprietaire l'annonce, EXPLODE_CAR). Sa vitesse reste celle recue : roues, son du moteur et
+// pose du motard (pied a terre sous 0,02) en dependent.
+static void SetCopyFlags(void *v, bool copy)
+{
+    if (copy) { Field<uint8_t>(v, 0x11B) |= 0x01; Field<uint8_t>(v, 0x52) |= 0x02; }
+    else { Field<uint8_t>(v, 0x11B) &= ~0x01; Field<uint8_t>(v, 0x52) &= ~0x02; }
 }
 
 // --- Copies des vehicules distants ---
@@ -200,6 +216,7 @@ static void *CreateCopy(const MsgVehicle &m)
     Pos(v) = { m.pos[0], m.pos[1], m.pos[2] };
     SetEntityStatus(v, STATUS_ABANDONED);
     Field<uint8_t>(v, 0x53) |= 0x08;   // bCollisionProof : ses degats sont ceux du proprietaire (SyncDamage)
+    SetCopyFlags(v, true);
     WorldAdd(v);
     Log("vehicules : copie de %08X (modele %d, classe %d, couleurs %d/%d -> %d/%d) creee", m.id, m.model, m.vclass,
         m.color1, m.color2, Field<uint8_t>(v, 0x1A0), Field<uint8_t>(v, 0x1A1));
@@ -283,10 +300,12 @@ static void ApplyState(NetVehicle &e)
     e.appliedHealth = m.health;
     // Degats : ceux du proprietaire (2 fois par seconde au plus, une reparation + reapplication coute un peu).
     Field<uint8_t>(v, 0x53) |= 0x08;   // bCollisionProof : pas de degats de choc chez nous pour une copie
+    SetCopyFlags(v, true);
     if (m.vclass == VCLASS_CAR && VehClass(v) == VCLASS_CAR && GetTickCount() - e.lastDamageSync > 500) {
         e.lastDamageSync = GetTickCount();
         SyncDamage(v, m.damage);
     }
+    Field<int>(v, 0x230) = m.doorLock;   // verrou : on ne monte pas dans une copie que l'original refuse
     // Radio : celle que le conducteur a choisie (ou eteinte). Passager : on l'impose a notre musique, comme
     // SET_RADIO_CHANNEL (041E) des missions.
     Field<uint8_t>(v, 0x23C) = m.radio;
@@ -385,12 +404,24 @@ void VehiclesAfterProcess()
         Field<Vec3>(v, 0x24) = up;
         // "right" recalcule pour une matrice bien orthogonale apres le melange des deux etats.
         Field<Vec3>(v, 0x04) = { n.fwd[1] * up.z - n.fwd[2] * up.y, n.fwd[2] * up.x - n.fwd[0] * up.z, n.fwd[0] * up.y - n.fwd[1] * up.x };
-        // Pas de vitesse pour la physique du jeu : la position vient du reseau a chaque image. Avec la vitesse recue
-        // (jusqu'a 30 m/s), le jeu deplacait la copie d'une image (bosses, collisions avec la route : jusqu'a 16 cm
-        // de haut en bas) avant qu'on la remette en place : tremblements et etincelles pour le passager (JD, 27/09).
-        // Ceux qui veulent savoir si elle roule lisent la vitesse recue (NetVehicleMoving).
-        MoveSpeed(v) = { 0, 0, 0 };
-        TurnSpeed(v) = { 0, 0, 0 };
+        // Copie gelee (SetCopyFlags) : la physique du jeu ne la deplace plus (avant 28k elle integrait la vitesse
+        // recue : 10-16 cm de haut en bas par image, tremblements et etincelles pour le passager), mais la vitesse
+        // recue reste posee : roues au sol qui tournent, son du moteur, pose du motard, CanPedExitCar.
+        SetCopyFlags(v, true);
+        MoveSpeed(v) = { n.vel[0], n.vel[1], n.vel[2] };
+        TurnSpeed(v) = { m.turn[0], m.turn[1], m.turn[2] };
+        // Phares, moteur, sirene, klaxon, taxi : l'etat "abandonne" les eteint chez nous a chaque image.
+        uint8_t &f9 = Field<uint8_t>(v, 0x1F9);
+        f9 = (f9 & ~0x50) | ((m.vflags & 1) ? 0x40 : 0) | ((m.vflags & 2) ? 0x10 : 0);
+        Field<uint8_t>(v, 0x245) = (m.vflags & 4) ? 1 : 0;
+        if (m.vflags & 8) Field<int16_t>(v, 0x240) = 2;
+        if (m.vclass == VCLASS_CAR && VehClass(v) == VCLASS_CAR) Field<uint8_t>(v, 0x501) = (Field<uint8_t>(v, 0x501) & ~1) | ((m.vflags & 16) ? 1 : 0);
+        // Moto : inclinaison et penchement du pilote (sinon elle prenait les virages droite comme un i).
+        if (m.vclass == VCLASS_BIKE && VehClass(v) == VCLASS_BIKE) {
+            Field<float>(v, 0x46C) = Field<float>(v, 0x470) = m.lean;
+            Field<float>(v, 0x478) = m.pedLean;
+            Field<uint8_t>(v, 0x2C0) = 0;   // bLeanMatrixClean : matrice d'inclinaison a refaire au rendu
+        }
         Field<float>(v, 0x1EC) = m.steer;
         Field<float>(v, 0x1F0) = m.gas;
         Field<float>(v, 0x1F4) = m.brake;
@@ -452,11 +483,12 @@ static void PlayerLeft(int who)
     int dropped = 0, adopted = 0;
     for (auto &e : g_vehs) {
         if (!e.used || e.owner != who) continue;
-        bool inside = me && InVehicle(me) && PedVehicle(me) == e.veh;
+        bool inside = me && InVehicle(me) && PedVehicle(me) == e.veh && VehDriver(e.veh) == me;   // passager : on ne la reprend pas
         if (e.veh && (!e.ours || inside)) {
             e.owner = (uint8_t)g_localId;
             e.ambient = false;
             Field<uint8_t>(e.veh, 0x53) &= ~0x08;
+            SetCopyFlags(e.veh, false);
             adopted++;
         } else {
             DeleteCopy(e);
@@ -511,12 +543,14 @@ void VehiclesFrame(bool inGame)
                 e->owner = (uint8_t)g_localId;
                 Bind(*e, myVeh);
                 Field<uint8_t>(myVeh, 0x53) &= ~0x08;   // ancienne copie gardee (proprietaire parti au menu) : s'abime a nouveau
+                SetCopyFlags(myVeh, false);
                 Log("vehicules : je prends %08X (modele %d, couleurs %d/%d)", e->id, ModelIndex(myVeh),
                     Field<uint8_t>(myVeh, 0x1A0), Field<uint8_t>(myVeh, 0x1A1));
             }
         } else if (e->owner != g_localId) {
             e->owner = (uint8_t)g_localId;
             Field<uint8_t>(myVeh, 0x53) &= ~0x08;   // c'etait une copie : elle peut de nouveau s'abimer
+            SetCopyFlags(myVeh, false);
             Log("vehicules : je reprends %08X", e->id);
         }
         // Voiture de la circulation partagee prise par l'hote : elle n'est plus "ambiante" (un invite a plus de

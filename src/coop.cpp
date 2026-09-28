@@ -92,6 +92,7 @@ static void DestroyPuppet(Puppet &pp)
     if (!pp.ped) return;
     void *ped = pp.ped;
     RemovePlayerBlip(pp.blip);
+    ForgetProjectileSource(ped);
     CleanUpOldReference(ped, &pp.ped);
     if (InVehicle(ped)) WarpOutOfVehicle(ped, NULL);
     WorldRemove(ped);
@@ -276,7 +277,7 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
 {
     const MsgState &s = np.state;
     void *ped = pp.ped;
-    Health(ped) = 100.0f;
+    Health(ped) = (s.down || s.health <= 0.0f) ? 0.0f : 100.0f;   // mort chez lui : l'IA cesse de le viser
     AreaCode(ped) = s.area;
     HoldWeapon(ped, s.weapon);
     (void)np;
@@ -482,7 +483,7 @@ static void SendLocalState(bool inGame)
         s.animGroup = (uint8_t)Field<int>(ped, 0x1F4);
         s.cutscene = *(bool *)0xA10AB2 ? 1 : 0;
         {
-            int wb = *(int *)(0x94AD28 + 0xCC);   // CWorld::Players[0].m_nPlayerState : 1 mort, 2 arrete
+            int wb = *(uint8_t *)(0x94AD28 + 0xCC);   // CWorld::Players[0].m_WBState (octet) : 1 mort, 2 arrete
             s.down = (Health(ped) <= 0.0f || PedState(ped) == 54 || PedState(ped) == 55 || wb == 1 || wb == 2) ? 1 : 0;
         }
         s.weapon = (uint8_t)WeaponTypeInSlot(ped, CurrentWeaponSlot(ped));
@@ -491,7 +492,7 @@ static void SendLocalState(bool inGame)
         int st = PedState(ped);
         if (!InVehicle(ped) && PedVehicle(ped) && EnteringState(st)) {
             s.enterId = NetVehicleId(PedVehicle(ped));
-            s.enterSeat = (g_boarding == PedVehicle(ped) && g_boardingSeat) || (VehDriver(PedVehicle(ped)) && VehDriver(PedVehicle(ped)) != ped) ? 1 : 0;
+            s.enterSeat = Field<int>(ped, 0x164) == 0x11 ? 1 : 0;   // objectif "monter en passager" (F/G) ; braquer = volant
         }
         s.exiting = InVehicle(ped) && ExitingState(st);
         s.aiming = IsAimingGun(ped) ? 1 : 0;
@@ -540,11 +541,9 @@ static void OnWorld(const MsgWorld &w)
     }
     // Meteo : on impose le temps de l'hote (celui vers lequel il va, ou celui qu'un script a force).
     short want = w.forcedWeather >= 0 ? w.forcedWeather : w.newWeather;
-    if (ForcedWeather() != want) {
-        ForcedWeather() = want;
-        OldWeather() = w.oldWeather;
-        NewWeather() = w.newWeather;
-    }
+    ForcedWeather() = want;
+    OldWeather() = w.oldWeather;   // a chaque message : sinon on passait l'heure avant l'hote et la transition divergeait
+    NewWeather() = w.newWeather;
 }
 
 // Invite : a son arrivee en partie, apres un chargement, et au debut / a la fin de chaque mission de l'hote,
@@ -563,7 +562,7 @@ static void GatherToHost(bool inGame)
     if (inGame && !g_cfg.host) {
         void *me = FindPlayerPed();
         uint8_t *info = (uint8_t *)0x94AD28;   // CWorld::Players[0] ; m_nPlayerState +0xCC (1 mort, 2 arrete)
-        int wb = *(int *)(info + 0xCC);
+        int wb = info[0xCC];
         bool down = me && (Health(me) <= 0.0f || PedState(me) == 54 || PedState(me) == 55 || wb == 1 || wb == 2);
         if (down) g_localDownUntil = GetTickCount() + 4000;
         if (down && !wasDown) {

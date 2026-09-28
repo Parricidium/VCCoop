@@ -195,7 +195,7 @@ bool WarpIntoSeat(void *ped, void *veh, int seat)
         Field<uint8_t>(ped, 0x51) &= ~0x01;   // bUsesCollision
         AddInCarAnims(ped, veh, false);
         // Pas ejecte quand un conducteur monte avec l'animation (PedSetInCarCB donne "descendre" aux passagers sans ce bit).
-        if (ped != FindPlayerPed()) Field<uint8_t>(ped, 0x156) |= 0x08;
+        if (ped != FindPlayerPed()) Field<uint8_t>(ped, 0x156) |= 0x80;   // bStayInCarOnJack (0x08 = otage : cris de panique)
     }
     Field<uint8_t>(ped, 0x52) |= 0x04;   // visible
     return true;
@@ -209,7 +209,7 @@ void WarpOutOfVehicle(void *ped, const Vec3 *at)
 {
     if (EnterInProgress(ped)) AbortEnter(ped);   // QuitEnteringCar : compteur et drapeau de porte du vehicule rendus
     if (!InVehicle(ped) && !PedVehicle(ped) && !Field<void *>(ped, 0x1F8)) return;   // rien a defaire
-    if (ped != FindPlayerPed()) Field<uint8_t>(ped, 0x156) &= ~0x08;
+    if (ped != FindPlayerPed()) Field<uint8_t>(ped, 0x156) &= ~0x80;
     void *veh = InVehicle(ped) ? PedVehicle(ped) : NULL;
     if (veh) {
         if (VehDriver(veh) == ped) {

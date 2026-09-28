@@ -108,6 +108,63 @@ static const OpSig g_ops[] = {
     // reference dans une globale -> 'g'), decor echange, garages ouverts/fermes (garage cree par le script
     // principal : reference dans une globale, la meme chez l'invite).
     { 0x034E, "Ovvvvvvv", "SLIDE_OBJECT" },
+    { 0x0360, "g", "OPEN_GARAGE" },
+    { 0x0361, "g", "CLOSE_GARAGE" },
+    { 0x0299, "g", "ACTIVATE_GARAGE" },
+    { 0x02B9, "g", "DEACTIVATE_GARAGE" },
+    { 0x021B, "gC", "SET_TARGET_CAR_FOR_MISSION_GARAGE" },
+    { 0x014C, "gv", "SWITCH_CAR_GENERATOR" },
+    { 0x035C, "OCvvv", "PLACE_OBJECT_RELATIVE_TO_CAR" },
+    { 0x0566, "Ov", "SET_OBJECT_AREA_VISIBLE" },
+    { 0x01C4, "O", "MARK_OBJECT_AS_NO_LONGER_NEEDED" },
+    // Textes, sons, explosions scriptees (auteur nul : chacun les subit chez lui une fois)
+    { 0x03D5, "l", "CLEAR_THIS_PRINT" },
+    { 0x03D6, "l", "CLEAR_THIS_BIG_PRINT" },
+    { 0x03EB, "", "CLEAR_SMALL_PRINTS" },
+    { 0x02FD, "lvvvv", "PRINT_WITH_2_NUMBERS_NOW" },
+    { 0x018C, "vvvv", "ADD_ONE_OFF_SOUND" },
+    { 0x020C, "vvvv", "ADD_EXPLOSION" },
+    { 0x0565, "vvvv", "ADD_EXPLOSION_NO_SOUND" },
+    { 0x04F7, "gvvl", "DISPLAY_NTH_ONSCREEN_COUNTER_WITH_STRING" },
+    { 0x0396, "v", "FREEZE_ONSCREEN_TIMER" },
+    // Marqueurs radar (anciennes variantes et pickups / objets)
+    { 0x0167, "vvvvvb", "ADD_BLIP_FOR_COORD_OLD" },
+    { 0x0161, "Cvvb", "ADD_BLIP_FOR_CAR_OLD" },
+    { 0x0162, "Pvvb", "ADD_BLIP_FOR_CHAR_OLD" },
+    { 0x0188, "Ob", "ADD_BLIP_FOR_OBJECT" },
+    { 0x03DC, "Kb", "ADD_BLIP_FOR_PICKUP" },
+    { 0x0570, "vvvvb", "ADD_SHORT_RANGE_SPRITE_BLIP_FOR_CONTACT_POINT" },
+    { 0x0166, "Bv", "DIM_BLIP" },
+    // Camera et cinematiques
+    { 0x03C8, "", "SET_CAMERA_IN_FRONT_OF_PLAYER" },
+    { 0x0003, "v", "SHAKE_CAM" },
+    { 0x0460, "vv", "SET_INTERPOLATION_PARAMETERS" },
+    { 0x04BC, "l", "SET_CUTSCENE_ANIM_TO_LOOP" },
+    { 0x0569, "l", "LOAD_UNCOMPRESSED_ANIM" },
+    { 0x03AD, "v", "SWITCH_RUBBISH" },
+    { 0x04F9, "vv", "SET_EXTRA_COLOURS" },
+    { 0x04FA, "v", "CLEAR_EXTRA_COLOURS" },
+    // Joueur (chacun le sien : index 0 = soi) et monde
+    { 0x0171, "vv", "SET_PLAYER_HEADING" },
+    { 0x012A, "vvvv", "WARP_PLAYER_FROM_CAR_TO_COORD" },
+    { 0x01F7, "vv", "SET_POLICE_IGNORE_PLAYER" },
+    { 0x01F0, "v", "SET_MAX_WANTED_LEVEL" },
+    { 0x01B1, "vvv", "GIVE_WEAPON_TO_PLAYER" },
+    { 0x01B8, "vv", "SET_CURRENT_PLAYER_WEAPON" },
+    { 0x016C, "vvvv", "ADD_HOSPITAL_RESTART" },
+    { 0x016D, "vvvv", "ADD_POLICE_RESTART" },
+    { 0x03F1, "vv", "SET_THREAT_FOR_PED_TYPE" },
+    { 0x03F2, "vv", "CLEAR_THREAT_FOR_PED_TYPE" },
+    { 0x01E7, "vvvvvv", "SWITCH_ROADS_ON" },
+    { 0x01E8, "vvvvvv", "SWITCH_ROADS_OFF" },
+    { 0x022A, "vvvvvv", "SWITCH_PED_ROADS_ON" },
+    { 0x022B, "vvvvvv", "SWITCH_PED_ROADS_OFF" },
+    // Vehicules et personnages de mission (copies)
+    { 0x020A, "Cv", "LOCK_CAR_DOORS" },
+    { 0x0568, "Pv", "SET_CHAR_NEVER_TARGETTED" },
+    { 0x04F5, "Pvv", "SET_CHAR_AS_PLAYER_FRIEND" },
+    // Fils du script principal lances par une mission (achats de commerces apres Shakedown...) : liste blanche.
+    { 0x004F, "*", "START_NEW_SCRIPT" },
     { 0x03B6, "*", "SWAP_NEAREST_BUILDING_MODEL" },
     { 0x02FA, "gv", "CHANGE_GARAGE_TYPE" },
     // Minuteurs et compteurs de mission a l'ecran : le jeu lit la variable en direct (et decompte lui-meme le
@@ -182,7 +239,11 @@ struct ActiveBlip { uint32_t hostBlip; int len; uint8_t cmd[64]; };
 static ActiveBlip g_activeBlips[64];
 static int g_activeBlipCount;
 
-static bool CreatesBlip(uint16_t op) { return op == 0x0186 || op == 0x0187 || op == 0x018A || op == 0x02A7 || op == 0x02A8 || op == 0x04CE; }
+static bool CreatesBlip(uint16_t op)
+{
+    return op == 0x0186 || op == 0x0187 || op == 0x018A || op == 0x02A7 || op == 0x02A8 || op == 0x04CE ||
+           op == 0x0167 || op == 0x0161 || op == 0x0162 || op == 0x0188 || op == 0x03DC || op == 0x0570;
+}
 
 static void RememberActiveBlip(uint16_t op, const uint8_t *cmd, int len, uint32_t h)
 {
@@ -337,7 +398,7 @@ void MirrorAfter(void *script)
         NetSendReliable(buf, len);
         RememberActiveBlip(sig->op, buf, len, entity);
         uint16_t o = sig->op;
-        if (g_params[0].kind == 'g' && (o == 0x014E || o == 0x014F || o == 0x0150 || o == 0x0151 || o == 0x03C3 || o == 0x03C4)) TrackTimer(o, (uint16_t)g_params[0].where);
+        if (g_params[0].kind == 'g' && (o == 0x014E || o == 0x014F || o == 0x0150 || o == 0x0151 || o == 0x03C3 || o == 0x03C4 || o == 0x04F7)) TrackTimer(o, (uint16_t)g_params[0].where);
     }
     // Autotest : dernier objectif / point de contact poses par les missions (coordonnees x, y, z en tete).
     if (sig->op == 0x018A || sig->op == 0x02A7) {
@@ -385,7 +446,15 @@ void MirrorMissionStart(int mission)
 // globales contiennent aussi des references d'entites (marqueurs, objets, pickups) propres a chaque machine, qu'il
 // ne faut surtout pas ecraser, et des coordonnees que le script de l'invite calcule lui-meme.
 // -1..255 : au-dela, une valeur peut etre une reference de pool (case << 8 | compteur, 256 des la case 1).
-static bool IsFlagValue(uint32_t v) { return (int32_t)v >= -1 && (int32_t)v <= 255; }
+// Une reference de pool de la case 0 vaut 1..127 (identifiant sur 7 bits) : si c'est un personnage ou un vehicule
+// vivant chez l'hote, ce n'est pas un drapeau (l'invite l'aurait prise pour une de ses entites : plantage).
+static bool LiveSlot0Handle(uint32_t v)
+{
+    if (v < 1 || v > 127) return false;
+    Pool *vp = VehiclePool(), *pp = PedPool();
+    return (vp && vp->size > 0 && vp->flags[0] == (uint8_t)v) || (pp && pp->size > 0 && pp->flags[0] == (uint8_t)v);
+}
+static bool IsFlagValue(uint32_t v) { return (int32_t)v >= -1 && (int32_t)v <= 255 && !LiveSlot0Handle(v); }
 
 // peer < 0 : a tous ; changedOnly : seulement ce qui differe de la photo (sinon tout ce qui est non nul).
 static void SendGlobals(int peer, bool changedOnly)
@@ -538,8 +607,8 @@ void MirrorOnTimers(const uint8_t *buf, int len)
 // ======================================================================= Invite : rejeu
 // Correspondances hote -> invite pour les marqueurs et objets crees par les commandes rejouees.
 struct HandlePair { uint32_t host, guest; };
-static HandlePair g_blips[128], g_objs[128], g_pickups[128];
-static int g_blipCount, g_objCount, g_pickupCount;
+static HandlePair g_blips[128], g_objs[128], g_pickups[128], g_props[32];
+static int g_blipCount, g_objCount, g_pickupCount, g_propCount;
 
 static bool MapGet(HandlePair *m, int n, uint32_t host, uint32_t &guest)
 {
@@ -580,7 +649,7 @@ static bool Translate(char kind, uint32_t host, uint32_t &guest)
     case 'C': return GuestVehicleForHost(host, guest);
     case 'O': return MapGet(g_objs, g_objCount, host, guest);
     case 'B': return MapGet(g_blips, g_blipCount, host, guest);
-    case 'K': return MapGet(g_pickups, g_pickupCount, host, guest);
+    case 'K': return MapGet(g_pickups, g_pickupCount, host, guest) || MapGet(g_props, g_propCount, host, guest);
     }
     guest = host;
     return true;
@@ -647,7 +716,34 @@ static bool Execute(const uint8_t *d, int len, bool force)
         }
     }
     // En pleine course de taxi (ou autre mission secondaire jouee ici) : la mission de l'hote ne nous teleporte pas.
-    if (op == 0x0055 && d[0] == RL_SCRIPT_CMD && GuestSideMission()) { Log("miroir : teleportation de l'hote ignoree (mission secondaire en cours)"); return true; }
+    if ((op == 0x0055 || op == 0x012A) && d[0] == RL_SCRIPT_CMD && GuestSideMission()) { Log("miroir : teleportation de l'hote ignoree (mission secondaire en cours)"); return true; }
+    // Objet que la mission de l'hote ne gere plus : il reste chez lui (pas detruit a la fin de mission), donc chez nous aussi.
+    if (op == 0x01C4 && d[0] == RL_SCRIPT_CMD && n >= 1) { uint32_t h; memcpy(&h, d + 5, 4); MapDel(g_objs, g_objCount, h); return true; }
+    // Eclairage d'interieur : seulement si l'on est dans un interieur (on suit la zone de l'hote).
+    if (op == 0x04F9 && d[0] == RL_SCRIPT_CMD && *(int *)0x978810 == 0) return true;
+    // Arme donnee : son modele doit etre charge (sinon plantage dans les animations, 0x4056A3).
+    if (op == 0x01B1 && d[0] == RL_SCRIPT_CMD && n >= 2 && d[9] == 'v') {
+        int32_t w; memcpy(&w, d + 10, 4);
+        if (w > 0 && w < 40) {
+            int model = *(int *)(0x782A14 + w * 0x64 + 0x54);
+            if (model > 0 && !HasModelLoaded(model)) { RequestModel(model, 1); ((void(__cdecl *)(bool))0x40B5F0)(false); }
+            if (model > 0 && !HasModelLoaded(model)) { if (!force) return false; Log("miroir : modele d'arme %d pas charge, arme non donnee", model); return true; }
+        }
+    }
+    // Fils du script principal : seulement ceux que rien d'autre ne lance chez l'invite, et une seule fois.
+    if (op == 0x004F && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v') {
+        static const struct { int32_t label; const char *name; } allowed[] = {
+            { 51691, "coubuy" }, { 51785, "carbuy" }, { 51925, "pornbuy" }, { 52019, "icebuy" }, { 52167, "taxibuy" },
+            { 52315, "bankbuy" }, { 52409, "boatbuy" }, { 52549, "strpbuy" }, { 67994, "psave2" }, { 57959, "shoot" },
+            { 53723, "gangmem" }, { 49438, "ambbank" } };
+        int32_t label; memcpy(&label, d + 5, 4);
+        const char *name = NULL;
+        for (auto &a : allowed) if (a.label == label) name = a.name;
+        if (!name) return true;
+        for (void *sc = ActiveScripts(); sc; sc = Field<void *>(sc, 0))
+            if (!_strnicmp((char *)sc + 8, name, 8)) return true;   // deja la (sauvegarde chargee)
+        Log("miroir : fil %s lance chez nous (comme chez l'hote)", name);
+    }
     uint8_t *ss = ScriptSpace();
     int w = SCRATCH;
     memcpy(ss + w, &op, 2); w += 2;
@@ -663,7 +759,7 @@ static bool Execute(const uint8_t *d, int len, bool force)
             ss[w] = 2;
             *(uint16_t *)(ss + w + 1) = (uint16_t)v;
             w += 3;
-            if (op == 0x014E || op == 0x014F || op == 0x0150 || op == 0x0151 || op == 0x03C3 || op == 0x03C4) GuestTrackTimer(op, (uint16_t)v);
+            if (op == 0x014E || op == 0x014F || op == 0x0150 || op == 0x0151 || op == 0x03C3 || op == 0x03C4 || op == 0x04F7) GuestTrackTimer(op, (uint16_t)v);
             continue;
         }
         if (kind == 'b' || kind == 'o' || kind == 'k' || kind == 'x' || kind == 'y' || kind == 'z') {
@@ -682,7 +778,7 @@ static bool Execute(const uint8_t *d, int len, bool force)
             continue;
         }
         // Teleportation du joueur par la mission : chaque invite est pose un peu a cote (pas sur l'hote).
-        if (op == 0x0055 && i == 1) { float x; memcpy(&x, &v, 4); x += 1.5f * g_localId; memcpy(&v, &x, 4); }
+        if ((op == 0x0055 || op == 0x012A) && i == 1) { float x; memcpy(&x, &v, 4); x += 1.5f * g_localId; memcpy(&v, &x, 4); }
         uint32_t g;
         if (!Translate(kind, v, g)) {
             if (!force) return false;
@@ -706,7 +802,7 @@ static bool Execute(const uint8_t *d, int len, bool force)
     memset(g_script + 0x30, 0, 16 * 4);
     Field<int>(g_script, 0x10) = SCRATCH;
     CallOriginalProcessOneCommand(g_script);
-    if (op == 0x0055) {   // teleporte avec l'hote : sa zone visible (recue juste avant) s'applique
+    if (op == 0x0055 || op == 0x012A) {   // teleporte avec l'hote : sa zone visible (recue juste avant) s'applique
         g_lastTeleportAt = GetTickCount();
         if (g_pendingArea >= 0 && GetTickCount() - g_pendingAreaAt < 5000) SetArea(g_pendingArea);
         g_pendingArea = -1;
@@ -715,6 +811,11 @@ static bool Execute(const uint8_t *d, int len, bool force)
     for (int i = 0; i < outCount; i++) {
         uint32_t g = Field<uint32_t>(g_script, 0x30 + i * 4);
         if (outs[i].gofs >= GLOBALS_BEGIN && outs[i].gofs + 4 <= GLOBALS_END) *(uint32_t *)(ss + outs[i].gofs) = g;
+        if (outs[i].kind == 'k' && op == 0x0518) {   // icone "a vendre" : permanente, achetable par nous
+            MapSet(g_props, g_propCount, 32, outs[i].host, g);
+            RegisterPropertyPickup(g);
+            continue;
+        }
         if (outs[i].kind == 'b') MapSet(g_blips, g_blipCount, 128, outs[i].host, g);
         else if (outs[i].kind == 'k') MapSet(g_pickups, g_pickupCount, 128, outs[i].host, g);
         else MapSet(g_objs, g_objCount, 128, outs[i].host, g);
@@ -851,7 +952,7 @@ void MirrorFrame(bool inGame)
     }
     if (*(int *)0x978810 != g_mirrorArea) g_mirrorArea = -1;   // le jeu a change de zone lui-meme (porte) : on ne suit plus
     if (!inGame) {
-        g_blipCount = g_objCount = g_pickupCount = 0;
+        g_blipCount = g_objCount = g_pickupCount = g_propCount = 0;
         // Hors partie (salon, chargement), la presentation des missions de l'hote n'a pas de sens : rejouees d'un coup
         // a l'arrivee (cameras fixes, textes, sons de l'intro...), elles faisaient planter la camera. On ne garde que
         // les variables de l'histoire ; l'hote renvoie l'etat complet (et les marqueurs) quand on arrive en partie.

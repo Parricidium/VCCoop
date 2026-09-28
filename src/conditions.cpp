@@ -43,39 +43,46 @@ static bool ModeOk(const MsgState &s, Mode m, bool stopped)
     return true;
 }
 
-// Numerotation (aiguillage des opcodes 200-299, 0x444BE0) :
-//   00EC-00F1 joueur, position 2D : joueur x y rx ry sphere      (+0 / +1 / +2 = tous moyens / a pied / en voiture,
-//   00F2-00F4 joueur pres d'un perso 2D : joueur perso rx ry sphere          +3.. = "arrete")
-//   00F5-00FA joueur, position 3D : joueur x y z rx ry rz sphere
-//   00FB-00FD joueur pres d'un perso 3D : joueur perso rx ry rz sphere
-//   00FE-0103 / 0104-0106 : les memes en 2D pour un PERSONNAGE (les missions y mettent souvent $PLAYER_ACTOR).
-static bool IsPlayerLocate(uint16_t op) { return op >= 0x00EC && op <= 0x00FD; }
-static bool IsCharLocate(uint16_t op) { return op >= 0x00FE && op <= 0x0106; }
+// Numerotation (verifiee le 28/09 : premier parametre des LOCATE dans main.scm = $PLAYER_CHAR ou un personnage) :
+//   00E3-00E8 joueur 2D : joueur x y rx ry sphere          (+0 / +1 / +2 = tous moyens / a pied / en voiture,
+//   00E9-00EB joueur pres d'un perso 2D                      +3.. = "arrete")
+//   00EC-00F1 PERSONNAGE 2D : perso x y rx ry sphere (les missions y mettent souvent $PLAYER_ACTOR)
+//   00F2-00F4 perso pres d'un perso 2D
+//   00F5-00FA joueur 3D : joueur x y z rx ry rz sphere
+//   00FB-00FD joueur pres d'un perso 3D
+//   00FE-0103 PERSONNAGE 3D ; 0104-0106 perso pres d'un perso 3D
+// (Avant : 00E3-00E8 jamais elargis, 00EC-00F1 pris pour du "joueur", 00FE-0103 lus comme du 2D : les invites
+// recevaient des cylindres qui n'existaient pas chez l'hote, d'un rayon egal a la coordonnee z.)
+static bool IsCharLocate(uint16_t op) { return (op >= 0x00EC && op <= 0x00F4) || (op >= 0x00FE && op <= 0x0106); }
+static bool Is2D(uint16_t op) { return (op >= 0x00E3 && op <= 0x00E8) || (op >= 0x00EC && op <= 0x00F1); }
+static bool Is3D(uint16_t op) { return (op >= 0x00F5 && op <= 0x00FA) || (op >= 0x00FE && op <= 0x0103); }
 
 // Vrai si un invite (au moins) remplit la condition op, parametres dans ScriptParams.
 static bool AnyGuestSatisfies(uint16_t op)
 {
     // Un LOCATE de personnage ne concerne les joueurs que s'il vise le Tommy de l'hote : on le lit comme
     // le LOCATE "joueur" correspondant (meme disposition des parametres apres le premier).
-    if (IsCharLocate(op)) op = (uint16_t)(op - 0x00FE + 0x00EC);
-    // "Joueur pres d'un personnage" (00F2-00F4, 00FB-00FD) : c'est presque toujours la logique d'un accompagnateur
-    // (Ken, Lance... le suivre, l'attendre). Rempli par un invite reste a cote de lui, le script de l'accompagnateur
-    // croyait l'hote la et la mission de l'hote attendait sans fin (The Party). Reserve a l'hote.
-    if ((op >= 0x00F2 && op <= 0x00F4) || (op >= 0x00FB && op <= 0x00FD)) return false;
+    if (op >= 0x00EC && op <= 0x00F1) op = (uint16_t)(op - 0x00EC + 0x00E3);
+    if (op >= 0x00FE && op <= 0x0103) op = (uint16_t)(op - 0x00FE + 0x00F5);
+    // "Pres d'un personnage" (00E9-00EB, 00F2-00F4, 00FB-00FD, 0104-0106) : presque toujours la logique d'un
+    // accompagnateur (Ken, Lance... le suivre, l'attendre). Rempli par un invite reste a cote de lui, la mission de
+    // l'hote attendait sans fin (The Party). Reserve a l'hote.
+    if ((op >= 0x00E9 && op <= 0x00EB) || (op >= 0x00F2 && op <= 0x00F4) || (op >= 0x00FB && op <= 0x00FD) || (op >= 0x0104 && op <= 0x0106)) return false;
     for (int i = 1; i < MAX_PLAYERS; i++) {
         const NetPlayer &g = g_players[i];
-        if (!g.connected || !g.state.inGame) continue;
+        if (!g.connected || !g.state.inGame || GetTickCount() - g.lastStateAt > 3000) continue;   // fige (chargement) : ne compte pas
         const MsgState &s = g.state;
-        if (op >= 0x00EC && op <= 0x00F1) {
-            if (ModeOk(s, (Mode)((op - 0x00EC) % 3), op >= 0x00EF) && InBox(s, F(1), F(2), 0, F(3), F(4), 0, false)) return true;
-        } else if (op >= 0x00F2 && op <= 0x00F4) {
-            Vec3 c;
-            if (EntityPos((uint32_t)P(1), c) && ModeOk(s, (Mode)(op - 0x00F2), false) && InBox(s, c.x, c.y, 0, F(2), F(3), 0, false)) return true;
+        if (op >= 0x00E3 && op <= 0x00E8) {
+            if (ModeOk(s, (Mode)((op - 0x00E3) % 3), op >= 0x00E6) && InBox(s, F(1), F(2), 0, F(3), F(4), 0, false)) return true;
         } else if (op >= 0x00F5 && op <= 0x00FA) {
             if (ModeOk(s, (Mode)((op - 0x00F5) % 3), op >= 0x00F8) && InBox(s, F(1), F(2), F(3), F(4), F(5), F(6), true)) return true;
-        } else if (op >= 0x00FB && op <= 0x00FD) {
-            Vec3 c;
-            if (EntityPos((uint32_t)P(1), c) && ModeOk(s, (Mode)(op - 0x00FB), false) && InBox(s, c.x, c.y, c.z, F(2), F(3), F(4), true)) return true;
+        } else if (op == 0x0056) {   // IS_PLAYER_IN_AREA_2D joueur x1 y1 x2 y2 sphere
+            float x1 = F(1) < F(3) ? F(1) : F(3), x2 = F(1) < F(3) ? F(3) : F(1), y1 = F(2) < F(4) ? F(2) : F(4), y2 = F(2) < F(4) ? F(4) : F(2);
+            if (s.pos[0] >= x1 && s.pos[0] <= x2 && s.pos[1] >= y1 && s.pos[1] <= y2) return true;
+        } else if (op == 0x0057) {   // IS_PLAYER_IN_AREA_3D joueur x1 y1 z1 x2 y2 z2 sphere
+            float x1 = F(1) < F(4) ? F(1) : F(4), x2 = F(1) < F(4) ? F(4) : F(1), y1 = F(2) < F(5) ? F(2) : F(5), y2 = F(2) < F(5) ? F(5) : F(2);
+            float z1 = F(3) < F(6) ? F(3) : F(6), z2 = F(3) < F(6) ? F(6) : F(3);
+            if (s.pos[0] >= x1 && s.pos[0] <= x2 && s.pos[1] >= y1 && s.pos[1] <= y2 && s.pos[2] >= z1 && s.pos[2] <= z2) return true;
         } else if (op == 0x00DC) {   // IS_PLAYER_IN_CAR joueur voiture
             void *v = s.inVehicle ? NetVehicleById(s.vehicleId) : NULL;
             if (v && VehicleHandle(v) == (uint32_t)P(1)) return true;
@@ -89,7 +96,7 @@ static bool AnyGuestSatisfies(uint16_t op)
     return false;
 }
 
-static bool IsLocate(uint16_t op) { return IsPlayerLocate(op) || IsCharLocate(op); }
+static bool IsLocate(uint16_t op) { return op >= 0x00E3 && op <= 0x0106; }
 
 static uint16_t g_curOp;
 static void *g_curScript;
@@ -110,11 +117,22 @@ static void __fastcall h_UpdateCompareFlag(void *script, void *edx, uint8_t flag
         if (IsPropertyPickup((uint32_t)P(0))) NotePropertyCollected();
         else flag = 0;
     }
-    if (g_cfg.host && !flag && script == g_curScript && Field<bool>(script, 0x85)) {
+    // Hote : une voiture de mission conduite par un invite est une copie tenue immobile par la physique (sa vitesse
+    // vient du reseau) : "arretee ?" doit lire la vitesse recue (IS_CAR_STOPPED 01C1, IS_CAR_STOPPED_IN_AREA 01AB-01AC, LOCATE_STOPPED_CAR 01AE/01B0).
+    if (script == g_curScript && flag && (g_curOp == 0x01C1 || g_curOp == 0x01AB || g_curOp == 0x01AC || g_curOp == 0x01AE || g_curOp == 0x01B0)) {
+        Pool *vp = VehiclePool();
+        uint32_t h = (uint32_t)P(0);
+        int i = (int)(h >> 8);
+        if (i >= 0 && i < vp->size && vp->flags[i] == (uint8_t)(h & 0xFF) && NetVehicleMoving(vp->objects + i * VEHICLE_POOL_ENTRY)) flag = 0;
+    }
+    // Pas sous un NOT (m_bNotFlag +0x82) : "l'hote n'est PAS dans la zone" devenait "AUCUN joueur n'y est", et l'hote
+    // ne pouvait plus remplir "sors de la zone" / "descends de voiture" tant qu'un invite y etait.
+    bool negated = Field<bool>(script, 0x82);
+    if (g_cfg.host && !flag && !negated && script == g_curScript && Field<bool>(script, 0x85)) {
         uint16_t op = g_curOp;
         // Le sujet doit etre l'hote : joueur 0 ($PLAYER_CHAR) ou, pour un LOCATE de personnage, son Tommy.
         bool aboutHost = IsCharLocate(op) ? (uint32_t)P(0) == PedHandle(FindPlayerPed()) : P(0) == 0;
-        if ((IsLocate(op) || op == 0x00DC || op == 0x00DE || op == 0x00E0) && aboutHost && AnyGuestSatisfies(op)) {
+        if ((IsLocate(op) || op == 0x0056 || op == 0x0057 || op == 0x00DC || op == 0x00DE || op == 0x00E0) && aboutHost && AnyGuestSatisfies(op)) {
             flag = 1;
             static uint16_t lastOp;
             static uint32_t lastLog;
@@ -139,8 +157,7 @@ AutotestMarker g_mainMarker, g_missionMarker;
 void ConditionsAfterCommand(void *script, uint16_t op, int ip)
 {
     if (!g_cfg.host) return;
-    bool is2d = (op >= 0x00EC && op <= 0x00F1) || (op >= 0x00FE && op <= 0x0103);
-    bool is3d = op >= 0x00F5 && op <= 0x00FA;
+    bool is2d = Is2D(op), is3d = Is3D(op);
     if (!is2d && !is3d) return;
     int sphere = P(is2d ? 5 : 7);
     if (g_cfg.logScripts) {
@@ -156,7 +173,7 @@ void ConditionsAfterCommand(void *script, uint16_t op, int ip)
     // Autotest : les debuts de mission du script principal sont des LOCATE "a pied" de petit rayon, sans sphere
     // (le marqueur rose est dessine a part) ; ceux des missions ont la sphere.
     bool mission = Field<bool>(script, 0x85);
-    bool onFootSmall = (op == 0x00ED || op == 0x00F6) && F(is2d ? 3 : 4) < 3.0f;
+    bool onFootSmall = (op == 0x00E4 || op == 0x00F6) && F(is2d ? 3 : 4) < 3.0f;
     if (mission ? sphere != 0 : onFootSmall) {
         AutotestMarker &am = mission ? g_missionMarker : g_mainMarker;
         am.x = F(1); am.y = F(2); am.z = is3d ? F(3) : 0.0f; am.at = GetTickCount(); am.ip = ip;

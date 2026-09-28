@@ -52,6 +52,7 @@ static uint32_t g_propPickups[32];
 static int g_propAt;
 static uint32_t g_propCollectedAt;
 bool IsPropertyPickup(uint32_t handle) { for (uint32_t h : g_propPickups) if (h && h == handle) return true; return false; }
+void RegisterPropertyPickup(uint32_t handle) { if (!IsPropertyPickup(handle)) g_propPickups[g_propAt++ % 32] = handle; }
 void NotePropertyCollected() { g_propCollectedAt = GetTickCount(); }
 static bool PropertyBuyPending() { return g_propCollectedAt && GetTickCount() - g_propCollectedAt < 3000; }
 

@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 12 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 13 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -94,6 +94,9 @@ struct MsgVehicle {
     uint8_t damage[24];      // voitures : CDamageManager (+0x2A0) du proprietaire (portes, ailes, phares, pneus...)
     uint8_t ambient;         // circulation partagee (ignoree par un invite qui a son propre monde)
     uint8_t wrecked;         // epave chez le proprietaire (la copie explose aussi)
+    uint8_t vflags;          // 1 phares, 2 moteur, 4 sirene/gyrophare, 8 klaxon, 16 lumiere de taxi
+    int8_t doorLock;         // m_nDoorLock (+0x230) : une copie verrouillee comme l'original
+    float lean, pedLean;     // moto : inclinaison (CBike +0x46C) et penchement du pilote (+0x478)
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 
@@ -120,7 +123,8 @@ struct MsgPedRemove { uint8_t type; uint32_t handle; uint8_t owner; };
 struct NetPlayer {
     bool connected;
     MsgState state;     // dernier etat recu
-    uint32_t lastSeen;  // GetTickCount de la derniere reception
+    uint32_t lastSeen;  // GetTickCount de la derniere reception (signes de vie compris)
+    uint32_t lastStateAt;   // GetTickCount du dernier MSG_STATE (un joueur fige ne remplit plus les conditions)
     uint32_t lastSeq;   // numero du dernier etat applique (les etats arrives dans le desordre sont ignores)
 };
 
