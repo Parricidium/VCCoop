@@ -687,6 +687,62 @@ static void ShareWanted(bool inGame)
 // Hote : un personnage de l'IA qui veut prendre le volant d'une voiture conduite par un autre joueur (son Tommy
 // chez nous) y renonce ; sinon il s'asseyait "par-dessus" lui. (Objectif +0x164 : 0x12 = monter au volant ;
 // vehicule vise +0x170.) Pour les places passager, le jeu le fait deja attendre devant la portiere si c'est plein.
+// PoliceHote=1 (hote) : la police du jeu ne connait qu'un joueur (FindPlayerPed partout dans CCopPed) ; ceux qui
+// sont "en poursuite" de l'hote restent sur lui. Les autres policiers a pied, plus pres du pantin d'un invite
+// recherche que de l'hote, recoivent l'objectif KILL_CHAR_ON_FOOT (01C9) sur ce pantin : ils le traquent et lui
+// tirent dessus (ces coups partent chez l'invite, RL_DAMAGE_PLAYER). CopAI ne reecrit pas cet objectif pour un
+// policier hors poursuite (reVC CopPed.cpp). Retires de lui quand il n'est plus recherche, mort ou loin.
+static void HostPoliceChasesGuests()
+{
+    static uint32_t last;
+    uint32_t now = GetTickCount();
+    if (!g_cfg.host || !g_cfg.hostPolice || now - last < 500) return;
+    last = now;
+    void *me = FindPlayerPed();
+    Pool *pool = PedPool();
+    int assigned = 0;
+    for (int i = 0; i < pool->size; i++) {
+        if (pool->flags[i] & 0x80) continue;
+        void *cop = pool->objects + i * PED_POOL_ENTRY;
+        if (PedType(cop) != 6 || CharCreatedBy(cop) != 1 || IsPuppet(cop) || IsGhostPed(cop) || Health(cop) <= 0.0f || InVehicle(cop)) continue;
+        int obj = Field<int>(cop, 0x164);
+        void *target = Field<void *>(cop, 0x16C);
+        int onGuest = target ? PuppetPlayer(target) : -1;
+        if ((obj == 8 || obj == 9) && target == me) continue;   // en poursuite de l'hote : le jeu le gere
+        // Deja sur un invite : on le lui retire s'il n'est plus recherche, a terre ou trop loin.
+        if (onGuest > 0) {
+            const MsgState &s = g_players[onGuest].state;
+            float dx = Pos(cop).x - Pos(target).x, dy = Pos(cop).y - Pos(target).y;
+            if (!g_players[onGuest].connected || !s.wanted || s.down || s.health <= 0.0f || dx * dx + dy * dy > 60.0f * 60.0f)
+                ((void(__thiscall *)(void *))0x521720)(cop);   // CPed::ClearObjective
+            else assigned++;
+            continue;
+        }
+        if (obj != 0 && obj != 1) continue;   // occupe a autre chose (monter en voiture, controle d'identite...)
+        // L'invite recherche le plus proche, s'il est plus proche que l'hote (et a moins de 40 m).
+        float dh = 1e9f;
+        if (me) { float dx = Pos(cop).x - Pos(me).x, dy = Pos(cop).y - Pos(me).y; dh = dx * dx + dy * dy; }
+        void *best = NULL;
+        float bestD = 40.0f * 40.0f;
+        for (int p = 1; p < MAX_PLAYERS; p++) {
+            const NetPlayer &np = g_players[p];
+            void *pup = PuppetPed(p);
+            if (!pup || !np.connected || !np.state.inGame || !np.state.wanted || np.state.down || np.state.health <= 0.0f || np.state.cutscene) continue;
+            float dx = Pos(cop).x - Pos(pup).x, dy = Pos(cop).y - Pos(pup).y, d = dx * dx + dy * dy;
+            if (d < bestD && d < dh) { bestD = d; best = pup; }
+        }
+        if (!best) continue;
+        Field<int>(cop, 0x168) = 0;   // objectif precedent : sinon SetObjective ignore un objectif identique
+        int32_t a[2] = { (int32_t)PedHandle(cop), (int32_t)PedHandle(best) };
+        MirrorLocal(0x01C9, 2, a);   // SET_CHAR_OBJ_KILL_CHAR_ON_FOOT
+        assigned++;
+        if (g_cfg.logScripts) Log("police : le policier %08X poursuit le joueur %d", a[0], PuppetPlayer(best));
+    }
+    static int lastAssigned = -1;
+    if (assigned != lastAssigned && (assigned == 0 || lastAssigned <= 0)) Log("police : %d policiers de l'hote poursuivent des invites", assigned);
+    lastAssigned = assigned;
+}
+
 static void KeepAIOffPlayerCars()
 {
     static uint32_t last;
@@ -912,7 +968,7 @@ void CoopFrame()
     MouseFocusFrame();
     PlayersFrame(inGame);
     ShareWanted(inGame);
-    if (inGame) KeepAIOffPlayerCars();
+    if (inGame) { KeepAIOffPlayerCars(); HostPoliceChasesGuests(); }
     if (inGame) { CameraFrame(); PassengerShooting(); }
     VehiclesFrame(inGame);
     EntitiesFrame(inGame);
