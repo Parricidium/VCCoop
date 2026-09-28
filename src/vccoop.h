@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28x"
+#define VCCOOP_VERSION "2026.09.28y"
 struct Config {
     bool windowed;
     bool borderless;
@@ -33,6 +33,7 @@ struct Config {
     bool waterReflections;   // RefletsEau=1 : la scene se reflete dans l'eau moderne
     bool modernWater;   // EauModerne=1 (rendu moderne) : eau turquoise, reflets, refraction, ecume
     int lightShadows;   // OmbresLumieres=4 : nombre de lumieres (0 a 4) qui projettent une ombre
+    bool ambientOcclusion;   // OcclusionAmbiante=1 (rendu moderne) : coins et dessous des objets assombris
     bool moonShadows;   // OmbresLune=1 : la lune projette des ombres (plus faibles que le soleil)
     bool dynLights;     // LumieresDynamiques=1 (rendu moderne) : lampadaires, phares, explosions eclairent par pixel
     int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine
