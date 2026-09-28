@@ -39,6 +39,7 @@
 #include <string.h>
 
 using namespace game;
+int WantedLevel(void *ped);   // coop.cpp
 
 // CControllerState (0x2A octets, des short) : LeftStickX +0, LeftStickY +2, ..., Cross +0x20
 enum { PAD_LSTICK_X = 0x00, PAD_LSTICK_Y = 0x02, PAD_SQUARE = 0x1C, PAD_TRIANGLE = 0x1E, PAD_CROSS = 0x20, PAD_CIRCLE = 0x22 };
@@ -307,6 +308,28 @@ void AutotestFrame()
     // Voiture RETOURNEE (sur le toit) : l'hote s'y installe au volant ; l'invite (Autotest=passager) monte a cote
     // puis en redescend avec G : la sortie en rampant doit se jouer chez les deux (avant : pose directement chez
     // l'invite, pantin pose sans animation chez l'hote, plantage 0x403ED2 quelques images plus tard).
+    // Hote recherche (3 etoiles) : sa police doit aussi poursuivre l'invite (Autotest=rejoindre) pose a cote.
+    if (_stricmp(g_cfg.autotest, "police") == 0) {
+        uint32_t t = frame - controlSince;
+        if (t == 150) {
+            int32_t ign[2] = { 0, 0 }; MirrorLocal(0x01F7, 2, ign);   // SET_POLICE_IGNORE_PLAYER 0 (le debut de partie l'active)
+            int32_t a[2] = { 0, 3 }; MirrorLocal(0x010D, 2, a); Log("autotest : recherche 3 etoiles");
+        }
+        if (t > 150 && t % 300 == 0) {
+            int cops = 0, onGuest = 0;
+            Pool *pool = PedPool();
+            for (int i = 0; i < pool->size; i++) {
+                if (pool->flags[i] & 0x80) continue;
+                void *p = pool->objects + i * PED_POOL_ENTRY;
+                if (PedType(p) != 6) continue;
+                cops++;
+                void *tg = Field<void *>(p, 0x16C);
+                if (tg && PuppetPlayer(tg) > 0) onGuest++;
+            }
+            Log("autotest : %d policiers, %d sur un invite, recherche %d", cops, onGuest, WantedLevel(FindPlayerPed()));
+        }
+        return;
+    }
     bool drive = _stricmp(g_cfg.autotest, "rouler") == 0;
     if (drive || _stricmp(g_cfg.autotest, "tonneau") == 0) {
         static void *car;

@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28n"
+#define VCCOOP_VERSION "2026.09.28o"
 struct Config {
     bool windowed;
     bool borderless;
@@ -23,6 +23,7 @@ struct Config {
     bool logScripts;
     bool friendlyFire;  // TirAmi=1 (hote) : les joueurs peuvent se blesser entre eux
     bool shareWanted;   // RecherchePartagee=1 : etoiles de police communes
+    bool hostPolice;    // PoliceHote=1 : pres de l'hote, seule sa police existe et elle poursuit aussi les invites
     bool shareMoney;    // ArgentPartage=1 (hote) : l'argent donne par les missions va aussi aux invites
     int drawDistance;   // DistanceAffichage=200 (en %) : detail, passants et vehicules visibles plus loin
     int msaa;           // Anticrenelage=4 : 0, 2, 4 ou 8 echantillons (au prochain lancement)

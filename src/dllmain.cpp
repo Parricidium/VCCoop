@@ -47,6 +47,7 @@ static void LoadConfig()
     g_cfg.logScripts = GetPrivateProfileIntA("VCCoop", "JournalScripts", 0, ini) != 0;
     g_cfg.friendlyFire = GetPrivateProfileIntA("VCCoop", "TirAmi", 1, ini) != 0;
     g_cfg.shareWanted = GetPrivateProfileIntA("VCCoop", "RecherchePartagee", 1, ini) != 0;
+    g_cfg.hostPolice = GetPrivateProfileIntA("VCCoop", "PoliceHote", 1, ini) != 0;
     g_cfg.shareMoney = GetPrivateProfileIntA("VCCoop", "ArgentPartage", 1, ini) != 0;
     g_cfg.keepWeapons = GetPrivateProfileIntA("VCCoop", "GarderArmes", 1, ini) != 0;
     g_cfg.respawnAtHost = GetPrivateProfileIntA("VCCoop", "ReapparitionHote", 0, ini) != 0;

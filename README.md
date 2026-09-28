@@ -115,8 +115,10 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Shared world**: near the host (150 m) a guest sees the same pedestrians and traffic; farther
   away (210 m) they have their own city. Parked mission vehicles, pickups and shop icons are set up
   locally by each player.
-- **Police**: shared wanted level; a guest's police is seen by the others and shoots for real; crimes
-  committed by a guest on the host's pedestrians give stars.
+- **Police**: shared wanted level. Near the host, only the host's police exists (`PoliceHote=1`): its cops
+  that are not chasing the host go after the nearest wanted guest and shoot at them for real; guests see
+  them. A guest far from the host has their own police. Crimes by a guest on the host's pedestrians give
+  stars.
 - **Death**: a dead or busted guest reappears at the nearest hospital / police station, keeping
   weapons and money (`GarderArmes`), or next to the host (`ReapparitionHote=1`).
 - **Side missions**: a guest can run taxi, ambulance, firefighter, vigilante and pizza missions on
@@ -310,8 +312,10 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Monde partagé** : près de l'hôte (150 m) un invité voit les mêmes passants et la même
   circulation ; plus loin (210 m) il retrouve sa propre ville. Véhicules garés de mission, pickups et
   icônes des boutiques sont posés en local chez chacun.
-- **Police** : niveau de recherche commun ; la police d'un invité est vue par les autres et tire pour
-  de vrai ; les crimes d'un invité sur les passants de l'hôte donnent des étoiles.
+- **Police** : niveau de recherche commun. Près de l'hôte, seule sa police existe (`PoliceHote=1`) : ses
+  policiers qui ne poursuivent pas l'hôte prennent en chasse l'invité recherché le plus proche et lui
+  tirent dessus pour de vrai ; les invités les voient. Un invité loin de l'hôte a sa propre police. Les
+  crimes d'un invité sur les passants de l'hôte donnent des étoiles.
 - **Mort** : un invité mort ou arrêté réapparaît à l'hôpital / au commissariat le plus proche, avec ses
   armes et son argent (`GarderArmes`), ou près de l'hôte (`ReapparitionHote=1`).
 - **Missions secondaires** : un invité peut jouer taxi, ambulance, pompiers, justicier et pizzas de son

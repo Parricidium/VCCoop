@@ -34,12 +34,15 @@ static GenCars_t o_GenerateRandomCars;
 // generation de vehicules de son jeu, qui fait venir SA police. Le reste de ce qu'elle cree (circulation) est
 // retire aussitot par CleanLocalPopulation, les forces de l'ordre sont gardees.
 static bool Wanted() { void *me = FindPlayerPed(); void *w = me ? Field<void *>(me, 0x5F4) : NULL; return w && Field<int>(w, 0x20) > 0; }
-static void __cdecl h_GenerateRandomCars() { if (!g_shared || Wanted()) o_GenerateRandomCars(); }
+// PoliceHote=1 : en population partagee, l'invite n'a pas de police a lui (c'est celle de l'hote qui le poursuit,
+// coop.cpp HostPoliceChasesGuests) ; ses etoiles restent affichees mais ne font rien venir.
+static bool OwnPolice() { return Wanted() && !(g_cfg.hostPolice && g_shared); }
+static void __cdecl h_GenerateRandomCars() { if (!g_shared || OwnPolice()) o_GenerateRandomCars(); }
 
 // Forces de l'ordre (policiers, SWAT, FBI, armee : type de personnage 6) et leurs vehicules.
 static bool LawPed(void *ped) { return ped && PedType(ped) == 6; }
 bool IsLawPed(void *ped) { return LawPed(ped); }
-bool LocalWanted() { return Wanted(); }
+bool LocalWanted() { return OwnPolice(); }   // a une police a lui (qu'il partage avec les autres)
 static bool LawVehicle(void *v);
 bool IsLawVehicle(void *v) { return LawVehicle(v); }
 static bool LawVehicle(void *v)
@@ -67,13 +70,13 @@ void InstallPopulation()
 // Une entite ambiante locale peut-elle etre retiree ? (jamais ce qu'un joueur ou le reseau utilise)
 static bool LocalAmbientPed(void *ped, void *me)
 {
-    return ped != me && CharCreatedBy(ped) == 1 && !IsGhostPed(ped) && !IsPuppet(ped) && !InVehicle(ped) && !(LawPed(ped) && Wanted());
+    return ped != me && CharCreatedBy(ped) == 1 && !IsGhostPed(ped) && !IsPuppet(ped) && !InVehicle(ped) && !(LawPed(ped) && OwnPolice());
 }
 
 static bool LocalAmbientVehicle(void *v, void *me)
 {
     uint8_t by = Field<uint8_t>(v, 0x1F8);
-    if ((by != VEH_RANDOM && by != VEH_PARKED) || NetVehicleId(v) || PedVehicle(me) == v || (LawVehicle(v) && Wanted())) return false;
+    if ((by != VEH_RANDOM && by != VEH_PARKED) || NetVehicleId(v) || PedVehicle(me) == v || (LawVehicle(v) && OwnPolice())) return false;
     void *drv = VehDriver(v);
     if (drv && (drv == me || IsPuppet(drv) || IsGhostPed(drv))) return false;
     for (int i = 0; i < 8; i++) {
