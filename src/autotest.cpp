@@ -252,6 +252,10 @@ void AutotestFrame()
                 if (l > 0.1f) MoveSpeed(car) = { dx / l * 0.33f, dy / l * 0.33f, 0 };
                 Log("autotest : renverse, lance vers l'invite a %.1f m", l);
             }
+            if (car && frame - seatedAt > 240 && frame - seatedAt < 330 && (frame - seatedAt) % 6 == 0) {
+                Vec3 s2 = MoveSpeed(car);
+                Log("autotest : renverse, ma voiture a %.0f km/h", sqrtf(s2.x * s2.x + s2.y * s2.y) * 180.0f);
+            }
         } else if (!placedAt && PuppetPed(0) && InVehicle(PuppetPed(0))) {
             void *target = PedVehicle(PuppetPed(0));
             Vec3 f = Field<Vec3>(target, 0x14);

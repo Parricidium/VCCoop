@@ -68,6 +68,10 @@ static int EnsurePuppetModel(int player, const char *outfit)
     return HasModelLoaded(model) ? model : -1;
 }
 static Puppet g_puppets[MAX_PLAYERS];
+// Percute par notre voiture : le double devient traversable un moment (il tombe chez lui, et sa chute nous arrive par
+// ses animations). Sinon la voiture butait sur un personnage que le reseau remet debout a la meme place chaque image.
+static uint32_t g_passThroughUntil[MAX_PLAYERS];
+void PuppetPassThrough(int player, uint32_t ms) { if (player >= 0 && player < MAX_PLAYERS) g_passThroughUntil[player] = GetTickCount() + ms; }
 
 void *PuppetPed(int player) { return player >= 0 && player < MAX_PLAYERS ? g_puppets[player].ped : NULL; }
 
@@ -200,8 +204,8 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         if (cur) { pp.entering = false; pp.seatedAt = now; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
         // La voiture roule, ou chez lui il est assis depuis un moment et notre double n'y est toujours pas : on le pose
         // (avant : jusqu'a 10 s d'attente "a la portiere" pendant que la voiture partait vide).
-        else if (driving || now - pp.busySince > (atDoor ? 6000u : 4000u) || (!target && now - pp.busySince > 2500) ||
-                 (s.inVehicle && now - pp.busySince > (atDoor ? 2500u : 1800u))) {
+        else if (driving || now - pp.busySince > (atDoor ? 6000u : 1500u) || (!target && now - pp.busySince > 1200) ||
+                 (s.inVehicle && now - pp.busySince > (atDoor ? 2500u : 800u))) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = Pos(ped);
@@ -214,7 +218,9 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         if (!cur) { pp.exiting = false; pp.exitedAt = now; Field<int>(ped, 0x164) = 0; pp.lastMoveState = -1; Log("coop : Tommy %d est descendu (animation)", s.id); }
         // Jamais pendant que l'animation de sortie joue (etat 60 : porte, ou rampe hors d'une voiture retournee,
         // plusieurs secondes) : la couper laissait le personnage sans animation (plantage 0x403ED2).
-        else if ((PedState(ped) != 60 && now - pp.busySince > 4000) || now - pp.busySince > 12000) {
+        // L'animation de sortie n'a pas demarre en 0,8 s (le jeu la refuse) : il est pose dehors tout de suite (avant :
+        // 4 s pendant lesquelles on le voyait encore assis alors qu'il courait deja chez lui).
+        else if ((PedState(ped) != 60 && now - pp.busySince > 800) || now - pp.busySince > 12000) {
             pp.exiting = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
@@ -270,6 +276,18 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     // Deja dehors chez lui (sortie posee directement, ou animation deja finie) et notre double encore a bord : il
     // descend quand meme avec l'animation du jeu, sauf si la voiture roule (il en a saute).
     if (cur && !s.inVehicle && !s.enterId && !LocallyDriven(cur, ped)) {
+        // Deja loin de la voiture chez lui (sortie rapide, il court) : pose directement ou il est.
+        float ex = s.pos[0] - Pos(cur).x, ey = s.pos[1] - Pos(cur).y;
+        if (ex * ex + ey * ey > 3.5f * 3.5f) {
+            Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
+            WarpOutOfVehicle(ped, &at);
+            pp.exitedFrom = NetVehicleId(cur);
+            pp.exitedAt = now;
+            pp.lastMoveState = -1;
+            pp.anims.count = 0;
+            Log("coop : Tommy %d deja loin de la voiture, pose dehors", s.id);
+            return false;
+        }
         if (!NetVehicleMoving(cur)) {
             int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
             MoveSpeed(cur) = { 0, 0, 0 };
@@ -324,7 +342,7 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     // chaque image faisait un corps solide DANS la voiture de l'hote, qui devenait inconduisible et delogeait le pantin.)
     if (!InVehicle(ped) && !EnterInProgress(ped)) {   // (le jeu coupe la collision pendant la montee : on n'y touche pas)
         uint8_t &col = Field<uint8_t>(ped, 0x51);
-        if (down) col &= ~0x01; else col |= 0x01;
+        if (down || GetTickCount() < g_passThroughUntil[s.id]) col &= ~0x01; else col |= 0x01;
     }
     // Controle permanent : chez lui il est dans un vehicule et son double dehors (ou l'inverse), hors animation de
     // montee / descente, depuis plus de 2 s : on le remet a sa place (ou on le cache si c'est impossible).
@@ -973,11 +991,27 @@ static bool PlayerAboard(void *v)
 // passager (la plus proche de lui), il "glisse" jusqu'au volant et le jeu sortait le passager deja assis.
 static void *g_deferBoard;
 static uint32_t g_deferSince;
+// F au volant : si le jeu refuse la sortie (joueur coince dans l'Infernus de JD, 28/09), on descend nous-memes.
+static void *g_driverExit;
+static uint32_t g_driverExitAt;
 
 static void BoardingFrame()
 {
     void *me = FindPlayerPed();
     uint32_t now = GetTickCount();
+    if (g_driverExit && me) {
+        bool still = InVehicle(me) && PedVehicle(me) == g_driverExit && VehDriver(g_driverExit) == me;
+        if (!still || ExitingState(PedState(me))) g_driverExit = NULL;
+        else if (now - g_driverExitAt > 1500 && !g_leaving) {
+            void *v = g_driverExit;
+            bool calm = ((bool(__thiscall *)(void *, char))0x5B8180)(v, 0);
+            Log("coop : le jeu refuse ma sortie du volant (verrou %d, au calme %d, etat %d, cree par %d) : je descends moi-meme",
+                Field<int>(v, 0x230), calm, PedState(me), Field<uint8_t>(v, 0x1F8));
+            g_leaving = v;
+            g_leavingSince = now;
+            g_driverExit = NULL;
+        }
+    }
     if (g_deferBoard && me) {
         void *v = g_deferBoard;
         bool seated = VehDriver(v) && IsPuppet(VehDriver(v));
@@ -1118,6 +1152,13 @@ static bool EnterExitHandled(void *pad, bool pressed, bool justDown)
 static bool __fastcall h_ExitJustDown(void *pad, void *edx)
 {
     bool r = o_ExitJustDown(pad, edx);
+    if (r && pad == (void *)0x7DBCB0 && GameState() == GS_PLAYING) {
+        void *me = FindPlayerPed();
+        if (me && InVehicle(me) && PedVehicle(me) && VehDriver(PedVehicle(me)) == me && !g_driverExit) {
+            g_driverExit = PedVehicle(me);
+            g_driverExitAt = GetTickCount();
+        }
+    }
     return EnterExitHandled(pad, r, true) ? false : r;
 }
 
