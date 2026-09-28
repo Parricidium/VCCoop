@@ -645,6 +645,78 @@ static void OnWorld(const MsgWorld &w)
 static bool g_gathered;
 void RequestGather() { g_gathered = false; }
 
+// --- Place libre a cote de l'hote ---
+// Apres une teleportation de mission (entree d'un immeuble, fin de cinematique), chaque invite etait pose a
+// 1,5 m x son numero sur l'axe X : le 2e, le 3e tombaient dans les murs. On cherche la place la plus proche de
+// l'hote qui se voit depuis lui (ni batiment ni objet entre eux, CWorld::ProcessLineOfSight 0x4D92D0) et qui a un sol.
+typedef bool(__cdecl *LineOfSight_t)(const float *, const float *, void *, void **, bool, bool, bool, bool, bool, bool, bool, bool);
+static bool LineFree(Vec3 a, Vec3 b)
+{
+    uint8_t col[64] = {};
+    void *hit = NULL;
+    float s[3] = { a.x, a.y, a.z }, e[3] = { b.x, b.y, b.z };
+    return !((LineOfSight_t)0x4D92D0)(s, e, col, &hit, true, false, false, true, false, false, false, false);
+}
+static bool GroundBelow(float x, float y, float z, float &gz)
+{
+    uint8_t col[64] = {};
+    void *hit = NULL;
+    float s[3] = { x, y, z + 1.0f }, e[3] = { x, y, z - 3.0f };
+    if (!((LineOfSight_t)0x4D92D0)(s, e, col, &hit, true, false, false, true, false, false, false, false)) return false;
+    gz = ((float *)col)[2];
+    return true;
+}
+static bool FreeSpotNear(Vec3 base, float heading, Vec3 &out)
+{
+    static const float radii[] = { 1.0f, 1.5f, 2.2f, 3.0f };
+    static const int order[] = { 0, 1, -1, 2, -2, 3, -3, 4 };   // derriere l'hote d'abord, puis de plus en plus sur les cotes
+    float start = heading + 3.14159f + (g_localId % 2 ? 0.5f : -0.5f);
+    for (float r : radii) {
+        for (int k : order) {
+            float a = start + k * 0.785398f;
+            Vec3 c = { base.x - sinf(a) * r, base.y + cosf(a) * r, base.z };
+            if (!LineFree({ base.x, base.y, base.z + 0.5f }, { c.x, c.y, c.z + 0.5f })) continue;
+            if (!LineFree({ base.x, base.y, base.z - 0.3f }, { c.x, c.y, c.z - 0.3f })) continue;   // meubles, marches
+            float gz;
+            if (!GroundBelow(c.x, c.y, base.z, gz) || fabsf(gz + 1.0f - base.z) > 1.2f) continue;
+            bool taken = false;   // pas sur un autre joueur
+            for (int p = 0; p < MAX_PLAYERS && !taken; p++) {
+                void *pup = PuppetPed(p);
+                if (pup) { float dx = Pos(pup).x - c.x, dy = Pos(pup).y - c.y; taken = dx * dx + dy * dy < 0.8f * 0.8f; }
+            }
+            if (taken) continue;
+            out = { c.x, c.y, gz + 1.0f };
+            return true;
+        }
+    }
+    return false;
+}
+
+// Surveillance quelques secondes apres une teleportation : l'interieur se charge parfois apres la pose (la place
+// semblait libre) ; si un mur nous separe de l'hote, on est replace a la place libre la plus proche.
+static uint32_t g_wallWatchUntil;
+void CoopWatchWalls() { g_wallWatchUntil = GetTickCount() + 5000; }
+static void WallWatch(bool inGame)
+{
+    static uint32_t last;
+    static int moves;
+    uint32_t now = GetTickCount();
+    if (!inGame || g_cfg.host || now > g_wallWatchUntil) { moves = 0; return; }
+    if (now - last < 400) return;
+    last = now;
+    void *me = FindPlayerPed(), *host = PuppetPed(0);
+    if (!me || !host || InVehicle(me) || InVehicle(host) || moves >= 3) return;
+    Vec3 a = Pos(host), b = Pos(me);
+    float dx = a.x - b.x, dy = a.y - b.y;
+    if (dx * dx + dy * dy > 8.0f * 8.0f || LineFree({ a.x, a.y, a.z + 0.5f }, { b.x, b.y, b.z + 0.5f })) return;
+    Vec3 spot;
+    if (!FreeSpotNear(a, g_players[0].state.heading, spot)) return;
+    Pos(me) = spot;
+    MoveSpeed(me) = { 0, 0, 0 };
+    moves++;
+    Log("coop : un mur me separait de l'hote, replace en %.1f %.1f %.1f", spot.x, spot.y, spot.z);
+}
+
 static void GatherToHost(bool inGame)
 {
     bool &gathered = g_gathered;
@@ -727,10 +799,14 @@ static void GatherToHost(bool inGame)
         } else Log("coop : regroupement abandonne (en vehicule)");
         return;
     }
-    // Derriere l'hote (d'ou il vient, donc un endroit libre), decale d'un pas par joueur.
+    // Derriere l'hote (d'ou il vient, donc un endroit libre), decale d'un pas par joueur ; la place libre la plus
+    // proche si ca tombe dans un mur.
     float back = 1.5f + 0.8f * (g_localId - 1), side = (g_localId % 2 ? 0.6f : -0.6f);
     Pos(ped) = { h.state.pos[0] + sinf(hh) * back + cosf(hh) * side, h.state.pos[1] - cosf(hh) * back + sinf(hh) * side,
                  h.state.pos[2] + 0.3f };
+    Vec3 spot, hp = { h.state.pos[0], h.state.pos[1], h.state.pos[2] };
+    if (!LineFree({ hp.x, hp.y, hp.z + 0.5f }, { Pos(ped).x, Pos(ped).y, Pos(ped).z + 0.2f }) && FreeSpotNear(hp, hh, spot)) Pos(ped) = spot;
+    CoopWatchWalls();
     MoveSpeed(ped) = { 0, 0, 0 };
     SetHeadingMatrix(ped, hh);   // regarde dans la meme direction que l'hote
     Heading(ped) = HeadingGoal(ped) = hh;
@@ -1056,6 +1132,7 @@ void CoopFrame()
     if (GameState() == GS_PLAYING && MenuActive() && UserPause() && OtherPlayersConnected()) UserPause() = false;
     bool inGame = GameState() == GS_PLAYING && FindPlayerPed() != NULL;
     GatherToHost(inGame);
+    WallWatch(inGame);
     PopulationFrame(inGame);
     ConditionsFrame(inGame);
     if (inGame) { PassengerKey(); BoardingFrame(); }

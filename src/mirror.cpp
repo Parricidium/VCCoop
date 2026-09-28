@@ -882,6 +882,7 @@ static bool Execute(const uint8_t *d, int len, bool force)
     CallOriginalProcessOneCommand(g_script);
     if (op == 0x0055 || op == 0x012A) {   // teleporte avec l'hote : sa zone visible (recue juste avant) s'applique
         g_lastTeleportAt = GetTickCount();
+        CoopWatchWalls();   // decale de l'hote : peut-etre dans un mur (interieur pas encore charge)
         if (g_pendingArea >= 0 && GetTickCount() - g_pendingAreaAt < 5000) SetArea(g_pendingArea);
         g_pendingArea = -1;
     }

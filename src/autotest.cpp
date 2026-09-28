@@ -130,6 +130,55 @@ void AutotestFrame()
         }
         return;
     }
+    // Autotest=percute : l'hote attend au volant ; l'invite arrive 14 m derriere et lui fonce dessus (chocs entre
+    // vehicules de joueurs, vehicles.cpp CopyCollisions).
+    if (_stricmp(g_cfg.autotest, "percute") == 0) {
+        static void *car;
+        static uint32_t seatedAt;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        if (g_cfg.host && t == 31) {   // route degagee (Ocean Beach, rue droite)
+            int32_t p[4] = { 0 };
+            float xyz[3] = { 250.0f, -1250.0f, 11.0f };
+            memcpy(p + 1, xyz, 12);
+            MirrorLocal(0x0055, 4, p);
+            Log("autotest : percute, hote sur la route");
+        }
+        if (!HasModelLoaded(130)) { RequestModel(130, 1); return; }
+        void *target = NULL;
+        if (!g_cfg.host && PuppetPed(0) && InVehicle(PuppetPed(0))) target = PedVehicle(PuppetPed(0));
+        if (!car && t > 150 && (g_cfg.host || target)) {
+            Vec3 tf = target ? Field<Vec3>(target, 0x14) : Vec3{ 0, 1, 0 };   // avant du vehicule (Heading : personnages seulement)
+            float h = g_cfg.host ? Heading(me) : atan2f(-tf.x, tf.y);
+            Vec3 base = g_cfg.host ? Pos(me) : Pos(target);
+            float fx = -sinf(h), fy = cosf(h);
+            float off = g_cfg.host ? 3.0f : -14.0f;
+            if (!g_cfg.host) off = -7.0f;   // 7 m derriere la cible, dans son axe
+            void *v = VehicleAlloc();
+            AutomobileCtor(v, 130, 1);
+            Pos(v) = { base.x + fx * off, base.y + fy * off, base.z + 0.3f };
+            SetHeadingMatrix(v, h);
+            SetEntityStatus(v, STATUS_ABANDONED);
+            WorldAdd(v);
+            car = v; RegisterReference(v, &car);
+            WarpIntoSeat(me, v, 0);
+            seatedAt = frame;
+            Log("autotest : percute, voiture prete (%s)", g_cfg.host ? "cible" : "belier");
+        }
+        if (!car) return;
+        // (invite) lance droit sur la cible a ~60 km/h (0,33 par 1/50 s), sans compter sur l'accelerateur
+        if (!g_cfg.host && frame - seatedAt == 60 && target) {
+            float dx = Pos(target).x - Pos(car).x, dy = Pos(target).y - Pos(car).y, l = sqrtf(dx * dx + dy * dy);
+            if (l > 0.1f) MoveSpeed(car) = { dx / l * 0.33f, dy / l * 0.33f, 0 };
+            Log("autotest : percute, lance vers la cible a %.1f m", l);
+        }
+        if ((frame - seatedAt) % 10 == 0 && frame - seatedAt > 60 && frame - seatedAt < 400) {
+            Vec3 s = MoveSpeed(car);
+            float sp = sqrtf(s.x * s.x + s.y * s.y) * 50.0f * 3.6f;
+            if (sp > 0.5f || !g_cfg.host) Log("autotest : percute, ma voiture a %.0f km/h en %.1f %.1f", sp, Pos(car).x, Pos(car).y);
+        }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "bagarre") == 0) {
         uint32_t t = frame - controlSince;
         if (t < 150) return;
@@ -145,7 +194,7 @@ void AutotestFrame()
         if (onNpc && PuppetPed(0)) {   // la copie la plus proche de l'hote (la cible qu'il a creee devant lui)
             Pool *pool = PedPool();
             Vec3 hp = Pos(PuppetPed(0));
-            float best = 100.0f;
+            float best = 40.0f * 40.0f;   // (passant ordinaire : un personnage de mission ne reagit pas aux coups)
             for (int i = 0; i < pool->size; i++) {
                 if (pool->flags[i] & 0x80) continue;
                 void *p = pool->objects + i * PED_POOL_ENTRY;

@@ -228,8 +228,14 @@ static bool FirstPersonView(void *cam, short mode)
         Normalize(right);
         up = { right.y * f.z - right.z * f.y, right.z * f.x - right.x * f.z, right.x * f.y - right.y * f.x };
     } else {
-        // A pied : la direction de la camera du jeu (sa souris, sa sensibilite, son inversion), depuis les yeux.
+        // A pied : la direction de la camera du jeu (sa souris, sa sensibilite, son inversion), depuis les yeux. Les os
+        // datent de l'image precedente : en courant, la camera restait derriere la tete (on la voyait, coupee par le
+        // plan proche). Avancee d'une image de deplacement, plus 8 cm vers l'avant.
         f = front;
+        Vec3 mv = MoveSpeed(me);
+        float ts = TimeStep();
+        Vec3 pf = Field<Vec3>(me, 0x14);
+        eyes = { eyes.x + mv.x * ts + pf.x * 0.08f, eyes.y + mv.y * ts + pf.y * 0.08f, eyes.z + mv.z * ts };
         Normalize(f);
         Vec3 right = { f.y, -f.x, 0 };
         Normalize(right);

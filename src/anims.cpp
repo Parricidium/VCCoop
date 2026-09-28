@@ -26,6 +26,19 @@ static bool Mirrored(const AnimMirror &m, int id)
     return false;
 }
 
+// Animations de tout le corps quand meme recopiees : mise a terre, chute, relevee, saut, esquive, coup au sol, mains
+// en l'air (on ne voyait pas l'autre joueur tomber ni se relever). Pas l'assise en voiture ni l'attente, qui
+// remplacaient la marche du pantin.
+static bool FullBodyAction(int id)
+{
+    return (id >= 13 && id <= 16) ||      // ANIM_STD_KO_FRONT..RIGHT
+           id == 37 || id == 43 ||        // HIT_FLOOR, HIT_FLOOR_FRONT
+           id == 65 ||                    // KICKGROUND
+           id == 125 || id == 126 ||      // BIKE_FALLOFF / FALLBACK
+           (id >= 137 && id <= 151) ||    // GET_UP*, JUMP_*, FALL_*, EVADE_*
+           id == 161 || id == 162;        // HANDSUP, HANDSCOWER
+}
+
 void CollectAnimSlots(void *ped, AnimSlot *out, int n)
 {
     for (int i = 0; i < n; i++) out[i].id = -1;
@@ -36,7 +49,7 @@ void CollectAnimSlots(void *ped, AnimSlot *out, int n)
         // en voiture, attente...) recopiee sur un pantin remplacait sa marche, et une animation en fondu negatif est
         // deja en train de mourir : recopiee, elle mourait aussi chez les autres et la liste des animations du pantin
         // se vidait (plantage 0x403ED2 du moteur, cf. EnsureLiveAnim).
-        if (Locomotion(id) || blend < 0.05f || Field<float>(a, 0x1C) < 0.0f || !(Field<uint16_t>(a, 0x2E) & 0x10)) continue;
+        if (Locomotion(id) || blend < 0.05f || Field<float>(a, 0x1C) < 0.0f || (!(Field<uint16_t>(a, 0x2E) & 0x10) && !FullBodyAction(id))) continue;
         AnimSlot s = { (int16_t)id, (uint8_t)Field<int16_t>(a, 0xE), (uint8_t)(blend >= 1.0f ? 255 : blend * 255.0f),
                        Field<float>(a, 0x20) };
         for (int i = 0; i < n; i++) {   // tri par visibilite (insertion)
