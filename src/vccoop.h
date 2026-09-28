@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28r"
+#define VCCOOP_VERSION "2026.09.28s"
 struct Config {
     bool windowed;
     bool borderless;
@@ -30,8 +30,10 @@ struct Config {
     bool aniso;         // FiltrageAnisotrope=1 : textures nettes au loin (16x, trilineaire)
     bool sunShadows;    // OmbresSoleil=1 : ombres projetees du soleil (carte d'ombre, gfx.cpp)
     int shadowRes;      // OmbresResolution=4096 (ou 2048) : taille de la carte d'ombre
+    bool modernWater;   // EauModerne=1 (rendu moderne) : eau turquoise, reflets, refraction, ecume
+    bool dynLights;     // LumieresDynamiques=1 (rendu moderne) : lampadaires, phares, explosions eclairent par pixel
     int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine
-    int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (capturesendu-*.bmp)
+    int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)
     bool freeCam;       // CameraLibre=1 : camera a la souris autour du vehicule, visee au clic droit
     float camSensitivity; // SensibiliteCamera=100 (en %)
     bool showNames;

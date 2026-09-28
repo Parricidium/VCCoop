@@ -73,7 +73,7 @@ Start `gta-vc.exe` normally. Main menu > **COOP**:
 | **Host a game** | Opens the lobby with the list of connected players. **New game** or **Load a game**: the guests follow you by themselves (your save is sent to them). |
 | **Join** | **Address** (the host's IP: Enter, type, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
 | **Nickname** | Your name, set before hosting or joining. |
-| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows and their quality, modern renderer (next launch). Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
+| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows and their quality, modern water, dynamic lights, modern renderer (next launch). Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` go straight to hosting / joining. Without COOP the
 game stays single player. **Esc > COOP** in game shows the same page.
@@ -146,6 +146,13 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   double-drawn geometry flickering), strength from the game's time cycle (hour and weather) and its fog.
   Buildings just outside the view still cast their shadow (no more popping when the camera turns).
   With `Rendu=8`, the older shadow map on the Direct3D 8 device is used.
+- **Modern water** (`EauModerne`, modern renderer): the game's water surfaces are redrawn with a VCCoop shader —
+  turquoise in the shallows and deep blue-green offshore (from the real depth under each pixel), the sea floor
+  seen through with refraction, the sky of the time cycle reflected with Fresnel, the sun's glint, per-pixel
+  waves and foam along the shores. Seabirds and boats on the horizon are kept.
+- **Dynamic lights** (`LumieresDynamiques`, modern renderer): every light the game registers (street lamps,
+  neons, headlights, explosions, fire, muzzle flashes) now lights the scenery per pixel up to 150 m, not only
+  the characters and vehicles within 22 m.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -276,7 +283,7 @@ Lancer `gta-vc.exe` normalement. Menu principal > **COOP** :
 | **Créer une partie** | Ouvre le salon avec la liste des joueurs connectés. **Nouvelle partie** ou **Charger une partie** : les invités suivent tout seuls (la sauvegarde leur est envoyée). |
 | **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
 | **Pseudo** | Votre nom, à régler avant de créer ou rejoindre. |
-| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil et leur qualité, rendu moderne (au prochain lancement). Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
+| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil et leur qualité, eau moderne, lumières dynamiques, rendu moderne (au prochain lancement). Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` vont droit à l'hébergement / la connexion. Sans
 passer par COOP, le jeu reste en solo. **Échap > COOP** en jeu montre la même page.
@@ -351,6 +358,13 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   (plus de doubles dessins qui clignotent), intensité selon le cycle du jour du jeu (heure et météo) et son
   brouillard. Les bâtiments juste hors du champ projettent aussi leur ombre (plus d'apparition en tournant la
   caméra). Avec `Rendu=8`, l'ancienne carte d'ombre sur le Direct3D 8 du jeu reste utilisée.
+- **Eau moderne** (`EauModerne`, rendu moderne) : les surfaces d'eau du jeu sont redessinées par un shader de
+  VCCoop — turquoise en eau peu profonde et bleu-vert au large (selon la vraie profondeur sous chaque pixel), le
+  fond visible par réfraction, le ciel du cycle du jour reflété (Fresnel), le reflet du soleil, des vagues par
+  pixel et de l'écume sur les rives. Les oiseaux et bateaux à l'horizon restent.
+- **Lumières dynamiques** (`LumieresDynamiques`, rendu moderne) : toutes les lumières du jeu (lampadaires,
+  néons, phares, explosions, feux, tirs) éclairent maintenant le décor par pixel jusqu'à 150 m, et plus
+  seulement les personnages et véhicules à moins de 22 m.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont
