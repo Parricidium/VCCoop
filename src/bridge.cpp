@@ -103,6 +103,14 @@ static ULONG WrapRelease(void *self)
     return r;
 }
 
+// Echecs de creation (le jeu ne verifie pas toujours : modele sans texture, objet de cinematique sans modele...).
+static HRESULT Fail(HRESULT hr, const char *what, UINT a, UINT b, UINT c, UINT d)
+{
+    static int n;
+    if (FAILED(hr) && n < 60) { n++; Log("pont : %s refuse (0x%08lX) : %u %u %u %u", what, hr, a, b, c, d); }
+    return hr;
+}
+
 // Taille d'une surface (D3D8 la donne dans la description).
 static UINT FormatBits(D3DFORMAT f)
 {
@@ -226,7 +234,7 @@ public:
         *out = SUCCEEDED(hr) ? Wrap<Surface8>(s, m_dev) : NULL;
         return hr;
     }
-    STDM LockRect(UINT l, D3DLOCKED_RECT *r, const RECT *rc, DWORD f) { return m_obj->LockRect(l, r, rc, f); }
+    STDM LockRect(UINT l, D3DLOCKED_RECT *r, const RECT *rc, DWORD f) { return Fail(m_obj->LockRect(l, r, rc, f), "Texture LockRect", l, f, 0, 0); }
     STDM UnlockRect(UINT l) { return m_obj->UnlockRect(l); }
     STDM AddDirtyRect(const RECT *r) { return m_obj->AddDirtyRect(r); }
 };
@@ -478,56 +486,56 @@ public:
     STDM CreateTexture(UINT w, UINT h, UINT l, DWORD u, D3DFORMAT f, D3DPOOL p, Texture8 **out)
     {
         IDirect3DTexture9 *t = NULL;
-        HRESULT hr = m_obj->CreateTexture(w, h, l, u, f, p, &t, NULL);
+        HRESULT hr = Fail(m_obj->CreateTexture(w, h, l, u, f, p, &t, NULL), "CreateTexture", w, h, (UINT)f, (UINT)p | (u << 8));
         *out = SUCCEEDED(hr) ? Wrap<Texture8>(t, this) : NULL;
         return hr;
     }
     STDM CreateVolumeTexture(UINT w, UINT h, UINT d, UINT l, DWORD u, D3DFORMAT f, D3DPOOL p, VolumeTexture8 **out)
     {
         IDirect3DVolumeTexture9 *t = NULL;
-        HRESULT hr = m_obj->CreateVolumeTexture(w, h, d, l, u, f, p, &t, NULL);
+        HRESULT hr = Fail(m_obj->CreateVolumeTexture(w, h, d, l, u, f, p, &t, NULL), "CreateVolumeTexture", w, h, (UINT)f, (UINT)p);
         *out = SUCCEEDED(hr) ? Wrap<VolumeTexture8>(t, this) : NULL;
         return hr;
     }
     STDM CreateCubeTexture(UINT e, UINT l, DWORD u, D3DFORMAT f, D3DPOOL p, CubeTexture8 **out)
     {
         IDirect3DCubeTexture9 *t = NULL;
-        HRESULT hr = m_obj->CreateCubeTexture(e, l, u, f, p, &t, NULL);
+        HRESULT hr = Fail(m_obj->CreateCubeTexture(e, l, u, f, p, &t, NULL), "CreateCubeTexture", e, l, (UINT)f, (UINT)p);
         *out = SUCCEEDED(hr) ? Wrap<CubeTexture8>(t, this) : NULL;
         return hr;
     }
     STDM CreateVertexBuffer(UINT len, DWORD u, DWORD fvf, D3DPOOL p, VertexBuffer8 **out)
     {
         IDirect3DVertexBuffer9 *b = NULL;
-        HRESULT hr = m_obj->CreateVertexBuffer(len, u, fvf, p, &b, NULL);
+        HRESULT hr = Fail(m_obj->CreateVertexBuffer(len, u, fvf, p, &b, NULL), "CreateVertexBuffer", len, u, fvf, (UINT)p);
         *out = SUCCEEDED(hr) ? Wrap<VertexBuffer8>(b, this) : NULL;
         return hr;
     }
     STDM CreateIndexBuffer(UINT len, DWORD u, D3DFORMAT f, D3DPOOL p, IndexBuffer8 **out)
     {
         IDirect3DIndexBuffer9 *b = NULL;
-        HRESULT hr = m_obj->CreateIndexBuffer(len, u, f, p, &b, NULL);
+        HRESULT hr = Fail(m_obj->CreateIndexBuffer(len, u, f, p, &b, NULL), "CreateIndexBuffer", len, u, (UINT)f, (UINT)p);
         *out = SUCCEEDED(hr) ? Wrap<IndexBuffer8>(b, this) : NULL;
         return hr;
     }
     STDM CreateRenderTarget(UINT w, UINT h, D3DFORMAT f, D3DMULTISAMPLE_TYPE ms, BOOL lockable, Surface8 **out)
     {
         IDirect3DSurface9 *s = NULL;
-        HRESULT hr = m_obj->CreateRenderTarget(w, h, f, ms, 0, ms ? FALSE : lockable, &s, NULL);
+        HRESULT hr = Fail(m_obj->CreateRenderTarget(w, h, f, ms, 0, ms ? FALSE : lockable, &s, NULL), "CreateRenderTarget", w, h, (UINT)f, (UINT)ms);
         *out = SUCCEEDED(hr) ? Wrap<Surface8>(s, this) : NULL;
         return hr;
     }
     STDM CreateDepthStencilSurface(UINT w, UINT h, D3DFORMAT f, D3DMULTISAMPLE_TYPE ms, Surface8 **out)
     {
         IDirect3DSurface9 *s = NULL;
-        HRESULT hr = m_obj->CreateDepthStencilSurface(w, h, f, ms, 0, FALSE, &s, NULL);
+        HRESULT hr = Fail(m_obj->CreateDepthStencilSurface(w, h, f, ms, 0, FALSE, &s, NULL), "CreateDepthStencilSurface", w, h, (UINT)f, (UINT)ms);
         *out = SUCCEEDED(hr) ? Wrap<Surface8>(s, this) : NULL;
         return hr;
     }
     STDM CreateImageSurface(UINT w, UINT h, D3DFORMAT f, Surface8 **out)
     {
         IDirect3DSurface9 *s = NULL;
-        HRESULT hr = m_obj->CreateOffscreenPlainSurface(w, h, f, D3DPOOL_SYSTEMMEM, &s, NULL);
+        HRESULT hr = Fail(m_obj->CreateOffscreenPlainSurface(w, h, f, D3DPOOL_SYSTEMMEM, &s, NULL), "CreateImageSurface", w, h, (UINT)f, 0);
         *out = SUCCEEDED(hr) ? Wrap<Surface8>(s, this) : NULL;
         return hr;
     }

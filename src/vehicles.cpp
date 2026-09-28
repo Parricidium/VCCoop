@@ -410,7 +410,12 @@ void VehiclesAfterProcess()
         // recue : 10-16 cm de haut en bas par image, tremblements et etincelles pour le passager), mais la vitesse
         // recue reste posee : roues au sol qui tournent, son du moteur, pose du motard, CanPedExitCar.
         SetCopyFlags(v, true);
-        MoveSpeed(v) = { n.vel[0], n.vel[1], n.vel[2] };
+        {   // vitesse bornee, jamais NaN (saut de position = vitesse enorme : hors du monde, plantage 0x4B0347)
+            Vec3 vel = { n.vel[0], n.vel[1], n.vel[2] };
+            float vl = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+            if (!(vl <= 3.0f)) { float k = vl > 0 && vl < 1e30f ? 3.0f / vl : 0.0f; vel = { vel.x * k, vel.y * k, vel.z * k }; }
+            MoveSpeed(v) = vel;
+        }
         TurnSpeed(v) = { m.turn[0], m.turn[1], m.turn[2] };
         // Phares, moteur, sirene, klaxon, taxi : l'etat "abandonne" les eteint chez nous a chaque image.
         uint8_t &f9 = Field<uint8_t>(v, 0x1F9);

@@ -2,6 +2,7 @@
 // invite recherche envoie sa propre police (elle ne poursuit que lui, cf. population.cpp). Chaque autre joueur en
 // garde une copie ("ghost") qui suit l'etat recu ; une copie est reperee par (proprietaire, reference de pool).
 #include "util.h"
+#include <math.h>
 #include "vccoop.h"
 #include "net.h"
 #include "game.h"
@@ -289,7 +290,12 @@ void GhostsAfterProcess()
         float jx = n.pos[0] - Pos(g.ped).x, jy = n.pos[1] - Pos(g.ped).y, jz = n.pos[2] - Pos(g.ped).z;
         if (jx * jx + jy * jy + jz * jz > 400.0f) Teleport(g.ped, { n.pos[0], n.pos[1], n.pos[2] });
         Pos(g.ped) = { n.pos[0], n.pos[1], n.pos[2] };
-        MoveSpeed(g.ped) = { n.vel[0], n.vel[1], n.vel[2] };
+        {   // vitesse bornee, jamais NaN (saut de position = vitesse enorme : hors du monde, plantage 0x4B0347)
+            Vec3 vel = { n.vel[0], n.vel[1], n.vel[2] };
+            float vl = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+            if (!(vl <= 2.0f)) { float k = vl > 0 && vl < 1e30f ? 2.0f / vl : 0.0f; vel = { vel.x * k, vel.y * k, vel.z * k }; }
+            MoveSpeed(g.ped) = vel;
+        }
         SetHeadingMatrix(g.ped, n.heading);
         Heading(g.ped) = HeadingGoal(g.ped) = n.heading;
     }

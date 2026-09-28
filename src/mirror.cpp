@@ -730,6 +730,18 @@ static bool Execute(const uint8_t *d, int len, bool force)
             if (model > 0 && !HasModelLoaded(model)) { if (!force) return false; Log("miroir : modele d'arme %d pas charge, arme non donnee", model); return true; }
         }
     }
+    // Objet de cinematique : son modele doit etre charge (sinon SetModelIndex sans modele : plantage 0x4E0450, vu a
+    // l'arrivee d'un invite pendant la cinematique d'intro de l'hote). Charge ici, sinon rejoue plus tard, sinon laisse.
+    if (op == 0x02E5 && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v') {
+        int32_t model; memcpy(&model, d + 5, 4);
+        if (model > 0 && model < 6500 && !HasModelLoaded(model)) { RequestModel(model, 1); ((void(__cdecl *)(bool))0x40B5F0)(false); }
+        // Personnage special (109-129) ou objet de cinematique (295-299) : l'emplacement peut se dire charge sans modele
+        // (invite arrive apres les LOAD_SPECIAL_CHARACTER de l'hote) : on verifie le modele lui-meme (m_clump, +0x28).
+        bool clumpSlot = (model >= 109 && model <= 129) || (model >= 295 && model <= 299);
+        void *mi = model > 0 && model < 6500 ? ModelInfo(model) : NULL;
+        bool ready = mi && HasModelLoaded(model) && (!clumpSlot || *(void **)((uint8_t *)mi + 0x28));
+        if (!ready) { if (!force) return false; Log("miroir : modele %d de la cinematique pas charge, objet non cree", model); return true; }
+    }
     // Fils du script principal : seulement ceux que rien d'autre ne lance chez l'invite, et une seule fois.
     if (op == 0x004F && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v') {
         static const struct { int32_t label; const char *name; } allowed[] = {

@@ -4,6 +4,7 @@
 #include "vccoop.h"
 #include "game.h"
 #include "seats.h"
+#include "entities.h"
 #include <math.h>
 
 using namespace game;
@@ -120,7 +121,16 @@ bool StartEnterAnimated(void *ped, void *veh, int seat, bool walk)
     int lock = Field<int>(veh, 0x230);
     if (lock == 2 || lock == 4 || lock == 5 || lock == 7) return false;
     int slot = -1;
-    if (seat == 0) { if (VehDriver(veh)) return false; }
+    bool jack = false;
+    if (seat == 0) {
+        // Un personnage de l'IA conduit : car-jack anime (CPed::SetCarJack 0x5188A0), comme le fait le vrai joueur
+        // (avant : le conducteur etait teleporte dehors d'un coup). Jamais un joueur ni son double.
+        void *drv = VehDriver(veh);
+        if (drv) {
+            if (drv == ped || drv == FindPlayerPed() || IsPuppet(drv) || PedState(drv) != PED_DRIVING) return false;
+            jack = true;
+        }
+    }
     else { slot = FreePassengerSlot(veh); if (slot < 0) return false; }
     CleanOrphanEntryFlags(veh);
     int node = DoorNodeForSeat(ped, veh, seat == 0 ? 0 : slot + 1);
@@ -136,9 +146,10 @@ bool StartEnterAnimated(void *ped, void *veh, int seat, bool walk)
     DoorPos(&door, veh, node);
     float d2 = (door.x - p.x) * (door.x - p.x) + (door.y - p.y) * (door.y - p.y);
     if (walk && d2 > 2.5f * 2.5f) SetSeekCar(ped, veh, 0);   // loin : le jeu marche a la portiere puis lance SetEnterCar
+    else if (jack) ((void(__thiscall *)(void *, void *))0x5188A0)(ped, veh);   // CPed::SetCarJack
     else SetEnterCar(ped, veh, node);
     int st = PedState(ped);
-    if (st != PED_ENTER_CAR && st != PED_SEEK_CAR) {   // refuse (porte pas prete, animation residuelle...)
+    if (st != PED_ENTER_CAR && st != PED_SEEK_CAR && st != PED_CARJACK) {   // refuse (porte pas prete, animation residuelle...)
         Objective(ped) = 0;
         CleanUpOldReference(target, &target);
         target = NULL;

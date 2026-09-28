@@ -5,6 +5,7 @@
 //    (entities.cpp, vehicles.cpp), que l'hote ne lui envoie que dans ce mode.
 //  - Au-dela de SHARE_LEAVE_M : il retrouve sa propre population (la marge evite les bascules en boucle).
 #include "util.h"
+#include <math.h>
 #include "vccoop.h"
 #include "net.h"
 #include "game.h"
@@ -172,11 +173,36 @@ static void MergePopulation()
         if (born || (!OnScreen(ped) && dx * dx + dy * dy > 40.0f * 40.0f)) { RemovePed(ped); peds++; }
     }
     Pool *vp = VehiclePool();
+    // Invite : copies des vehicules de l'hote, pour reperer les voitures garees nees deux fois (chacun son
+    // generateur : la voiture devant l'hotel apparaissait deux fois, l'une au-dessus de l'autre).
+    static Vec3 copies[128];
+    int ncopies = 0;
+    if (!g_cfg.host)
+        for (int i = 0; i < vp->size && ncopies < 128; i++) {
+            if (vp->flags[i] & 0x80) continue;
+            void *w = vp->objects + i * VEHICLE_POOL_ENTRY;
+            if (NetVehicleId(w)) copies[ncopies++] = Pos(w);
+        }
     for (int i = 0; i < vp->size && i < 256; i++) {
         if (vp->flags[i] & 0x80) { g_vehSeen[i] = 0; continue; }
         void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
         bool born = Newborn(g_vehSeen, g_vehBirth, i, VehicleHandle(v), now);
         if (!LocalAmbientVehicle(v, me) || (g_cfg.host && LawVehicle(v))) continue;
+        // Posee dans la copie d'une voiture de l'hote : c'est la meme, la notre part (meme a l'ecran : deux voitures
+        // empilees se voient plus qu'une qui disparait). L'hote garde toujours la sienne.
+        if (!VehDriver(v)) {
+            bool stacked = false;
+            for (int k = 0; k < ncopies && !stacked; k++) {
+                float ddx = copies[k].x - Pos(v).x, ddy = copies[k].y - Pos(v).y, ddz = copies[k].z - Pos(v).z;
+                stacked = ddx * ddx + ddy * ddy < 3.5f * 3.5f && fabsf(ddz) < 3.0f;
+            }
+            if (stacked) {
+                if (g_cfg.logScripts) Log("population : vehicule garde en double avec une copie de l'hote (modele %d), retire", ModelIndex(v));
+                DeleteVehicleWithOccupants(v);
+                cars++;
+                continue;
+            }
+        }
         if (!OtherPopulates(Pos(v).x, Pos(v).y)) continue;
         float dx = Pos(v).x - Pos(me).x, dy = Pos(v).y - Pos(me).y;
         if (born || (!OnScreen(v) && dx * dx + dy * dy > 40.0f * 40.0f)) { DeleteVehicleWithOccupants(v); cars++; }
