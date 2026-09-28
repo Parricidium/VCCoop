@@ -176,7 +176,9 @@ static const wchar_t *CoopText(const char *key)
         return Put(25, buf);
     }
     if (!strcmp(key, "VCC_WA")) {
-        wsprintfA(buf, "%s : %s", fr ? "Eau moderne" : "Modern water", g_cfg.modernWater ? yes : no);
+        // 3 reglages sur une ligne (la page du jeu n'a que 12 lignes) : non / oui / oui + reflets.
+        wsprintfA(buf, "%s : %s", fr ? "Eau moderne" : "Modern water",
+                  !g_cfg.modernWater ? no : g_cfg.waterReflections ? (fr ? "avec reflets" : "with reflections") : yes);
         return Put(12, buf);
     }
     if (!strcmp(key, "VCC_RF")) {
@@ -184,7 +186,9 @@ static const wchar_t *CoopText(const char *key)
         return Put(30, buf);
     }
     if (!strcmp(key, "VCC_LI")) {
-        wsprintfA(buf, "%s : %s", fr ? "Lumieres dynamiques" : "Dynamic lights", g_cfg.dynLights ? yes : no);
+        // non / oui / avec ombres
+        wsprintfA(buf, "%s : %s", fr ? "Lumieres dynamiques" : "Dynamic lights",
+                  !g_cfg.dynLights ? no : g_cfg.lightShadows ? (fr ? "avec ombres" : "with shadows") : yes);
         return Put(13, buf);
     }
     if (!strcmp(key, "VCC_LS")) {
@@ -323,9 +327,17 @@ static void OnCoopAction(int action)
     case ACT_ANISO: g_cfg.aniso = !g_cfg.aniso; SaveIni(); break;
     case ACT_SHADOWS: g_cfg.sunShadows = !g_cfg.sunShadows; SaveIni(); break;
     case ACT_RENDERER: g_cfg.renderer = g_cfg.renderer == 9 ? 8 : 9; SaveIni(); break;
-    case ACT_WATER: g_cfg.modernWater = !g_cfg.modernWater; SaveIni(); break;
+    case ACT_WATER:   // non -> oui -> oui + reflets -> non
+        if (!g_cfg.modernWater) { g_cfg.modernWater = true; g_cfg.waterReflections = false; }
+        else if (!g_cfg.waterReflections) g_cfg.waterReflections = true;
+        else g_cfg.modernWater = false;
+        SaveIni(); break;
     case ACT_REFLECT: g_cfg.waterReflections = !g_cfg.waterReflections; SaveIni(); break;
-    case ACT_LIGHTS: g_cfg.dynLights = !g_cfg.dynLights; SaveIni(); break;
+    case ACT_LIGHTS:  // non -> oui -> avec ombres -> non
+        if (!g_cfg.dynLights) { g_cfg.dynLights = true; g_cfg.lightShadows = 0; }
+        else if (!g_cfg.lightShadows) g_cfg.lightShadows = 4;
+        else g_cfg.dynLights = false;
+        SaveIni(); break;
     case ACT_LIGHTSHADOWS: g_cfg.lightShadows = g_cfg.lightShadows ? 0 : 4; SaveIni(); break;
     case ACT_MOON: g_cfg.moonShadows = !g_cfg.moonShadows; SaveIni(); break;
     case ACT_AO: g_cfg.ambientOcclusion = !g_cfg.ambientOcclusion; SaveIni(); break;
@@ -401,7 +413,7 @@ static void BuildCoopPage()
     uint32_t key = (inGame ? 1 : 0) | (lobby ? 2 : 0) | (g_cfg.host ? 4 : 0) | (g_netStarted ? 8 : 0) | (players << 4) | (g_sub << 8);
     if (key == g_layoutKey) return;
     g_layoutKey = key;
-    struct Item { uint16_t act; const char *label; } items[12];
+    struct Item { uint16_t act; const char *label; } items[16];
     int n = 0;
     static const char *const pl[] = { "VCC_P0", "VCC_P1", "VCC_P2", "VCC_P3" };
     if (g_sub == SUB_OPTIONS) {
@@ -416,10 +428,8 @@ static void BuildCoopPage()
         items[n++] = { ACT_SHADOWS, "VCC_SH" };
         if (g_cfg.renderer == 9) {
             items[n++] = { ACT_SHADOWQ, "VCC_SQ" };
-            items[n++] = { ACT_WATER, "VCC_WA" };
-            if (g_cfg.modernWater) items[n++] = { ACT_REFLECT, "VCC_RF" };
-            items[n++] = { ACT_LIGHTS, "VCC_LI" };
-            items[n++] = { ACT_LIGHTSHADOWS, "VCC_LS" };
+            items[n++] = { ACT_WATER, "VCC_WA" };    // reflets compris
+            items[n++] = { ACT_LIGHTS, "VCC_LI" };   // ombres des lumieres comprises
             items[n++] = { ACT_MOON, "VCC_MO" };
             items[n++] = { ACT_AO, "VCC_AO" };
         }
@@ -437,6 +447,9 @@ static void BuildCoopPage()
         if (lobby) items[n++] = { ACT_CLOSELOBBY, "VCC_CL" };                       // fermer / quitter le salon
         else if (inGame && !g_cfg.host && g_netStarted) items[n++] = { ACT_DISCONNECT, "VCC_DC" };   // invite : se deconnecter
     }
+    // La page du jeu a 12 lignes en tout (MenuScreen::entries) : au-dela, on ecrasait la page suivante et le jeu
+    // plantait en ouvrant Options video (13 lignes en 28y). "Retour" garde toujours sa place.
+    if (n > 11) { Log("menu : %d lignes, coupees a 11 (+ Retour)", n); n = 11; }
     items[n++] = { (uint16_t)(g_sub == SUB_MAIN ? ACT_GOBACK : ACT_BACKSUB), "FEDS_TB" };
     MenuScreen &c = Screens()[PAGE_COOP];
     memset(c.entries, 0, sizeof(c.entries));
@@ -506,8 +519,18 @@ void MenuFrame()
             return;
         }
         if (_stricmp(g_cfg.testMenuPlan, "options") == 0) {   // Options > Options video, puis Echap x2 (retour accueil)
-            if (step == 0 && CurrentPage() == PAGE_COOP) { g_pendingSelect = 3; step = 1; since = now; }
-            else if (step == 1 && now - since > 1500) { g_pendingSelect = 1; step = 2; since = now; Log("menu : test, sous-page %d", g_sub); }
+            static bool shown;
+            // Lignes cherchees par action (leur place change selon l'etat du menu).
+            auto find = [](int act) { for (int i = 0; i < 12; i++) if (Screens()[PAGE_COOP].entries[i].action == act) return i; return -1; };
+            if (step == 0 && CurrentPage() == PAGE_COOP && find(ACT_OPTIONS) >= 0) { g_pendingSelect = find(ACT_OPTIONS); step = 1; since = now; }
+            else if (step == 0 && CurrentPage() == PAGE_COOP && find(ACT_OPTVIDEO) >= 0) { g_pendingSelect = find(ACT_OPTVIDEO); step = 2; since = now; }   // salon
+            else if (step == 1 && now - since > 1500 && find(ACT_OPTVIDEO) >= 0) {
+                g_pendingSelect = find(ACT_OPTVIDEO); step = 2; since = now; Log("menu : test, sous-page %d", g_sub);
+            } else if (step == 2 && now - since > 1500 && g_sub == SUB_VIDEO && !shown) {
+                shown = true;
+                int n = 0; for (int i = 0; i < 12; i++) n += Screens()[PAGE_COOP].entries[i].action != 0;
+                Log("menu : test, Options video ouvertes : %d lignes, page suivante intacte : %.8s", n, Screens()[PAGE_COOP + 1].name);
+            }
             else if (step == 2 && now - since > 4000) { g_pendingBack = true; step = 3; since = now; Log("menu : test, sous-page %d", g_sub); }
             else if (step == 3 && now - since > 1500) { g_pendingBack = true; step = 4; since = now; Log("menu : test, sous-page %d", g_sub); }
             else if (step == 4 && now - since > 1500) { step = 5; Log("menu : test, sous-page %d, page %d", g_sub, CurrentPage()); }
