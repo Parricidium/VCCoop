@@ -31,7 +31,7 @@ enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
        ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
-       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO };
+       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
 enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
@@ -93,6 +93,7 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "OmbresLumieres", g_cfg.lightShadows ? "4" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OmbresLune", g_cfg.moonShadows ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OcclusionAmbiante", g_cfg.ambientOcclusion ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "VuePremierePersonne", g_cfg.fpsView ? "1" : "0", ini);
     wsprintfA(dd, "%d", g_cfg.shadowRes);
     WritePrivateProfileStringA("VCCoop", "OmbresResolution", dd, ini);
     if (!WritePrivateProfileStringA("VCCoop", "FiltrageAnisotrope", g_cfg.aniso ? "1" : "0", ini))
@@ -100,7 +101,7 @@ static void SaveIni()
 }
 
 // --- Textes ---
-static wchar_t g_text[32][80];
+static wchar_t g_text[40][80];
 
 static const wchar_t *Put(int slot, const char *s)
 {
@@ -194,6 +195,12 @@ static const wchar_t *CoopText(const char *key)
     if (!strcmp(key, "VCC_LS")) {
         wsprintfA(buf, "%s : %s", fr ? "Ombres des lumieres" : "Light shadows", g_cfg.lightShadows ? yes : no);
         return Put(14, buf);
+    }
+    if (!strcmp(key, "VCC_FP")) {
+        char k[8];
+        if (g_cfg.fpsKey >= VK_F1 && g_cfg.fpsKey <= VK_F12) wsprintfA(k, "F%d", g_cfg.fpsKey - VK_F1 + 1); else wsprintfA(k, "%c", g_cfg.fpsKey);
+        wsprintfA(buf, "%s (%s) : %s", fr ? "Vue premiere personne" : "First person view", k, g_cfg.fpsView ? yes : no);
+        return Put(32, buf);
     }
     if (!strcmp(key, "VCC_AO")) {
         wsprintfA(buf, "%s : %s", fr ? "Occlusion ambiante" : "Ambient occlusion", g_cfg.ambientOcclusion ? yes : no);
@@ -341,6 +348,7 @@ static void OnCoopAction(int action)
     case ACT_LIGHTSHADOWS: g_cfg.lightShadows = g_cfg.lightShadows ? 0 : 4; SaveIni(); break;
     case ACT_MOON: g_cfg.moonShadows = !g_cfg.moonShadows; SaveIni(); break;
     case ACT_AO: g_cfg.ambientOcclusion = !g_cfg.ambientOcclusion; SaveIni(); break;
+    case ACT_FPS: g_cfg.fpsView = !g_cfg.fpsView; SaveIni(); break;
     case ACT_SHADOWQ:
         g_cfg.shadowRes = g_cfg.shadowRes >= 8192 ? 2048 : g_cfg.shadowRes >= 4096 ? 8192 : 4096;
         SaveIni();
@@ -433,6 +441,7 @@ static void BuildCoopPage()
             items[n++] = { ACT_MOON, "VCC_MO" };
             items[n++] = { ACT_AO, "VCC_AO" };
         }
+        items[n++] = { ACT_FPS, "VCC_FP" };
         items[n++] = { ACT_RENDERER, "VCC_RD" };
     } else if (!g_netStarted && !inGame) {
         // Accueil : Creer / Rejoindre / Pseudo / Options (coop + video : a regler avant de creer ou rejoindre).
