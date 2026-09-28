@@ -169,6 +169,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         if (target && !cur && !LocallyDriven(target, ped)) { MoveSpeed(target) = { 0, 0, 0 }; TurnSpeed(target) = { 0, 0, 0 }; }
         int st = PedState(ped);
         bool atDoor = st == 58 || st == 59;   // porte ouverte, en train de s'asseoir : on laisse finir
+        { static uint32_t lastDiag; if (now - lastDiag > 1000) { lastDiag = now; char who[24]; wsprintfA(who, "Tommy %d", s.id); LogEnterProgress(ped, who); } }
         if (cur) { pp.entering = false; pp.seatedAt = now; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
         // Chez lui c'est fini depuis 3,5 s et notre double n'y est toujours pas (il cherche encore la portiere) : on le pose.
         else if (!(atDoor && now - pp.busySince < 10000) &&
@@ -202,23 +203,25 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     // Notre animation de montee est finie avant la sienne (son etat dit encore "en train de monter") : il reste
     // assis (avant : pose dehors puis reassis quand son etat passait a "a bord" : la voiture partait vide).
     if (cur && !s.inVehicle && s.enterId && NetVehicleById(s.enterId) == cur) return true;
-    if (!cur && !s.inVehicle && s.enterId) {
+    if (!cur && !s.inVehicle && s.enterId && now - pp.busySince > 1000) {
         void *veh = NetVehicleById(s.enterId);
-        // Passager : l'IA du jeu refuse de faire monter un personnage en passager d'une voiture conduite par un
-        // joueur (essaye dans les deux sens) : il sera pose a sa place quand il sera assis chez lui.
         bool passenger = s.enterSeat != 0;
-        // Moto : l'objectif "monter au volant" n'aboutit pas (le double etait pose puis repris a chaque image) : pose direct.
-        if (veh && !passenger && VehClass(veh) != VCLASS_BIKE) {
-            EvictNpcDriver(veh, s);
-            bool ok = !VehDriver(veh);
-            if (ok) {
-                int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(veh) };
-                MirrorLocal(passenger ? 0x01D4 : 0x01D5, 2, a);
+        // Voiture ou moto, volant ou passager : la sequence animee du jeu (portiere, assise), lancee directement
+        // (seats.cpp) quand le double arrive pres de la portiere. Jusque-la il suit la position recue : c'est
+        // l'autre joueur qui marche jusqu'a la porte chez lui (la marche de l'IA ne deplacait pas le double).
+        if (veh && EntityStatus(veh) != STATUS_WRECKED && DoorDistance(ped, veh, passenger ? 1 : 0) < 2.5f) {
+            if (!passenger) EvictNpcDriver(veh, s);
+            if (!LocallyDriven(veh, ped)) { MoveSpeed(veh) = { 0, 0, 0 }; TurnSpeed(veh) = { 0, 0, 0 }; }
+            if (StartEnterAnimated(ped, veh, passenger ? 1 : 0, false)) {
                 pp.entering = true;
                 pp.busySince = now;
-                Log("coop : Tommy %d monte dans %08X (animation, %s)", s.id, s.enterId, passenger ? "passager" : "au volant");
+                pp.anims.count = 0;
+                Log("coop : Tommy %d monte dans %08X (animation, %s%s)", s.id, s.enterId, passenger ? "passager" : "au volant",
+                    VehClass(veh) == VCLASS_BIKE ? ", moto" : "");
                 return true;
             }
+            pp.busySince = now;   // refuse : on reessaie dans 1 s (porte pas prete...), sinon pose quand il sera assis
+            if (g_cfg.logScripts) Log("coop : Tommy %d : montee animee refusee (etat %d)", s.id, PedState(ped));
         }
     }
     if (cur && s.exiting && (s.inVehicle ? cur == want : true) && now - pp.seatedAt > 1000) {
@@ -287,7 +290,7 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     bool down = s.down || s.health <= 0.0f;
     // (Seulement a pied : assis dans un vehicule, le jeu coupe lui-meme la collision du personnage ; la remettre a
     // chaque image faisait un corps solide DANS la voiture de l'hote, qui devenait inconduisible et delogeait le pantin.)
-    if (!InVehicle(ped)) {
+    if (!InVehicle(ped) && !EnterInProgress(ped)) {   // (le jeu coupe la collision pendant la montee : on n'y touche pas)
         uint8_t &col = Field<uint8_t>(ped, 0x51);
         if (down) col &= ~0x01; else col |= 0x01;
     }
@@ -731,9 +734,10 @@ static void BoardingFrame()
     if (g_boarding && me) {
         bool in = InVehicle(me) && PedVehicle(me) == g_boarding;
         bool moving = EnteringState(PedState(me));
+        { static uint32_t lastDiag; if (now - lastDiag > 1000) { lastDiag = now; LogEnterProgress(me, "moi"); } }
         if (in) { Log("coop : a bord (animation, %u ms)", now - g_boardingSince); g_boarding = NULL; }
-        else if (now - g_boardingSince > 4000 || (now - g_boardingSince > 700 && !moving)) {
-            ((void(__thiscall *)(void *))0x521720)(me);   // CPed::ClearObjective
+        else if (now - g_boardingSince > 6000 || (now - g_boardingSince > 700 && !moving && !EnterInProgress(me))) {
+            AbortEnter(me);
             if (WarpIntoSeat(me, g_boarding, g_boardingSeat)) Log("coop : je monte a bord (pose directement, place %d)", SeatOf(g_boarding, me));
             else Log("coop : plus de place dans ce vehicule");
             g_boarding = NULL;
@@ -794,8 +798,12 @@ bool TogglePassenger()
     if (!best) return false;
     int seat = VehDriver(best) ? 1 : 0;
     if (seat && Field<uint8_t>(best, 0x1CC) >= Field<uint8_t>(best, 0x1D0)) { Log("coop : plus de place dans ce vehicule"); return true; }
-    int32_t a[2] = { (int32_t)PedHandle(me), (int32_t)VehicleHandle(best) };
-    MirrorLocal(seat ? 0x01D4 : 0x01D5, 2, a);
+    // Pres de la portiere : la sequence animee du jeu ; loin : pose directement (la marche de l'IA n'avance pas).
+    if (DoorDistance(me, best, seat) > 2.5f || !StartEnterAnimated(me, best, seat, false)) {
+        if (WarpIntoSeat(me, best, seat)) Log("coop : je monte a bord (pose directement, place %d, trop loin de la portiere)", SeatOf(best, me));
+        else Log("coop : plus de place dans ce vehicule");
+        return true;
+    }
     g_boarding = best;
     RegisterReference(best, &g_boarding);
     g_boardingSince = GetTickCount();

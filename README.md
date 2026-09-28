@@ -193,9 +193,9 @@ Test build. A report with the `logs\` files of **both** players helps a lot.
 
 1. **Vehicle damage caused by a non-owner**: bullets are sent to the owner, but body damage from
    collisions with a copy is not; fire is not synchronised.
-2. **Passengers seen from the outside** are seated directly (once seated on their side): the game's
-   AI refuses the passenger-entry animation towards a player-driven car. Drivers have the full
-   animation.
+2. **Getting in from far away**: the entry animation (door, seat, bike jump) plays for drivers and
+   passengers, cars and bikes, when the player is next to the door; a player who presses the key from
+   farther than 2.5 m is seated directly.
 3. **Followers (Lance...) follow the host**: for escort missions, travel together.
 4. **A guest who reloaded their game a different number of times than the host** can, rarely, get a
    wrong script variable from a full sync (crash risk being investigated).
@@ -395,9 +395,9 @@ Version de test. Un rapport avec les fichiers `logs\` des **deux** joueurs aide 
 
 1. **Dégâts de véhicule faits par un non-propriétaire** : les balles sont envoyées au propriétaire,
    pas la tôle froissée par un choc contre une copie ; le feu n'est pas synchronisé.
-2. **Passagers vus de l'extérieur** : posés directement sur le siège (une fois assis chez eux) ;
-   l'IA du jeu refuse l'animation d'entrée en passager vers une voiture conduite par un joueur. Les
-   conducteurs ont l'animation complète.
+2. **Montée de loin** : l'animation de montée (portière, assise, saut sur la moto) se joue pour
+   conducteurs et passagers, voitures et motos, quand le joueur est à côté de la porte ; s'il appuie
+   à plus de 2,5 m, il est posé directement.
 3. **Les personnages qui suivent (Lance...) suivent l'hôte** : pour ces missions, venez ensemble.
 4. **Un invité qui a rechargé sa partie un nombre de fois différent de l'hôte** peut, rarement,
    recevoir une mauvaise variable de script lors d'une synchro complète (risque de plantage à
