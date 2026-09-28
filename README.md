@@ -140,6 +140,9 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   400 %), anti-aliasing (`Anticrenelage`, MSAA 2x/4x/8x), anisotropic filtering 16x + trilinear
   (`FiltrageAnisotrope`), **modern renderer** (`Rendu=9`, default) and **sun shadows** (`OmbresSoleil`,
   quality `OmbresResolution` 2048 / 4096 / 8192).
+- **Population**: pedestrians and traffic spawn further away and stay while you are in the area, whether you
+  look at them or not (`ZonePopulation`, 100 to 200 %, the host's value counts); more of them at once
+  (`DensitePopulation`, 50 to 300 %). The game's pools are doubled (280 characters, 220 vehicles).
 - **Modern renderer**: VCCoop contains its own Direct3D 8 → Direct3D 9 bridge (no third-party wrapper, nothing
   to install). The game draws exactly as before, and VCCoop then works in Direct3D 9 with HLSL shaders
   (compiled at launch by Windows' own `d3dcompiler_47.dll`). `Rendu=8` goes back to the original Direct3D 8.
@@ -363,6 +366,9 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   (`DistanceAffichage`, 100 à 400 %), anticrénelage (`Anticrenelage`, MSAA 2x/4x/8x), filtrage
   anisotrope 16x + trilinéaire (`FiltrageAnisotrope`), **rendu moderne** (`Rendu=9`, par défaut) et
   **ombres du soleil** (`OmbresSoleil`, qualité `OmbresResolution` 2048 / 4096 / 8192).
+- **Population** : passants et voitures naissent plus loin et restent tant qu'on est dans la zone, qu'on les
+  regarde ou non (`ZonePopulation`, 100 à 200 %, c'est la valeur de l'hôte qui compte) ; plus nombreux en même
+  temps (`DensitePopulation`, 50 à 300 %). Les réserves du jeu sont doublées (280 personnages, 220 véhicules).
 - **Rendu moderne** : VCCoop contient son propre pont Direct3D 8 → Direct3D 9 (aucun wrapper tiers, rien à
   installer). Le jeu dessine exactement comme avant, puis VCCoop travaille en Direct3D 9 avec des shaders HLSL
   (compilés au lancement par `d3dcompiler_47.dll`, fourni avec Windows). `Rendu=8` revient au Direct3D 8 d'origine.

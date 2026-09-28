@@ -53,6 +53,12 @@ static void LoadConfig()
     g_cfg.keepWeapons = GetPrivateProfileIntA("VCCoop", "GarderArmes", 1, ini) != 0;
     g_cfg.respawnAtHost = GetPrivateProfileIntA("VCCoop", "ReapparitionHote", 0, ini) != 0;
     g_cfg.drawDistance = GetPrivateProfileIntA("VCCoop", "DistanceAffichage", 200, ini);
+    g_cfg.zonePop = GetPrivateProfileIntA("VCCoop", "ZonePopulation", 150, ini);
+    g_cfg.popDensity = GetPrivateProfileIntA("VCCoop", "DensitePopulation", 150, ini);
+    if (g_cfg.popDensity < 50) g_cfg.popDensity = 50;
+    if (g_cfg.popDensity > 300) g_cfg.popDensity = 300;
+    if (g_cfg.zonePop < 100) g_cfg.zonePop = 100;
+    if (g_cfg.zonePop > 200) g_cfg.zonePop = 200;
     g_cfg.msaa = GetPrivateProfileIntA("VCCoop", "Anticrenelage", 4, ini);
     g_cfg.aniso = GetPrivateProfileIntA("VCCoop", "FiltrageAnisotrope", 1, ini) != 0;
     g_cfg.sunShadows = GetPrivateProfileIntA("VCCoop", "OmbresSoleil", 1, ini) != 0;

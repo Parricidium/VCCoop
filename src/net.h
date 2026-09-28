@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 13 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 14 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -78,6 +78,7 @@ struct MsgWorld {
     float fade;              // niveau du fondu de la camera de l'hote (0 = image claire, 255 = noir)
     uint8_t fading, widescreen;
     uint8_t friendlyFire;    // les joueurs peuvent se blesser entre eux (reglage TirAmi de l'hote)
+    uint8_t zonePop;         // ZonePopulation de l'hote (%) : tout le monde calcule la meme zone de l'hote
 };
 // Vehicule reseau : identifiant = (numero du joueur qui l'a cree << 24) | compteur.
 struct MsgVehicle {
@@ -167,4 +168,4 @@ bool NearOtherPlayer(const float *p, uint8_t area, float r);
 enum { SHARE_ENTER_M = 150, SHARE_LEAVE_M = 210, AMBIENT_SHARE_M = 260 };
 // Zone ou l'hote peuple le monde (sa portee de generation : passants, circulation, voitures garees a 90-110 m).
 // Au-dela, chaque invite peuple le sien et le partage ; une entite recue de plus loin que AMBIENT_DROP_M est ignoree.
-enum { HOST_ZONE_M = 110, AMBIENT_DROP_M = 330 };
+enum { HOST_ZONE_M = 110, AMBIENT_DROP_M = 330 };   // HOST_ZONE_M : a ZonePopulation=100 (HostZoneM)
