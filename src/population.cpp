@@ -53,7 +53,8 @@ static float Dist2(const Vec3 &a, float x, float y) { return (a.x - x) * (a.x - 
 // Vrai si un AUTRE joueur doit peupler ce point (nous n'y faisons rien naitre).
 static bool OtherPopulates(float x, float y)
 {
-    const float z2 = (float)HOST_ZONE_M * HOST_ZONE_M;
+    const float hz = HOST_ZONE_M * g_cfg.zonePop / 100.0f;
+    const float z2 = hz * hz;
     if (!g_cfg.host) {
         Vec3 h;
         return HostPos(h) && Dist2(h, x, y) < z2;
@@ -99,8 +100,39 @@ static void __fastcall h_CarGenProcess(void *gen, void *edx)
     if (!OtherPopulates(p[0], p[1])) o_CarGenProcess(gen, edx);
 }
 
+// --- Reserves du jeu agrandies ---
+// CPools::Initialise (0x4C02xx) cree la reserve des personnages (140) et des vehicules (110) : joueurs, copies,
+// passants et voitures s'y partagent la place. Doublees (comme le font les "limit adjusters" en .asi), avant que le
+// jeu ne les cree (notre dll est chargee avant WinMain). Les tableaux du mod indexes par case vont jusqu'a 512 / 256.
+enum { PED_POOL = 280, VEH_POOL = 220 };
+static void *g_poolCtor;
+static __declspec(naked) void VehiclePoolSize()
+{
+    __asm {
+        pop eax             // retour
+        push VEH_POOL       // taille (au lieu de 110)
+        push eax
+        jmp g_poolCtor      // CPool::CPool(taille, nom), thiscall : ecx = la reserve
+    }
+}
+static void EnlargePools()
+{
+    const uint8_t *p = (const uint8_t *)0x4C02C7;   // push 140 ; call CPool<CPed>::CPool
+    const uint8_t *v = (const uint8_t *)0x4C02E9;   // push 110 ; call CPool<CVehicle>::CPool
+    if (p[0] != 0x68 || *(const uint32_t *)(p + 1) != 140 || v[0] != 0x6A || v[1] != 110 || v[2] != 0xE8) {
+        Log("population : reserves du jeu inattendues, taille d'origine gardee");
+        return;
+    }
+    uint32_t peds = PED_POOL;
+    Patch(0x4C02C8, &peds, 4);
+    g_poolCtor = (void *)(0x4C02EB + 5 + *(const int32_t *)(v + 3));
+    PatchCall(0x4C02E9, (void *)VehiclePoolSize, 7);
+    Log("population : reserves agrandies (%d personnages, %d vehicules)", PED_POOL, VEH_POOL);
+}
+
 void InstallPopulation()
 {
+    EnlargePools();
     static const uint8_t genPro[] = { 0x80, 0x3D, 0xB2, 0x0A, 0xA1, 0x00, 0x00 };
     o_GenerateRandomCars = (GenCars_t)MakeDetour(0x4292A0, genPro, sizeof(genPro), (void *)h_GenerateRandomCars);
     static const uint8_t carGenPro[] = { 0x53, 0x56, 0x57, 0x55, 0x81, 0xEC, 0xC0, 0x00, 0x00, 0x00 };
@@ -210,8 +242,62 @@ static void MergePopulation()
     if ((peds || cars) && g_cfg.logScripts) Log("population : %d passants et %d vehicules en double retires", peds, cars);
 }
 
+// --- Population gardee tant qu'on est dans la zone, zone agrandie ---
+// Le jeu retire un passant hors de l'ecran des 25 m (a l'ecran : ~51 m) et une voiture hors de l'ecran des 40 m
+// (a l'ecran : 120 m) : en tournant la camera, la rue se vidait derriere soi. Sauf pendant ses minuteries de
+// "portee etendue" (CPed +0x35C, lue par CPopulation::ManagePopulation 0x53D690 ; CVehicle +0x214,
+// m_nSetPieceExtendedRangeTime, lue par CCarCtrl::PossiblyRemoveVehicle 0x426030), qu'on prolonge : ils ne partent
+// plus qu'a la distance normale, qu'on les regarde ou non. Nombre maximal (MaxNumberOfPedsInUse 0x694DC8 = 25,
+// MaxNumberOfCarsInUse 0x686FCC = 12) a l'echelle de ZonePopulation.
+static void KeepPopulation()
+{
+    static uint32_t last;
+    uint32_t now = GetTickCount();
+    if (now - last < 250) return;
+    last = now;
+    *(int *)0x694DC8 = 25 * g_cfg.zonePop / 100 * g_cfg.popDensity / 100;
+    *(int *)0x686FCC = 12 * g_cfg.zonePop / 100 * g_cfg.popDensity / 100;
+    // DensitePopulation : multiplie la densite voulue par le jeu (et par les missions, SET_PED/CAR_DENSITY_MULTIPLIER :
+    // une valeur changee par quelqu'un d'autre que nous devient la nouvelle base, rues videes comprises).
+    static float lastPed = -1.0f, basePed = 1.0f, lastCar = -1.0f, baseCar = 1.0f;
+    float k = g_cfg.popDensity / 100.0f;
+    if (!g_hostClose) {   // invite colle a l'hote : densite a 0 (c'est l'hote qui peuple), on n'y touche pas
+        if (PedDensity() != lastPed) basePed = PedDensity();
+        lastPed = PedDensity() = basePed * k;
+    }
+    float &carDensity = *(float *)0x686FC8;   // CCarCtrl::CarDensityMultiplier
+    if (carDensity != lastCar) baseCar = carDensity;
+    lastCar = carDensity = baseCar * k;
+    uint32_t until = *(uint32_t *)0x974B2C + 3000;   // horloge du jeu (CTimer::m_snTimeInMilliseconds)
+    void *me = FindPlayerPed();
+    int nPeds = 0, nCars = 0;
+    Pool *pp = PedPool();
+    for (int i = 0; i < pp->size; i++) {
+        if (pp->flags[i] & 0x80) continue;
+        void *ped = pp->objects + i * PED_POOL_ENTRY;
+        if (ped == me || CharCreatedBy(ped) != 1 || IsPuppet(ped) || IsGhostPed(ped)) continue;
+        Field<uint32_t>(ped, 0x35C) = until;
+        nPeds++;
+    }
+    Pool *vp = VehiclePool();
+    for (int i = 0; i < vp->size; i++) {
+        if (vp->flags[i] & 0x80) continue;
+        void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+        if (Field<uint8_t>(v, 0x1F8) != 1 || NetVehicleIsCopy(v)) continue;   // circulation (RANDOM_VEHICLE) d'ici
+        Field<uint32_t>(v, 0x214) = until;
+        nCars++;
+    }
+    static uint32_t lastLog;
+    if (now - lastLog > 10000) {
+        lastLog = now;
+        Log("population : %d passants et %d voitures d'ici (plafonds %d / %d, reserves %d / %d, zone %d%%, densite %d%%)",
+            nPeds, nCars, *(int *)0x694DC8, *(int *)0x686FCC, pp->size, vp->size, g_cfg.zonePop, g_cfg.popDensity);
+    }
+}
+
 void PopulationFrame(bool inGame)
 {
+    if (inGame) KeepPopulation();
     if (inGame && g_cfg.host) {
         bool any = false;
         for (int i = 1; i < MAX_PLAYERS; i++) any |= g_players[i].connected;

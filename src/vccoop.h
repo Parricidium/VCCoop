@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28zf"
+#define VCCOOP_VERSION "2026.09.28zg"
 struct Config {
     bool windowed;
     bool borderless;
@@ -25,6 +25,8 @@ struct Config {
     bool shareWanted;   // RecherchePartagee=1 : etoiles de police communes
     bool hostPolice;    // PoliceHote=1 : pres de l'hote, seule sa police existe et elle poursuit aussi les invites
     bool shareMoney;    // ArgentPartage=1 (hote) : l'argent donne par les missions va aussi aux invites
+    int popDensity;     // DensitePopulation=150 (en %, 50 a 300) : passants et voitures en meme temps
+    int zonePop;        // ZonePopulation=150 (en %, 100 a 200) : zone ou naissent passants et voitures, et leur nombre
     int drawDistance;   // DistanceAffichage=200 (en %) : detail, passants et vehicules visibles plus loin
     int msaa;           // Anticrenelage=4 : 0, 2, 4 ou 8 echantillons (au prochain lancement)
     bool aniso;         // FiltrageAnisotrope=1 : textures nettes au loin (16x, trilineaire)

@@ -116,6 +116,9 @@ bool TrackSample(const Track &tr, int src, Snap &o, bool linear)
 // personnages) ; la memoire de chargement (CStreaming::ms_memoryAvailable, 0x94DD54, 45 Mo) suit.
 static void ApplyDrawDistance()
 {
+    // ZonePopulation : la zone de naissance et de maintien des passants et voitures, en plus (le nombre maximal suit,
+    // population.cpp : la densite reste la meme sur une zone plus grande).
+    *(float *)0x7E477C *= g_cfg.zonePop / 100.0f;
     float f = g_cfg.drawDistance / 100.0f;
     if (f <= 1.0f) return;
     *(float *)0x7E4778 *= f;

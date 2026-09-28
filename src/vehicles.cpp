@@ -122,6 +122,12 @@ uint32_t NetVehicleId(void *veh)
 }
 
 // Copie : roule-t-elle chez son proprietaire ? (sa vitesse physique est tenue a zero ici)
+bool NetVehicleIsCopy(void *veh)
+{
+    NetVehicle *e = FindByPtr(veh);
+    return e && e->owner != g_localId;
+}
+
 bool NetVehicleMoving(void *veh)
 {
     NetVehicle *e = FindByPtr(veh);
