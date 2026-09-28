@@ -31,7 +31,7 @@ enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
        ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
-       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS };
+       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS, ACT_POPZONE, ACT_POPDENS };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
 enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
@@ -94,6 +94,10 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "OmbresLune", g_cfg.moonShadows ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OcclusionAmbiante", g_cfg.ambientOcclusion ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "VuePremierePersonne", g_cfg.fpsView ? "1" : "0", ini);
+    wsprintfA(dd, "%d", g_cfg.zonePop);
+    WritePrivateProfileStringA("VCCoop", "ZonePopulation", dd, ini);
+    wsprintfA(dd, "%d", g_cfg.popDensity);
+    WritePrivateProfileStringA("VCCoop", "DensitePopulation", dd, ini);
     wsprintfA(dd, "%d", g_cfg.shadowRes);
     WritePrivateProfileStringA("VCCoop", "OmbresResolution", dd, ini);
     if (!WritePrivateProfileStringA("VCCoop", "FiltrageAnisotrope", g_cfg.aniso ? "1" : "0", ini))
@@ -153,6 +157,14 @@ static const wchar_t *CoopText(const char *key)
     if (!strcmp(key, "VCC_PS2")) {
         wsprintfA(buf, "%s : %s", fr ? "Pseudos" : "Names", g_cfg.showNames ? yes : no);
         return Put(8, buf);
+    }
+    if (!strcmp(key, "VCC_PZ")) {
+        wsprintfA(buf, "%s : %d%%", fr ? "Zone de population" : "Population area", g_cfg.zonePop);
+        return Put(33, buf);
+    }
+    if (!strcmp(key, "VCC_PD")) {
+        wsprintfA(buf, "%s : %d%%", fr ? "Densite de population" : "Population density", g_cfg.popDensity);
+        return Put(34, buf);
     }
     if (!strcmp(key, "VCC_GA")) {
         wsprintfA(buf, "%s : %s", fr ? "Garder ses armes" : "Keep weapons", g_cfg.keepWeapons ? yes : no);
@@ -328,6 +340,15 @@ static void OnCoopAction(int action)
     case ACT_MONEY: g_cfg.shareMoney = !g_cfg.shareMoney; SaveIni(); break;
     case ACT_NAMES: g_cfg.showNames = !g_cfg.showNames; SaveIni(); break;
     case ACT_WEAPONS: g_cfg.keepWeapons = !g_cfg.keepWeapons; SaveIni(); break;
+    case ACT_POPZONE: g_cfg.zonePop = g_cfg.zonePop >= 200 ? 100 : g_cfg.zonePop + 25; SaveIni(); break;   // 100..200 par 25
+    case ACT_POPDENS: {
+        static const int steps[] = { 50, 100, 150, 200, 250, 300 };
+        int i = 0;
+        while (i < 6 && steps[i] <= g_cfg.popDensity) i++;
+        g_cfg.popDensity = steps[i % 6];
+        SaveIni();
+        break;
+    }
     case ACT_ADDRESS: BeginEdit(EDIT_ADDRESS); break;
     case ACT_NICK: BeginEdit(EDIT_NICK); break;
     case ACT_MSAA: g_cfg.msaa = g_cfg.msaa >= 8 ? 0 : g_cfg.msaa < 2 ? 2 : g_cfg.msaa * 2; SaveIni(); break;
@@ -431,6 +452,7 @@ static void BuildCoopPage()
     } else if (g_sub == SUB_COOP) {
         items[n++] = { ACT_FRIENDLY, "VCC_TA" }; items[n++] = { ACT_MONEY, "VCC_AP" };
         items[n++] = { ACT_NAMES, "VCC_PS2" }; items[n++] = { ACT_WEAPONS, "VCC_GA" };
+        items[n++] = { ACT_POPZONE, "VCC_PZ" }; items[n++] = { ACT_POPDENS, "VCC_PD" };   // (reglages de l'hote, envoyes)
     } else if (g_sub == SUB_VIDEO) {
         items[n++] = { ACT_DRAWDIST, "VCC_DD" }; items[n++] = { ACT_MSAA, "VCC_AA" }; items[n++] = { ACT_ANISO, "VCC_AF" };
         items[n++] = { ACT_SHADOWS, "VCC_SH" };
