@@ -112,9 +112,10 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   steering, wheel spin, radio station of the driver, colours, visible damage (doors, panels, lights,
   tyres), wrecks, and health lost to another player's bullets. Players get in and out with the game's
   own animations, door included, crawling out of an overturned car included.
-- **Shared world**: near the host (150 m) a guest sees the same pedestrians and traffic; farther
-  away (210 m) they have their own city. Parked mission vehicles, pickups and shop icons are set up
-  locally by each player.
+- **Shared world, merged**: the host populates the area around them (110 m, their generation range);
+  beyond it each guest populates their own part of the city and shares it with nearby players, so
+  everyone sees the same pedestrians, traffic and parked vehicles (PCJ-600 and other fixed spawns
+  included). Duplicates are removed as they spawn, off-screen, never in front of a player.
 - **Police**: shared wanted level. Near the host, only the host's police exists (`PoliceHote=1`): its cops
   that are not chasing the host go after the nearest wanted guest and shoot at them for real; guests see
   them. A guest far from the host has their own police. Crimes by a guest on the host's pedestrians give
@@ -309,9 +310,11 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   (portes, panneaux, phares, pneus), épaves, et santé perdue sous les balles d'un autre joueur. Montée
   et descente avec les animations du jeu, portière comprise, sortie en rampant d'une voiture
   retournée comprise.
-- **Monde partagé** : près de l'hôte (150 m) un invité voit les mêmes passants et la même
-  circulation ; plus loin (210 m) il retrouve sa propre ville. Véhicules garés de mission, pickups et
-  icônes des boutiques sont posés en local chez chacun.
+- **Monde partagé, fusionné** : l'hôte peuple la zone autour de lui (110 m, sa portée de génération) ;
+  au-delà, chaque invité peuple son coin de ville et le partage avec les joueurs proches : tout le monde
+  voit les mêmes passants, la même circulation et les mêmes voitures garées (PCJ-600 et autres
+  emplacements fixes compris). Les doublons sont retirés à leur apparition, hors écran, jamais sous les
+  yeux d'un joueur.
 - **Police** : niveau de recherche commun. Près de l'hôte, seule sa police existe (`PoliceHote=1`) : ses
   policiers qui ne poursuivent pas l'hôte prennent en chasse l'invité recherché le plus proche et lui
   tirent dessus pour de vrai ; les invités les voient. Un invité loin de l'hôte a sa propre police. Les

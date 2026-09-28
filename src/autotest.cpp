@@ -64,7 +64,8 @@ void AutotestFrame()
         controlSince = frame;
         Log("autotest : le joueur a la main (image %u)", frame);
     }
-    if (_stricmp(g_cfg.autotest, "rejoindre") == 0) {
+    bool farJoin = _stricmp(g_cfg.autotest, "loin") == 0;   // comme rejoindre, mais 160 m devant l'hote (hors de sa zone)
+    if (farJoin || _stricmp(g_cfg.autotest, "rejoindre") == 0) {
         static bool done;
         const NetPlayer &host = g_players[g_localId == 0 ? 1 : 0];   // l'hote va aupres du joueur 1
         if (!done && frame - controlSince > 60 && g_localId >= 0 && host.connected && host.state.inGame) {
@@ -74,7 +75,8 @@ void AutotestFrame()
             // 8 m devant l'hote et 2,5 m sur sa droite (avant = (-sin h, cos h), droite = (cos h, sin h)) :
             // dans le champ de sa camera sans etre cache par son corps.
             float hh = host.state.heading, fx = -sinf(hh), fy = cosf(hh), rx = cosf(hh), ry = sinf(hh);
-            p = { host.state.pos[0] + fx * 8.0f + rx * 2.5f, host.state.pos[1] + fy * 8.0f + ry * 2.5f, host.state.pos[2] + 0.5f };
+            float ahead = farJoin ? 160.0f : 8.0f;
+            p = { host.state.pos[0] + fx * ahead + rx * 2.5f, host.state.pos[1] + fy * ahead + ry * 2.5f, host.state.pos[2] + (farJoin ? 3.0f : 0.5f) };
             MoveSpeed(ped) = { 0, 0, 0 };
             float h = hh + 3.14159f;
             SetHeadingMatrix(ped, h);
