@@ -408,6 +408,12 @@ void AutotestFrame()
             if (dx * dx + dy * dy < 64.0f) {
                 boarded = true;
                 boardedAt = frame;
+                // Pose a 2 m de la portiere avant droite (la montee animee se joue pres de la porte, sinon pose directe).
+                if (void *v = NetVehicleById(h.state.vehicleId)) {
+                    Vec3 r = Field<Vec3>(v, 0x04);
+                    Pos(ped) = { Pos(v).x + r.x * 2.2f, Pos(v).y + r.y * 2.2f, Pos(v).z + 0.4f };
+                    MoveSpeed(ped) = { 0, 0, 0 };
+                }
                 Log("autotest : l'hote est au volant, touche %s", withF ? "F" : "G");
                 if (withF) Press(PAD_TRIANGLE, 255); else TogglePassenger();
             }
