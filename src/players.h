@@ -8,4 +8,5 @@ void RemovePlayerBlip(int &blip);
 void PlayersFrame(bool inGame);          // touche F7 et menu de tenue
 bool SkinMenuOpen();
 int RegularPedModel(const char *name);   // modele de passant (1..108) de ce nom, -1 sinon
+bool RedressPed(void *ped, int model, const char *special);   // change le modele sur place (pantin qui change de tenue)
 const char *PedOutfit(void *ped);        // nom de la tenue portee (modele special ou de passant)

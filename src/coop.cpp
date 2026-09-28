@@ -101,6 +101,30 @@ static void DestroyPuppet(Puppet &pp)
     pp.ped = NULL;
 }
 
+// Nouvelle tenue sur le pantin en place. Tenue de passant : l'ancienne reste visible le temps que la nouvelle se
+// charge (en fond), puis on change. Tenue de Tommy ou d'un personnage de l'histoire : elle va dans l'emplacement
+// special de ce joueur, que le pantin occupe deja : chargee d'un coup au moment du changement (comme chez lui).
+static void ChangePuppetOutfit(Puppet &pp, int player, const MsgState &s)
+{
+    void *ped = pp.ped;
+    int regular = RegularPedModel(s.outfit);
+    if (regular > 0 && !HasModelLoaded(regular)) { RequestModel(regular, 1 | 8); return; }
+    const char *special = regular > 0 ? NULL : (s.outfit[0] ? s.outfit : "player");
+    int model = regular > 0 ? regular : MI_PUPPET_BASE + player;
+    if (IsAimingGun(ped)) ClearAimFlag(ped);
+    if (!RedressPed(ped, model, special)) {
+        Log("coop : la tenue %s de %s ne se charge pas, il est recree", s.outfit, s.name);
+        DestroyPuppet(pp);
+        lstrcpynA(pp.outfit, "", sizeof(pp.outfit));
+        return;
+    }
+    Log("coop : %s change de tenue (%s -> %s, sur place)", s.name, pp.outfit, s.outfit);
+    lstrcpynA(pp.outfit, s.outfit, sizeof(pp.outfit));
+    pp.lastMoveState = -1;
+    pp.anims = {};
+    EnsureLiveAnim(ped);
+}
+
 static void CreatePuppet(Puppet &pp, const MsgState &s)
 {
     int model = EnsurePuppetModel(s.id, s.outfit);
@@ -406,11 +430,10 @@ static void UpdatePuppets(bool inGame)
             if (!np.connected) pp.track.Clear();
             continue;
         }
-        // Changement de tenue : on le recree avec la nouvelle.
-        if (pp.ped && _stricmp(pp.outfit, np.state.outfit) != 0 && !InVehicle(pp.ped)) {
-            Log("coop : %s change de tenue (%s -> %s)", np.state.name, pp.outfit, np.state.outfit);
-            DestroyPuppet(pp);
-        }
+        // Changement de tenue (F7, magasin, mission) : on l'habille sur place, il reste la ou il est.
+        if (pp.ped && _stricmp(pp.outfit, np.state.outfit) != 0 && !InVehicle(pp.ped) && !pp.entering && !pp.exiting &&
+            !EnterInProgress(pp.ped))
+            ChangePuppetOutfit(pp, i, np.state);
         if (!pp.ped) {   // detruit par le jeu : son point aussi ; pas plus d'une creation par seconde s'il disparait aussitot
             static uint32_t createdAt[MAX_PLAYERS];
             uint32_t now = GetTickCount();

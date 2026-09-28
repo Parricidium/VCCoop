@@ -178,6 +178,26 @@ void SetPedModel(void *ped, int model)
     Dress(ped);                                                // SetModelIndex(model), etat remis, WorldAdd
 }
 
+// Change le modele d'un personnage sans le retirer du jeu (le pantin d'un joueur qui change de tenue avec F7 : avant
+// il etait detruit puis recree une fois la tenue chargee, et disparaissait le temps du chargement). special : nom a
+// charger dans l'emplacement special model (chargement immediat, comme ApplySkin) ; sinon model est un modele normal
+// deja charge. Faux si la tenue ne se charge pas (le personnage n'a alors plus de modele : a detruire).
+bool RedressPed(void *ped, int model, const char *special)
+{
+    SetCurrentWeapon(ped, 0);   // l'arme en main est accrochee a l'ancien squelette : retiree avant, remise ensuite
+    ((void(__thiscall *)(void *))(*(void ***)ped)[6])(ped);   // DeleteRwObject (libere l'ancien modele)
+    WorldRemove(ped);
+    if (special) {
+        RequestSpecialModel(model, special, 1 | 8);
+        LoadAllRequestedModels();
+        if (!HasModelLoaded(model)) { RequestSpecialModel(model, "player", 1 | 8); LoadAllRequestedModels(); }
+        if (!HasModelLoaded(model)) return false;
+    }
+    ModelIndex(ped) = (short)model;
+    Dress(ped);   // SetModelIndex(model) (squelette, animation de repos, groupe de demarche), etat remis, WorldAdd
+    return true;
+}
+
 // Les missions (et le magasin de vetements) habillent Tommy par Undress + Dress, qui reprend le modele en cours :
 // s'il porte un modele de passant, on le remet sur le modele 0 pour que la tenue de la mission s'applique.
 static void __fastcall h_Undress(void *ped, void *edx, const char *name)
