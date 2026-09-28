@@ -10,6 +10,7 @@
 //    (0x4990DD) ; la saisie de l'adresse et du pseudo passe par WM_CHAR (sous-classement de la fenetre).
 #include "util.h"
 #include "vccoop.h"
+#include "bridge.h"
 #include "net.h"
 #include "game.h"
 #include "saveshare.h"
@@ -29,7 +30,8 @@ static MenuScreen *Screens() { return (MenuScreen *)0x6D8B70; }
 enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
-       ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS };
+       ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
+       ACT_RENDERER, ACT_SHADOWQ };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
 enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
@@ -84,6 +86,9 @@ static void SaveIni()
     wsprintfA(dd, "%d", g_cfg.msaa);
     WritePrivateProfileStringA("VCCoop", "Anticrenelage", dd, ini);
     WritePrivateProfileStringA("VCCoop", "OmbresSoleil", g_cfg.sunShadows ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "Rendu", g_cfg.renderer == 9 ? "9" : "8", ini);
+    wsprintfA(dd, "%d", g_cfg.shadowRes);
+    WritePrivateProfileStringA("VCCoop", "OmbresResolution", dd, ini);
     if (!WritePrivateProfileStringA("VCCoop", "FiltrageAnisotrope", g_cfg.aniso ? "1" : "0", ini))
         Log("reglages : ecriture impossible dans %s (erreur %lu)", ini, GetLastError());
 }
@@ -158,6 +163,16 @@ static const wchar_t *CoopText(const char *key)
     if (!strcmp(key, "VCC_SH")) {
         wsprintfA(buf, "%s : %s", fr ? "Ombres du soleil" : "Sun shadows", g_cfg.sunShadows ? yes : no);
         return Put(24, buf);
+    }
+    if (!strcmp(key, "VCC_RD")) {
+        wsprintfA(buf, "%s : %s%s", fr ? "Rendu moderne" : "Modern renderer", g_cfg.renderer == 9 ? yes : no,
+                  fr ? " (au prochain lancement)" : " (next launch)");
+        return Put(25, buf);
+    }
+    if (!strcmp(key, "VCC_SQ")) {
+        const char *q = g_cfg.shadowRes >= 8192 ? (fr ? "ultra" : "ultra") : g_cfg.shadowRes >= 4096 ? (fr ? "haute" : "high") : (fr ? "moyenne" : "medium");
+        wsprintfA(buf, "%s : %s", fr ? "Qualite des ombres" : "Shadow quality", q);
+        return Put(26, buf);
     }
     if (!strcmp(key, "VCC_AF")) {
         wsprintfA(buf, "%s : %s", fr ? "Filtrage anisotrope" : "Anisotropic filtering", g_cfg.aniso ? yes : no);
@@ -275,6 +290,12 @@ static void OnCoopAction(int action)
     case ACT_MSAA: g_cfg.msaa = g_cfg.msaa >= 8 ? 0 : g_cfg.msaa < 2 ? 2 : g_cfg.msaa * 2; SaveIni(); break;
     case ACT_ANISO: g_cfg.aniso = !g_cfg.aniso; SaveIni(); break;
     case ACT_SHADOWS: g_cfg.sunShadows = !g_cfg.sunShadows; SaveIni(); break;
+    case ACT_RENDERER: g_cfg.renderer = g_cfg.renderer == 9 ? 8 : 9; SaveIni(); break;
+    case ACT_SHADOWQ:
+        g_cfg.shadowRes = g_cfg.shadowRes >= 8192 ? 2048 : g_cfg.shadowRes >= 4096 ? 8192 : 4096;
+        SaveIni();
+        Gfx9SettingsChanged();
+        break;
     case ACT_OPTIONS: g_subParent = SUB_MAIN; g_sub = SUB_OPTIONS; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_JOINPAGE: g_subParent = SUB_MAIN; g_sub = SUB_JOIN; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_OPTCOOP: g_subParent = g_sub; g_sub = SUB_COOP; *(int *)(Menu() + 0x30) = 0; break;
@@ -338,6 +359,8 @@ static void BuildCoopPage()
     } else if (g_sub == SUB_VIDEO) {
         items[n++] = { ACT_DRAWDIST, "VCC_DD" }; items[n++] = { ACT_MSAA, "VCC_AA" }; items[n++] = { ACT_ANISO, "VCC_AF" };
         items[n++] = { ACT_SHADOWS, "VCC_SH" };
+        if (g_cfg.renderer == 9) items[n++] = { ACT_SHADOWQ, "VCC_SQ" };
+        items[n++] = { ACT_RENDERER, "VCC_RD" };
     } else if (!g_netStarted && !inGame) {
         // Accueil : Creer / Rejoindre / Pseudo / Options (coop + video : a regler avant de creer ou rejoindre).
         items[n++] = { ACT_CREATE, "VCC_CRE" }; items[n++] = { ACT_JOINPAGE, "VCC_JP" };

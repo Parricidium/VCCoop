@@ -73,7 +73,7 @@ Start `gta-vc.exe` normally. Main menu > **COOP**:
 | **Host a game** | Opens the lobby with the list of connected players. **New game** or **Load a game**: the guests follow you by themselves (your save is sent to them). |
 | **Join** | **Address** (the host's IP: Enter, type, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
 | **Nickname** | Your name, set before hosting or joining. |
-| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows. Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
+| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows and their quality, modern renderer (next launch). Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` go straight to hosting / joining. Without COOP the
 game stays single player. **Esc > COOP** in game shows the same page.
@@ -136,10 +136,16 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   21:9, 32:9) with a wider field of view, HUD and menus in proportion (`Fenetre`, `GrandEcran`).
 - **Video options** (all local, `0` = original rendering): draw distance (`DistanceAffichage`, 100 to
   400 %), anti-aliasing (`Anticrenelage`, MSAA 2x/4x/8x), anisotropic filtering 16x + trilinear
-  (`FiltrageAnisotrope`), **sun shadows** (`OmbresSoleil`, `OmbresResolution` 4096 or 2048): a shadow map rendered from the sun every
-  frame (250 m around the camera, grid snapped to its texels) and compared per pixel with 2 taps — buildings, palms, vehicles and characters cast real
-  shadows that move with the time of day, foliage cut out by its texture. Done on the game's own Direct3D 8
-  device with hand-assembled vs_1_1 / ps_1_4 shaders, so no wrapper and no extra DLL.
+  (`FiltrageAnisotrope`), **modern renderer** (`Rendu=9`, default) and **sun shadows** (`OmbresSoleil`,
+  quality `OmbresResolution` 2048 / 4096 / 8192).
+- **Modern renderer**: VCCoop contains its own Direct3D 8 → Direct3D 9 bridge (no third-party wrapper, nothing
+  to install). The game draws exactly as before, and VCCoop then works in Direct3D 9 with HLSL shaders
+  (compiled at launch by Windows' own `d3dcompiler_47.dll`). `Rendu=8` goes back to the original Direct3D 8.
+- **Sun shadows** (modern renderer): 4 cascades (sharp up close, up to ~220 m) rendered from the game's
+  own sun (`CTimeCycle`) in the same frame, a soft 25-tap filter, a single full-screen pass (no more
+  double-drawn geometry flickering), strength from the game's time cycle (hour and weather) and its fog.
+  Buildings just outside the view still cast their shadow (no more popping when the camera turns).
+  With `Rendu=8`, the older shadow map on the Direct3D 8 device is used.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -270,7 +276,7 @@ Lancer `gta-vc.exe` normalement. Menu principal > **COOP** :
 | **Créer une partie** | Ouvre le salon avec la liste des joueurs connectés. **Nouvelle partie** ou **Charger une partie** : les invités suivent tout seuls (la sauvegarde leur est envoyée). |
 | **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
 | **Pseudo** | Votre nom, à régler avant de créer ou rejoindre. |
-| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil. Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
+| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil et leur qualité, rendu moderne (au prochain lancement). Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` vont droit à l'hébergement / la connexion. Sans
 passer par COOP, le jeu reste en solo. **Échap > COOP** en jeu montre la même page.
@@ -335,12 +341,16 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   21:9, 32:9) avec un champ de vision élargi, HUD et menus en proportion (`Fenetre`, `GrandEcran`).
 - **Options vidéo** (toutes locales, `0` = rendu d'origine) : distance d'affichage
   (`DistanceAffichage`, 100 à 400 %), anticrénelage (`Anticrenelage`, MSAA 2x/4x/8x), filtrage
-  anisotrope 16x + trilinéaire (`FiltrageAnisotrope`), **ombres du soleil** (`OmbresSoleil`, `OmbresResolution` 4096 ou 2048) : une carte
-  d'ombre rendue depuis le soleil à chaque image (250 m autour de la caméra, grille alignée sur ses texels) et
-  comparée par pixel avec 2 échantillons ;
-  bâtiments, palmiers, véhicules et personnages projettent de vraies ombres qui suivent l'heure, feuillages
-  découpés par leur texture. Fait sur le périphérique Direct3D 8 du jeu avec des shaders vs_1_1 / ps_1_4
-  assemblés à la main : ni wrapper, ni DLL supplémentaire.
+  anisotrope 16x + trilinéaire (`FiltrageAnisotrope`), **rendu moderne** (`Rendu=9`, par défaut) et
+  **ombres du soleil** (`OmbresSoleil`, qualité `OmbresResolution` 2048 / 4096 / 8192).
+- **Rendu moderne** : VCCoop contient son propre pont Direct3D 8 → Direct3D 9 (aucun wrapper tiers, rien à
+  installer). Le jeu dessine exactement comme avant, puis VCCoop travaille en Direct3D 9 avec des shaders HLSL
+  (compilés au lancement par `d3dcompiler_47.dll`, fourni avec Windows). `Rendu=8` revient au Direct3D 8 d'origine.
+- **Ombres du soleil** (rendu moderne) : 4 cascades (nettes de près, jusqu'à ~220 m) calculées depuis le
+  soleil du jeu (`CTimeCycle`) dans la même image, filtre doux à 25 échantillons, une seule passe plein écran
+  (plus de doubles dessins qui clignotent), intensité selon le cycle du jour du jeu (heure et météo) et son
+  brouillard. Les bâtiments juste hors du champ projettent aussi leur ombre (plus d'apparition en tournant la
+  caméra). Avec `Rendu=8`, l'ancienne carte d'ombre sur le Direct3D 8 du jeu reste utilisée.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont

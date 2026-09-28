@@ -3,6 +3,7 @@
 #include "util.h"
 #include "vccoop.h"
 #include <mmsystem.h>
+#include "bridge.h"
 
 // --- Declarations minimales de Direct3D 8 (le SDK Windows ne fournit plus d3d8.h) ---
 struct D3DPRESENT_PARAMETERS8 {
@@ -67,9 +68,11 @@ static void ApplyMsaa(D3DPRESENT_PARAMETERS8 *pp)
 
 static HRESULT WINAPI h_SetTss(void *dev, DWORD stage, DWORD state, DWORD value)
 {
+    // Numeros Direct3D 8 : MAGFILTER 16, MINFILTER 17, MIPFILTER 18, MAXANISOTROPY 21 (avant 28r on testait 6 et 7,
+    // ALPHAARG2 et BUMPENVMAT00 : le filtrage anisotrope ne s'appliquait pas).
     if (g_cfg.aniso) {
-        if (state == 6 && value == 2) { o_SetTss(dev, stage, 21, 16); value = 3; }   // MINFILTER lineaire -> anisotrope 16x
-        else if (state == 7 && value == 0) value = 2;                                   // MIPFILTER aucun -> lineaire (trilineaire)
+        if (state == 17 && value == 2) { o_SetTss(dev, stage, 21, 16); value = 3; }   // MINFILTER lineaire -> anisotrope 16x
+        else if (state == 18 && value == 0) value = 2;                                   // MIPFILTER aucun -> lineaire (trilineaire)
     }
     return o_SetTss(dev, stage, state, value);
 }
@@ -223,7 +226,7 @@ static HRESULT WINAPI h_CreateDevice(void *d3d, UINT adapter, UINT type, HWND fo
             o_Reset = (Reset_t)PatchPointer(&vt[VT_DEV_RESET], (void *)h_Reset);
             o_Present = (Present_t)PatchPointer(&vt[VT_DEV_PRESENT], (void *)h_Present);
             o_SetTss = (SetTss_t)PatchPointer(&vt[VT_DEV_SETTSS], (void *)h_SetTss);
-            GfxHookDevice(*out);
+            if (!IsBridgeDevice(*out)) GfxHookDevice(*out);   // Direct3D 8 d'origine : ancien rendu des ombres
         }
         FitWindow(g_hwnd, pp->BackBufferWidth, pp->BackBufferHeight);
     }
@@ -232,7 +235,8 @@ static HRESULT WINAPI h_CreateDevice(void *d3d, UINT adapter, UINT type, HWND fo
 
 static void *WINAPI h_Direct3DCreate8(UINT sdk)
 {
-    void *d3d = o_Direct3DCreate8(sdk);
+    void *d3d = g_cfg.renderer == 9 ? BridgeCreate8(sdk) : NULL;   // Rendu=9 : notre pont vers Direct3D 9
+    if (!d3d) d3d = o_Direct3DCreate8(sdk);
     // Chaque objet peut avoir sa propre vtable (le jeu en cree deux) : on les accroche toutes.
     if (d3d) {
         void **vt = *(void ***)d3d;
