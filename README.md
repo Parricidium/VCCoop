@@ -149,7 +149,8 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Modern water** (`EauModerne`, modern renderer): the game's water surfaces are redrawn with a VCCoop shader —
   turquoise in the shallows and deep blue-green offshore (from the real depth under each pixel), the sea floor
   seen through with refraction, the sky of the time cycle reflected with Fresnel, the sun's glint, per-pixel
-  waves and foam along the shores. Seabirds and boats on the horizon are kept.
+  waves and foam along the shores. Seabirds and boats on the horizon are kept. With `RefletsEau` the piers,
+  boats, palm trees and buildings are mirrored in the water (planar reflection, fading along the shores).
 - **Dynamic lights** (`LumieresDynamiques`, modern renderer): every light the game registers (street lamps,
   neons, headlights, explosions, fire, muzzle flashes) now lights the scenery per pixel up to 150 m, not only
   the characters and vehicles within 22 m. The 4 most important lights near the camera (`OmbresLumieres`)
@@ -366,7 +367,8 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Eau moderne** (`EauModerne`, rendu moderne) : les surfaces d'eau du jeu sont redessinées par un shader de
   VCCoop — turquoise en eau peu profonde et bleu-vert au large (selon la vraie profondeur sous chaque pixel), le
   fond visible par réfraction, le ciel du cycle du jour reflété (Fresnel), le reflet du soleil, des vagues par
-  pixel et de l'écume sur les rives. Les oiseaux et bateaux à l'horizon restent.
+  pixel et de l'écume sur les rives. Les oiseaux et bateaux à l'horizon restent. Avec `RefletsEau`, les quais,
+  bateaux, palmiers et immeubles se reflètent dans l'eau (reflet plan, qui s'efface sur les rives).
 - **Lumières dynamiques** (`LumieresDynamiques`, rendu moderne) : toutes les lumières du jeu (lampadaires,
   néons, phares, explosions, feux, tirs) éclairent maintenant le décor par pixel jusqu'à 150 m, et plus
   seulement les personnages et véhicules à moins de 22 m. Les 4 lumières les plus importantes près de la caméra

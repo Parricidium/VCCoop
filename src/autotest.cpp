@@ -288,6 +288,8 @@ void AutotestFrame()
             MirrorLocal(0x0055, 4, p);
             GetPrivateProfileStringA("VCCoop", "TestCap", "", pos, sizeof(pos), ini);
             if (pos[0]) { float h = (float)atof(pos); int32_t a[2] = { 0, 0 }; memcpy(&a[1], &h, 4); MirrorLocal(0x0171, 2, a); }
+            int meteo = (int)GetPrivateProfileIntA("VCCoop", "TestMeteo", -1, ini);   // 0 soleil, 1 nuages, 2 pluie, 3 brouillard
+            if (meteo >= 0) { int32_t w[1] = { meteo }; MirrorLocal(0x01B6, 1, w); }   // FORCE_WEATHER_NOW
             Log("autotest : %d h 30 en %.0f %.0f %.0f", t[0], xyz[0], xyz[1], xyz[2]);
         }
         return;

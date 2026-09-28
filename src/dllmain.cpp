@@ -58,6 +58,7 @@ static void LoadConfig()
     g_cfg.shadowRes = GetPrivateProfileIntA("VCCoop", "OmbresResolution", 4096, ini);
     g_cfg.renderer = GetPrivateProfileIntA("VCCoop", "Rendu", 9, ini);
     g_cfg.modernWater = GetPrivateProfileIntA("VCCoop", "EauModerne", 1, ini) != 0;
+    g_cfg.waterReflections = GetPrivateProfileIntA("VCCoop", "RefletsEau", 1, ini) != 0;
     g_cfg.dynLights = GetPrivateProfileIntA("VCCoop", "LumieresDynamiques", 1, ini) != 0;
     g_cfg.lightShadows = GetPrivateProfileIntA("VCCoop", "OmbresLumieres", 4, ini);
     if (g_cfg.lightShadows < 0) g_cfg.lightShadows = 0;

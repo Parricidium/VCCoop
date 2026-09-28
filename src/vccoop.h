@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28w"
+#define VCCOOP_VERSION "2026.09.28x"
 struct Config {
     bool windowed;
     bool borderless;
@@ -30,6 +30,7 @@ struct Config {
     bool aniso;         // FiltrageAnisotrope=1 : textures nettes au loin (16x, trilineaire)
     bool sunShadows;    // OmbresSoleil=1 : ombres projetees du soleil (carte d'ombre, gfx.cpp)
     int shadowRes;      // OmbresResolution=4096 (ou 2048) : taille de la carte d'ombre
+    bool waterReflections;   // RefletsEau=1 : la scene se reflete dans l'eau moderne
     bool modernWater;   // EauModerne=1 (rendu moderne) : eau turquoise, reflets, refraction, ecume
     int lightShadows;   // OmbresLumieres=4 : nombre de lumieres (0 a 4) qui projettent une ombre
     bool moonShadows;   // OmbresLune=1 : la lune projette des ombres (plus faibles que le soleil)
