@@ -74,8 +74,8 @@ static void SaveIni()
 {
     char ini[MAX_PATH];
     lstrcpynA(ini, IniPath(), MAX_PATH);
-    WritePrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, ini);
-    WritePrivateProfileStringA("VCCoop", "Pseudo", g_cfg.playerName, ini);
+    WritePrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, PlayerIniPath());   // a part : gardes aux mises a jour
+    WritePrivateProfileStringA("VCCoop", "Pseudo", g_cfg.playerName, PlayerIniPath());
     WritePrivateProfileStringA("VCCoop", "TirAmi", g_cfg.friendlyFire ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "ArgentPartage", g_cfg.shareMoney ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "AfficherPseudos", g_cfg.showNames ? "1" : "0", ini);
@@ -579,6 +579,23 @@ static LRESULT CALLBACK h_WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             if (wp == 8) { if (n) g_editBuf[n - 1] = 0; }
             else if (wp == 13) EndEdit(true);
             else if (wp == 27) EndEdit(false);
+            else if (wp == 22) {   // Ctrl+V : colle le texte du presse-papiers (adresse copiee depuis Discord, Radmin...)
+                if (OpenClipboard(hwnd)) {
+                    if (HANDLE h = GetClipboardData(CF_TEXT)) {
+                        if (const char *t = (const char *)GlobalLock(h)) {
+                            size_t cap = g_edit == EDIT_NICK ? 16u : 60u;
+                            for (; *t && n + 1 < cap; t++) {
+                                unsigned char c = (unsigned char)*t;
+                                if (c < 32 || c >= 127 || (g_edit == EDIT_ADDRESS && c == ' ')) continue;   // retours a la ligne, espaces
+                                g_editBuf[n++] = (char)c;
+                            }
+                            g_editBuf[n] = 0;
+                            GlobalUnlock(h);
+                        }
+                    }
+                    CloseClipboard();
+                }
+            }
             else if (wp >= 32 && wp < 127 && n + 1 < (g_edit == EDIT_NICK ? 16u : 60u)) { g_editBuf[n] = (char)wp; g_editBuf[n + 1] = 0; }
             return 0;
         }

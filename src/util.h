@@ -24,4 +24,5 @@ void *MakeDetour(uintptr_t addr, const void *expected, size_t n, void *hook);
 
 // Chemin du dossier du jeu (avec antislash final).
 const char *GameDir();
+const char *PlayerIniPath();   // vccoop-joueur.ini (pseudo, adresse, port, tenue), a cote de vccoop.ini, absent du paquet
 const char *IniPath();   // vccoop.ini a lire et ecrire (dossier du jeu, ou copie modifiable)
