@@ -351,9 +351,11 @@ static void OnVehicle(const MsgVehicle &m)
     NetVehicle *e = FindById(m.id);
     // Invite avec son propre monde (loin de l'hote) : la circulation partagee envoyee pour un autre invite ne le
     // concerne pas, sinon elle se superposait a la sienne.
-    if (m.ambient && !g_cfg.host && !PopulationShared()) {
-        if (e) { DeleteCopy(*e); e->used = false; }
-        return;
+    // Voiture de la circulation d'un autre joueur trop loin de nous : pas de copie.
+    if (m.ambient) {
+        void *me = FindPlayerPed();
+        float dx = me ? m.pos[0] - Pos(me).x : 0, dy = me ? m.pos[1] - Pos(me).y : 0;
+        if (!me || dx * dx + dy * dy > (float)AMBIENT_DROP_M * AMBIENT_DROP_M) { if (e) { DeleteCopy(*e); e->used = false; } return; }
     }
     if (!e) { e = Alloc(m.id); if (!e) return; }
     if (e->owner == g_localId && e->veh && e->owner != m.owner)
@@ -604,8 +606,9 @@ void VehiclesFrame(bool inGame)
         }
     }
 
-    // Invite recherche : ses vehicules de police (qui ne poursuivent que lui) partent chez les autres.
-    if (!g_cfg.host && g_localId > 0 && LocalWanted()) {
+    // Invite : sa circulation et ses voitures garees pres d'un autre joueur partent chez les autres (il peuple son coin
+    // du monde) ; ses vehicules de police seulement s'il a une police a lui.
+    if (!g_cfg.host && g_localId > 0) {
         static uint32_t lastLawScan;
         if (now - lastLawScan > 250) {
             lastLawScan = now;
@@ -614,7 +617,8 @@ void VehiclesFrame(bool inGame)
                 if (pool->flags[i] & 0x80) continue;
                 void *v = pool->objects + i * VEHICLE_POOL_ENTRY;
                 uint8_t by = Field<uint8_t>(v, 0x1F8);
-                if ((by != 1 && by != 3) || FindByPtr(v) || !IsLawVehicle(v)) continue;
+                if ((by != 1 && by != 3) || FindByPtr(v) || (IsLawVehicle(v) && !LocalWanted())) continue;
+                if (VehClass(v) == VCLASS_TRAIN || !NearOtherPlayer(&Pos(v).x, AreaCode(v), (float)AMBIENT_SHARE_M)) continue;
                 NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
                 if (!e) break;
                 e->owner = (uint8_t)g_localId;
@@ -637,7 +641,7 @@ void VehiclesFrame(bool inGame)
                 continue;
             }
             // Circulation partagee : plus aucun invite assez pres -> on la retire chez eux (on la garde ici).
-            bool keepShared = g_cfg.host ? NearAnyGuest(&Pos(e.veh).x, AreaCode(e.veh), AMBIENT_SHARE_M + 40.0f) : LocalWanted();
+            bool keepShared = NearOtherPlayer(&Pos(e.veh).x, AreaCode(e.veh), AMBIENT_SHARE_M + 40.0f);
             if (e.ambient && e.veh != myVeh && !keepShared) {
                 MsgVehRemove r = { MSG_VEH_REMOVE, e.id };
                 NetSendToAll(&r, sizeof(r));

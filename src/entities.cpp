@@ -45,8 +45,10 @@ static void ScanOwnPeds()
             if (CharCreatedBy(ped) != PED_CHAR_MISSION &&
                 !(CharCreatedBy(ped) == 1 && NearAnyGuest(&Pos(ped).x, AreaCode(ped), (float)AMBIENT_SHARE_M))) continue;
         } else {
-            // Invite : seulement sa police, tant qu'il est recherche.
-            if (CharCreatedBy(ped) != 1 || !IsLawPed(ped) || !LocalWanted()) continue;
+            // Invite : ses passants pres d'un autre joueur (hors de la zone de l'hote, il peuple son coin du monde) ;
+            // sa police seulement s'il en a une a lui.
+            if (CharCreatedBy(ped) != 1 || (IsLawPed(ped) && !LocalWanted())) continue;
+            if (!NearOtherPlayer(&Pos(ped).x, AreaCode(ped), (float)AMBIENT_SHARE_M)) continue;
         }
         MsgPed m = {};
         m.type = MSG_PED;
@@ -256,9 +258,11 @@ static void OnPed(const MsgPed &m)
     Ghost *g = FindGhost(m.owner, m.handle);
     // Invite avec son propre monde (loin de l'hote) : les passants partages envoyes pour un autre invite ne le
     // concernent pas (ils se superposaient aux siens).
-    if (m.ambient && !g_cfg.host && !PopulationShared()) {
-        if (g) DestroyGhost(*g);
-        return;
+    // Passant d'un autre joueur trop loin de nous (envoye pour quelqu'un d'autre) : pas de copie.
+    if (m.ambient) {
+        void *me = FindPlayerPed();
+        float dx = me ? m.pos[0] - Pos(me).x : 0, dy = me ? m.pos[1] - Pos(me).y : 0;
+        if (!me || dx * dx + dy * dy > (float)AMBIENT_DROP_M * AMBIENT_DROP_M) { if (g) DestroyGhost(*g); return; }
     }
     if (!g) {
         for (auto &x : g_ghosts)

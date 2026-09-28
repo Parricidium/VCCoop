@@ -157,8 +157,13 @@ extern void (*g_onNotice)(const char *fr, const char *en, int player);   // mess
 extern uint16_t g_myPing;
 extern void (*g_onRdv)(const MsgRdv &r);   // point de rendez-vous recu (players.cpp)   // invite : dernier aller-retour mesure avec l'hote (ms)
 bool NetIsHost();
-// Hote : un invite en partie, en population partagee, est-il a moins de r metres de p (meme interieur) ?
+// Hote : un invite en partie est-il a moins de r metres de p (meme interieur) ?
 bool NearAnyGuest(const float *p, uint8_t area, float r);
+// Un AUTRE joueur (hote ou invite) en partie est-il a moins de r metres de p (meme interieur) ?
+bool NearOtherPlayer(const float *p, uint8_t area, float r);
 // Distances de la population partagee : l'invite la rejoint a SHARE_ENTER_M de l'hote, la quitte a SHARE_LEAVE_M ;
 // l'hote lui envoie alors ses passants et sa circulation jusqu'a AMBIENT_SHARE_M autour de lui.
 enum { SHARE_ENTER_M = 150, SHARE_LEAVE_M = 210, AMBIENT_SHARE_M = 260 };
+// Zone ou l'hote peuple le monde (sa portee de generation : passants, circulation, voitures garees a 90-110 m).
+// Au-dela, chaque invite peuple le sien et le partage ; une entite recue de plus loin que AMBIENT_DROP_M est ignoree.
+enum { HOST_ZONE_M = 110, AMBIENT_DROP_M = 330 };

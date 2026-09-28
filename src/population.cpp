@@ -37,7 +37,38 @@ static bool Wanted() { void *me = FindPlayerPed(); void *w = me ? Field<void *>(
 // PoliceHote=1 : en population partagee, l'invite n'a pas de police a lui (c'est celle de l'hote qui le poursuit,
 // coop.cpp HostPoliceChasesGuests) ; ses etoiles restent affichees mais ne font rien venir.
 static bool OwnPolice() { return Wanted() && !(g_cfg.hostPolice && g_shared); }
-static void __cdecl h_GenerateRandomCars() { if (!g_shared || OwnPolice()) o_GenerateRandomCars(); }
+static bool g_hostClose;   // invite colle a l'hote (< 40 m) : tout ce qu'il ferait naitre serait dans la zone de l'hote
+static void __cdecl h_GenerateRandomCars() { if (!g_hostClose || OwnPolice()) o_GenerateRandomCars(); }
+
+// A qui revient de peupler ce point ? Hote : a moins de HOST_ZONE_M de lui. Invite : au-dela, s'il est le plus proche.
+static bool HostPos(Vec3 &out)
+{
+    const NetPlayer &h = g_players[0];
+    if (!h.connected || !h.state.inGame || h.state.area != (uint8_t)*(int *)0x978810 || GetTickCount() - h.lastStateAt > 3000) return false;
+    out = { h.state.pos[0], h.state.pos[1], h.state.pos[2] };
+    return true;
+}
+static float Dist2(const Vec3 &a, float x, float y) { return (a.x - x) * (a.x - x) + (a.y - y) * (a.y - y); }
+// Vrai si un AUTRE joueur doit peupler ce point (nous n'y faisons rien naitre).
+static bool OtherPopulates(float x, float y)
+{
+    const float z2 = (float)HOST_ZONE_M * HOST_ZONE_M;
+    if (!g_cfg.host) {
+        Vec3 h;
+        return HostPos(h) && Dist2(h, x, y) < z2;
+    }
+    void *me = FindPlayerPed();
+    if (!me) return false;
+    float dh = Dist2(Pos(me), x, y);
+    if (dh < z2) return false;
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        const NetPlayer &g = g_players[i];
+        if (!g.connected || !g.state.inGame || g.state.area != (uint8_t)*(int *)0x978810 || GetTickCount() - g.lastStateAt > 3000) continue;
+        float dx = g.state.pos[0] - x, dy = g.state.pos[1] - y;
+        if (dx * dx + dy * dy < dh) return true;
+    }
+    return false;
+}
 
 // Forces de l'ordre (policiers, SWAT, FBI, armee : type de personnage 6) et leurs vehicules.
 static bool LawPed(void *ped) { return ped && PedType(ped) == 6; }
@@ -55,9 +86,17 @@ static bool LawVehicle(void *v)
     return false;
 }
 
+// Voitures garees a emplacement fixe (PCJ-600 de l'hotel...) : le generateur ne fait naitre sa voiture que quand
+// SON joueur passe a 90-110 m du spot (reVC CarGen.cpp). Chacun garde donc ses generateurs, sauf pour les spots que
+// l'autre peuple (avant : en population partagee, ceux de l'invite etaient coupes et ceux de l'hote ne couvraient que
+// l'hote : un invite a 100 m de l'hote, pres du spot, n'avait la PCJ chez personne).
 typedef void(__fastcall *CarGen_t)(void *gen, void *edx);
 static CarGen_t o_CarGenProcess;
-static void __fastcall h_CarGenProcess(void *gen, void *edx) { if (!g_shared) o_CarGenProcess(gen, edx); }
+static void __fastcall h_CarGenProcess(void *gen, void *edx)
+{
+    const float *p = (const float *)((uint8_t *)gen + 4);   // CCarGenerator::m_vecPos
+    if (!OtherPopulates(p[0], p[1])) o_CarGenProcess(gen, edx);
+}
 
 void InstallPopulation()
 {
@@ -100,7 +139,21 @@ static void DeleteVehicleWithOccupants(void *v)
     DeleteEntity(v);
 }
 
-static void CleanLocalPopulation()
+// Fusion des populations : nos passants / voitures ambiants nes dans la zone qu'un autre joueur peuple sont retires
+// aussitot (ils naissent hors de l'ecran : invisible) ; ceux qui y entrent plus tard ne sont retires que hors de
+// l'ecran et loin de nous. Plus rien ne disparait sous les yeux (avant : tout le local etait retire d'un coup en
+// entrant en mode partage, et tout revenait d'un coup en en sortant).
+static uint16_t g_pedSeen[512], g_vehSeen[256];     // reference vue dans chaque case (0 : rien)
+static uint32_t g_pedBirth[512], g_vehBirth[256];   // quand elle est apparue
+
+static bool Newborn(uint16_t *seen, uint32_t *birth, int slot, uint32_t handle, uint32_t now)
+{
+    uint16_t h = (uint16_t)(handle & 0xFFFF);
+    if (seen[slot] != h) { seen[slot] = h; birth[slot] = now; }
+    return now - birth[slot] < 1500;
+}
+
+static void MergePopulation()
 {
     static uint32_t last;
     uint32_t now = GetTickCount();
@@ -109,26 +162,39 @@ static void CleanLocalPopulation()
     void *me = FindPlayerPed();
     int peds = 0, cars = 0;
     Pool *pp = PedPool();
-    for (int i = 0; i < pp->size; i++) {
-        if (pp->flags[i] & 0x80) continue;
+    for (int i = 0; i < pp->size && i < 512; i++) {
+        if (pp->flags[i] & 0x80) { g_pedSeen[i] = 0; continue; }
         void *ped = pp->objects + i * PED_POOL_ENTRY;
-        if (LocalAmbientPed(ped, me)) { RemovePed(ped); peds++; }
+        bool born = Newborn(g_pedSeen, g_pedBirth, i, PedHandle(ped), now);
+        if (!LocalAmbientPed(ped, me) || (g_cfg.host && LawPed(ped))) continue;
+        if (!OtherPopulates(Pos(ped).x, Pos(ped).y)) continue;
+        float dx = Pos(ped).x - Pos(me).x, dy = Pos(ped).y - Pos(me).y;
+        if (born || (!OnScreen(ped) && dx * dx + dy * dy > 40.0f * 40.0f)) { RemovePed(ped); peds++; }
     }
     Pool *vp = VehiclePool();
-    for (int i = 0; i < vp->size; i++) {
-        if (vp->flags[i] & 0x80) continue;
+    for (int i = 0; i < vp->size && i < 256; i++) {
+        if (vp->flags[i] & 0x80) { g_vehSeen[i] = 0; continue; }
         void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
-        // Sauf celle ou il est peut-etre en train de monter.
+        bool born = Newborn(g_vehSeen, g_vehBirth, i, VehicleHandle(v), now);
+        if (!LocalAmbientVehicle(v, me) || (g_cfg.host && LawVehicle(v))) continue;
+        if (!OtherPopulates(Pos(v).x, Pos(v).y)) continue;
         float dx = Pos(v).x - Pos(me).x, dy = Pos(v).y - Pos(me).y;
-        if (LocalAmbientVehicle(v, me) && (dx * dx + dy * dy > 36.0f || !OnScreen(v))) { DeleteVehicleWithOccupants(v); cars++; }
+        if (born || (!OnScreen(v) && dx * dx + dy * dy > 40.0f * 40.0f)) { DeleteVehicleWithOccupants(v); cars++; }
     }
-    if ((peds || cars) && g_cfg.logScripts) Log("population : %d passants et %d vehicules locaux retires", peds, cars);
+    if ((peds || cars) && g_cfg.logScripts) Log("population : %d passants et %d vehicules en double retires", peds, cars);
 }
 
 void PopulationFrame(bool inGame)
 {
+    if (inGame && g_cfg.host) {
+        bool any = false;
+        for (int i = 1; i < MAX_PLAYERS; i++) any |= g_players[i].connected;
+        if (any) MergePopulation();
+        return;
+    }
     if (!inGame || g_cfg.host || g_localId <= 0) {
-        if (g_shared) { g_shared = false; PedDensity() = g_savedPedDensity; }
+        if (g_shared) g_shared = false;
+        if (g_hostClose) { g_hostClose = false; PedDensity() = g_savedPedDensity; }
         return;
     }
     const NetPlayer &h = g_players[0];
@@ -149,8 +215,13 @@ void PopulationFrame(bool inGame)
     bool want = hostHere && !GuestSideMission() && d2 < (g_shared ? SHARE_LEAVE_M * SHARE_LEAVE_M : SHARE_ENTER_M * SHARE_ENTER_M);
     if (want != g_shared) {
         g_shared = want;
-        if (want) { g_savedPedDensity = PedDensity(); Log("population : partagee avec l'hote"); }
-        else { PedDensity() = g_savedPedDensity; Log("population : locale (loin de l'hote)"); }
+        Log(want ? "population : pres de l'hote" : "population : loin de l'hote");
+    }
+    // Colle a l'hote : il ne fait plus naitre de passants (tous seraient dans la zone de l'hote, nes puis retires).
+    bool close = hostHere && !GuestSideMission() && d2 < 40.0f * 40.0f;
+    if (close != g_hostClose) {
+        g_hostClose = close;
+        if (close) g_savedPedDensity = PedDensity(); else PedDensity() = g_savedPedDensity;
     }
     static uint32_t lastStat;
     if (g_cfg.logScripts && GetTickCount() - lastStat > 10000) {
@@ -173,7 +244,6 @@ void PopulationFrame(bool inGame)
         Log("population (%s) : passants locaux %d (dont police %d), copies de l'hote %d ; voitures locales %d, reseau %d",
             g_shared ? "partagee" : "locale", localPeds, law, ghosts, localCars, copies);
     }
-    if (!g_shared) return;
-    if (PedDensity() != 0.0f) { g_savedPedDensity = PedDensity(); PedDensity() = 0.0f; }   // une mission a pu la changer
-    CleanLocalPopulation();
+    if (g_hostClose && PedDensity() != 0.0f) { g_savedPedDensity = PedDensity(); PedDensity() = 0.0f; }   // une mission a pu la changer
+    if (!GuestSideMission()) MergePopulation();
 }

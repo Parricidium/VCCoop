@@ -95,11 +95,22 @@ static void Disconnect(int i);
 
 bool NetIsHost() { return g_cfg.host; }
 
+bool NearOtherPlayer(const float *p, uint8_t area, float r)
+{
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        const NetPlayer &g = g_players[i];
+        if (i == g_localId || !g.connected || !g.state.inGame || g.state.area != area || GetTickCount() - g.lastStateAt > 3000) continue;
+        float dx = g.state.pos[0] - p[0], dy = g.state.pos[1] - p[1], dz = g.state.pos[2] - p[2];
+        if (dx * dx + dy * dy + dz * dz < r * r) return true;
+    }
+    return false;
+}
+
 bool NearAnyGuest(const float *p, uint8_t area, float r)
 {
     for (int i = 1; i < MAX_PLAYERS; i++) {
         const NetPlayer &g = g_players[i];
-        if (!g.connected || !g.state.inGame || !g.state.shared || g.state.area != area || GetTickCount() - g.lastStateAt > 3000) continue;
+        if (!g.connected || !g.state.inGame || g.state.area != area || GetTickCount() - g.lastStateAt > 3000) continue;
         float dx = g.state.pos[0] - p[0], dy = g.state.pos[1] - p[1], dz = g.state.pos[2] - p[2];
         if (dx * dx + dy * dy + dz * dz < r * r) return true;
     }
