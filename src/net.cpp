@@ -123,6 +123,20 @@ static void SendTo(const sockaddr_in &to, const void *data, int len)
     sendto(g_sock, (const char *)data, len, 0, (const sockaddr *)&to, sizeof(to));
 }
 
+void NetStop()
+{
+    if (g_sock == INVALID_SOCKET) return;
+    NetSendBye();
+    SOCKET s = g_sock;
+    g_sock = INVALID_SOCKET;
+    closesocket(s);
+    for (int i = 0; i < MAX_PLAYERS; i++) g_players[i].connected = false;
+    for (auto &r : g_rl) RlReset(r);
+    g_localId = -1;
+    WSACleanup();
+    Log("reseau : arrete (salon ferme ou deconnexion)");
+}
+
 static const sockaddr_in *PeerAddr(int peer);
 
 static void RlSendOne(int peer, const RlOut &o)

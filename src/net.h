@@ -132,6 +132,7 @@ extern NetPlayer g_players[MAX_PLAYERS];
 extern int g_localId;   // 0 = hote ; -1 = invite pas encore accepte
 
 bool NetStart();        // selon g_cfg (hote ou invite)
+void NetStop();         // ferme le salon / se deconnecte : previent les autres, ferme la connexion
 void NetPoll();         // lit tous les paquets en attente
 void NetSendState(const MsgState &s);
 void NetSendBye();      // on quitte : previent l'hote (ou tous les invites) tout de suite, sans attendre le delai

@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28v"
+#define VCCOOP_VERSION "2026.09.28w"
 struct Config {
     bool windowed;
     bool borderless;
@@ -83,6 +83,7 @@ void InstallCombatHooks();
 void InstallDisplay();
 void UpdateHudScale();
 bool MenuSqueezeActive();
+float CoopMenuTextScale();   // menu.cpp : texte plus petit sur l'ecran COOP (beaucoup de lignes)
 float MenuSqueezeFactor();
 void SuspendMenuSqueeze(bool on);
 
