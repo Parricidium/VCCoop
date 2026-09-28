@@ -104,6 +104,12 @@ static const OpSig g_ops[] = {
     { 0x0382, "Ov", "SET_OBJECT_COLLISION" },
     { 0x0392, "Ov", "MAKE_OBJECT_TARGETTABLE" },
     { 0x01C7, "O", "DONT_REMOVE_OBJECT" },
+    // Declencheurs de mission : portes et grilles qui coulissent (objets, souvent ceux du script principal :
+    // reference dans une globale -> 'g'), decor echange, garages ouverts/fermes (garage cree par le script
+    // principal : reference dans une globale, la meme chez l'invite).
+    { 0x034E, "Ovvvvvvv", "SLIDE_OBJECT" },
+    { 0x03B6, "*", "SWAP_NEAREST_BUILDING_MODEL" },
+    { 0x02FA, "gv", "CHANGE_GARAGE_TYPE" },
     // Minuteurs et compteurs de mission a l'ecran : le jeu lit la variable en direct (et decompte lui-meme le
     // minuteur) ; l'hote envoie la valeur de ces variables 3 fois par seconde (MSG_TIMERS).
     { 0x014E, "gv", "DISPLAY_ONSCREEN_TIMER" },
@@ -330,7 +336,8 @@ void MirrorAfter(void *script)
     if (!g_captureOnly) {
         NetSendReliable(buf, len);
         RememberActiveBlip(sig->op, buf, len, entity);
-        if (g_params[0].kind == 'g') TrackTimer(sig->op, (uint16_t)g_params[0].where);
+        uint16_t o = sig->op;
+        if (g_params[0].kind == 'g' && (o == 0x014E || o == 0x014F || o == 0x0150 || o == 0x0151 || o == 0x03C3 || o == 0x03C4)) TrackTimer(o, (uint16_t)g_params[0].where);
     }
     // Autotest : dernier objectif / point de contact poses par les missions (coordonnees x, y, z en tete).
     if (sig->op == 0x018A || sig->op == 0x02A7) {
