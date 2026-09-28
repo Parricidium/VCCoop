@@ -6,6 +6,7 @@
 #include "net.h"
 #include "game.h"
 #include "vehicles.h"
+#include "entities.h"
 #include "mirror.h"
 #include "seats.h"
 #include "interp.h"
@@ -674,7 +675,11 @@ static void RunOverByPlayers()
         ((void(__thiscall *)(void *, int, int, int))0x4FD9F0)(me, 1000, 25 + dir, 0);
         float dmg = kmh < 40.0f ? 10.0f : kmh < 80.0f ? 25.0f : 50.0f;
         ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(me, e.veh, 39, dmg, 3, (uint8_t)dir);
-        MoveSpeed(me) = { vx * 0.7f, vy * 0.7f, 0.12f };
+        // Projete selon la vitesse : lent, bouscule ; vite, projete loin ; tres vite, par-dessus le capot (plus haut,
+        // moins loin : la voiture passe dessous).
+        if (kmh < 40.0f) MoveSpeed(me) = { vx * 0.6f, vy * 0.6f, 0.06f };
+        else if (kmh < 70.0f) MoveSpeed(me) = { vx * 0.8f, vy * 0.8f, 0.12f };
+        else MoveSpeed(me) = { vx * 0.45f, vy * 0.45f, 0.22f + (kmh - 70.0f) * 0.002f };
         lastHit = now;
         Log("vehicules : renverse par la voiture %08X du joueur %d a %.0f km/h (direction %d, sante %.0f)", e.id, e.owner, kmh, dir, Health(me));
         return;
@@ -727,9 +732,40 @@ void InstallVehicleAudio()
     Log("vehicules : sons du passager d'apres les pedales du conducteur (%d appels sur 12)", n);
 }
 
+// Notre voiture percute le Tommy d'un autre joueur (a pied) : il tombe chez lui ; ici, son double devient traversable
+// un moment (comme un passant couche), et la voiture continue sa route au lieu de buter dessus. Recherche un peu en
+// avant de la voiture (la collision du jeu arrive avant nous dans l'image).
+static void MyCarHitsPlayers()
+{
+    void *me = FindPlayerPed();
+    if (!me || !InVehicle(me)) return;
+    void *v = PedVehicle(me);
+    if (!v || VehDriver(v) != me) return;
+    Vec3 mv = MoveSpeed(v);
+    float sp = sqrtf(mv.x * mv.x + mv.y * mv.y);
+    if (sp < 0.1f) return;   // moins de ~18 km/h : on pousse seulement
+    Box2 b;
+    if (!BoxOf(v, b)) return;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        void *p = PuppetPed(i);
+        if (!p || InVehicle(p)) continue;
+        Vec3 pp = Pos(p);
+        if (fabsf(pp.z - Pos(v).z) > 2.0f) continue;
+        float dx = pp.x - b.cx - mv.x * 3.0f, dy = pp.y - b.cy - mv.y * 3.0f;   // 3 images en avance
+        float lx = dx * b.ax + dy * b.ay, ly = dx * b.bx + dy * b.by;
+        if (fabsf(lx) > b.hx + 0.6f || fabsf(ly) > b.hy + 0.6f + sp * 3.0f) continue;
+        static uint32_t last[MAX_PLAYERS];
+        if (GetTickCount() - last[i] > 1500) {
+            last[i] = GetTickCount();
+            Log("vehicules : ma voiture percute le joueur %d a %.0f km/h, il devient traversable", i, sp * 180.0f);
+        }
+        PuppetPassThrough(i, 1500);
+    }
+}
+
 void VehiclesFrame(bool inGame)
 {
-    if (inGame) { CopyCollisions(); RunOverByPlayers(); }
+    if (inGame) { CopyCollisions(); RunOverByPlayers(); MyCarHitsPlayers(); }
     static bool wasConnected[MAX_PLAYERS];
     for (int i = 0; i < MAX_PLAYERS; i++) {
         bool c = i != g_localId && g_players[i].connected;
@@ -773,6 +809,10 @@ void VehiclesFrame(bool inGame)
             e->owner = (uint8_t)g_localId;
             Field<uint8_t>(myVeh, 0x53) &= ~0x08;   // c'etait une copie : elle peut de nouveau s'abimer
             SetCopyFlags(myVeh, false);
+            // Verrou recopie du proprietaire (voiture volee a la circulation, verrouillee chez lui) : chez nous on ne
+            // pouvait plus y monter au volant, ni en descendre. Deverrouillee, sauf vehicule de mission (cree par script).
+            int &lock = Field<int>(myVeh, 0x230);
+            if (Field<uint8_t>(myVeh, 0x1F8) != 2 && lock != 0 && lock != 1) { Log("vehicules : %08X deverrouillee (verrou %d recu)", e->id, lock); lock = 1; }
             Log("vehicules : je reprends %08X", e->id);
         }
         // Voiture de la circulation partagee prise par l'hote : elle n'est plus "ambiante" (un invite a plus de
