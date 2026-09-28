@@ -31,6 +31,8 @@ struct NetVehicle {
     Track track;        // etats recus, pour l'interpolation
     uint32_t lastDamageSync;
     bool blown;         // copie deja explosee (EXPLODE_CAR une seule fois)
+    float peak[3];      // vitesse recue la plus forte des 400 dernieres ms (celle d'avant un choc, CopyCollisions)
+    uint32_t peakAt;
     uint32_t hostHandle;   // reference de pool chez l'hote (traduction des commandes de mission), meme si un invite l'a reprise
     int model;             // modele au moment de l'association : s'il change, la case du pool a ete reutilisee (entree perimee)
     uint32_t idleSince;    // proprietaire d'une copie : depuis quand elle est vide et immobile
@@ -513,8 +515,129 @@ void VehiclesInit()
     g_vehCounter = (GetTickCount() * 2654435761u) & 0xFFFFFF;   // pas les memes identifiants d'un lancement a l'autre
 }
 
+// --- Chocs contre la copie du vehicule d'un autre joueur ---
+// Une copie est gelee (sa position vient du reseau) : pour notre physique c'est un mur de masse infinie. Percute par
+// un autre joueur, notre vehicule ne bougeait pas ; celui qui percutait s'arretait net. Chaque machine corrige les
+// vehicules dont elle fait la physique (le sien, sa circulation) : dans l'axe du choc, la vitesse devient celle
+// d'un vrai choc entre deux masses (vitesse d'avant le choc, vitesse recue de la copie, CPhysical::m_fMass +0xB8,
+// enregistrements de collision +0xE6 / +0xE8, CVehicle cf. reVC Physical.h). Symetrique : l'autre fait de meme.
+static Vec3 g_prevSpeed[256];
+
+// Boite de collision du vehicule dans le plan (CColModel : boite min +0x10, max +0x1C ; modele +0x1C de sa fiche).
+struct Box2 { float cx, cy, ax, ay, bx, by, hx, hy; };
+static bool BoxOf(void *e, Box2 &b)
+{
+    void *mi = ModelInfo(ModelIndex(e));
+    uint8_t *col = mi ? *(uint8_t **)((uint8_t *)mi + 0x1C) : NULL;
+    if (!col) return false;
+    Vec3 mn = *(Vec3 *)(col + 0x10), mx = *(Vec3 *)(col + 0x1C);
+    Vec3 r = Field<Vec3>(e, 0x4), f = Field<Vec3>(e, 0x14), p = Pos(e);
+    float ox = (mn.x + mx.x) * 0.5f, oy = (mn.y + mx.y) * 0.5f;
+    b.hx = (mx.x - mn.x) * 0.5f; b.hy = (mx.y - mn.y) * 0.5f;
+    float lr = sqrtf(r.x * r.x + r.y * r.y), lf = sqrtf(f.x * f.x + f.y * f.y);
+    if (lr < 0.1f || lf < 0.1f || b.hx < 0.2f || b.hy < 0.2f || b.hx > 10.0f || b.hy > 20.0f) return false;
+    b.ax = r.x / lr; b.ay = r.y / lr; b.bx = f.x / lf; b.by = f.y / lf;
+    b.cx = p.x + r.x * ox + f.x * oy; b.cy = p.y + r.y * ox + f.y * oy;
+    return true;
+}
+// Les deux boites se chevauchent-elles (axes separateurs) ?
+static bool Overlap(const Box2 &a, const Box2 &b)
+{
+    const float axes[4][2] = { { a.ax, a.ay }, { a.bx, a.by }, { b.ax, b.ay }, { b.bx, b.by } };
+    float dx = b.cx - a.cx, dy = b.cy - a.cy;
+    for (auto &L : axes) {
+        float pa = a.hx * fabsf(a.ax * L[0] + a.ay * L[1]) + a.hy * fabsf(a.bx * L[0] + a.by * L[1]);
+        float pb = b.hx * fabsf(b.ax * L[0] + b.ay * L[1]) + b.hy * fabsf(b.bx * L[0] + b.by * L[1]);
+        if (fabsf(dx * L[0] + dy * L[1]) > pa + pb + 0.05f) return false;
+    }
+    return true;
+}
+
+static void CopyCollisions()
+{
+    // Chez nous, l'autre s'est deja arrete contre notre copie quand la sienne arrive sur nous (retard du reseau) :
+    // on garde la vitesse d'avant le choc.
+    uint32_t now = GetTickCount();
+    for (auto &e : g_vehs) {
+        if (!e.used || !e.haveState) continue;
+        float c2 = e.state.speed[0] * e.state.speed[0] + e.state.speed[1] * e.state.speed[1];
+        float p2 = e.peak[0] * e.peak[0] + e.peak[1] * e.peak[1];
+        if (c2 >= p2 || now - e.peakAt > 400) { memcpy(e.peak, e.state.speed, 12); e.peakAt = now; }
+    }
+    Pool *vp = VehiclePool();
+    int n = vp->size < 256 ? vp->size : 256;
+    for (int i = 0; i < n; i++) {
+        if (vp->flags[i] & 0x80) continue;
+        uint8_t *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+        NetVehicle *mine = FindByPtr(v);
+        if (mine && mine->owner != g_localId) continue;   // copie : sa physique est chez son proprietaire
+        Vec3 prev = g_prevSpeed[i];
+        g_prevSpeed[i] = MoveSpeed(v);
+        // Le vehicule touche : m_pDamageEntity (+0x108, pose a chaque choc de vehicule) ; les enregistrements de
+        // collision (+0xE6/+0xE8) seulement si le jeu les tient pour ce vehicule (bUseCollisionRecords).
+        uint8_t *hits[7];
+        int nh = 0;
+        if (Field<uint8_t *>(v, 0x108)) hits[nh++] = Field<uint8_t *>(v, 0x108);
+        int records = Field<uint8_t>(v, 0xE6);
+        for (int r = 0; r < records && r < 6; r++) if (Field<uint8_t *>(v, 0xE8 + r * 4) != hits[0] || !nh) hits[nh++] = Field<uint8_t *>(v, 0xE8 + r * 4);
+        // Un vehicule a l'arret (statique) ne calcule pas ses collisions et la copie, gelee, non plus : ils se
+        // traversaient sans reaction. On cherche aussi les copies dont la boite chevauche la sienne.
+        Box2 mb;
+        bool haveBox = false;
+        for (auto &e : g_vehs) {
+            if (nh >= 7) break;
+            if (!e.used || !e.veh || e.owner == g_localId || !e.haveState || Stale(e)) continue;
+            float dx = Pos(e.veh).x - Pos(v).x, dy = Pos(e.veh).y - Pos(v).y;
+            if (dx * dx + dy * dy > 10.0f * 10.0f) continue;
+            if (!haveBox) { if (!BoxOf(v, mb)) break; haveBox = true; }
+            Box2 ob;
+            if (!BoxOf(e.veh, ob) || !Overlap(mb, ob)) continue;
+            bool dup = false;
+            for (int k = 0; k < nh; k++) dup |= hits[k] == (uint8_t *)e.veh;
+            if (!dup) hits[nh++] = (uint8_t *)e.veh;
+        }
+        for (int r = 0; r < nh; r++) {
+            uint8_t *o = hits[r];
+            if (!o || (Field<uint8_t>(o, 0x50) & 7) != 2) continue;   // un vehicule
+            NetVehicle *c = FindByPtr(o);
+            if (!c || c->owner == g_localId || !c->haveState) continue;
+            Vec3 a = Pos(v), b = Pos(o);
+            float nx = a.x - b.x, ny = a.y - b.y, len = sqrtf(nx * nx + ny * ny);
+            if (len < 0.01f) continue;
+            nx /= len; ny /= len;
+            float m1 = Field<float>(v, 0xB8), m2 = Field<float>(o, 0xB8);
+            if (m1 <= 0.0f || m2 <= 0.0f) continue;
+            float u1 = prev.x * nx + prev.y * ny;                                   // nous, avant le choc
+            float u2 = c->peak[0] * nx + c->peak[1] * ny;                           // l'autre (vitesse recue d'avant le choc)
+            float approach = u2 - u1;
+            if (approach <= 0.002f) continue;                                       // on s'eloigne deja
+            // Une fois par choc (les boites restent en contact plusieurs images).
+            static struct { void *a, *b; uint32_t t; } recent[16];
+            static int recentAt;
+            bool again = false;
+            for (auto &rc : recent) again |= rc.a == (void *)v && rc.b == (void *)o && GetTickCount() - rc.t < 250;
+            if (again) continue;
+            recent[recentAt++ % 16] = { v, o, GetTickCount() };
+            float want = u1 + 1.2f * m2 / (m1 + m2) * approach;                     // choc peu elastique (e = 0,2)
+            Vec3 &cur = MoveSpeed(v);
+            float delta = want - (cur.x * nx + cur.y * ny);
+            if (delta > 1.0f) delta = 1.0f;
+            if (delta < -1.0f) delta = -1.0f;
+            cur.x += nx * delta;
+            cur.y += ny * delta;
+            Field<uint8_t>(v, 0x51) &= ~0x04;   // bIsStatic : une voiture garee se reveille
+            static uint32_t lastLog;
+            if (GetTickCount() - lastLog > 2000) {
+                lastLog = GetTickCount();
+                Log("vehicules : choc avec la copie %08X du joueur %d (a %.2f), notre vitesse %.2f -> %.2f dans l'axe", c->id, c->owner, u2, u1, want);
+            }
+        }
+    }
+}
+
 void VehiclesFrame(bool inGame)
 {
+    if (inGame) CopyCollisions();
     static bool wasConnected[MAX_PLAYERS];
     for (int i = 0; i < MAX_PLAYERS; i++) {
         bool c = i != g_localId && g_players[i].connected;

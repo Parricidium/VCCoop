@@ -488,6 +488,19 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         fl &= ~0x20;
         ApplyDamage(ped, attacker, d.weapon, d.damage, d.piece, d.dir);
         fl = savedFl;
+        // La reaction (se defendre, riposter, fuir) : le jeu l'appelle depuis le coup lui-meme (CPed::FightHitPed ->
+        // victime->ReactToAttack(agresseur), 0x51BDA0), pas depuis les degats ; le coup de l'invite etant donne chez
+        // lui, le personnage ne reagissait pas chez l'hote. Contre le Tommy de l'invite.
+        void *who = PuppetPed(d.attacker);
+        if (who && Health(ped) > 0.0f && ped != FindPlayerPed() && !IsPuppet(ped))
+        {
+            ((void(__thiscall *)(void *, void *))0x51BDA0)(ped, who);
+            static uint32_t lastLog;
+            if (GetTickCount() - lastLog > 3000) {
+                lastLog = GetTickCount();
+                Log("combat : %08X frappe par le joueur %d reagit (objectif %d, etat %d)", d.hostHandle, d.attacker, Field<int>(ped, 0x164), PedState(ped));
+            }
+        }
         if (g_cfg.logScripts) Log("combat : joueur %d touche %08X (%.0f, arme %d) -> sante %.0f", from, d.hostHandle, d.damage, d.weapon, Health(ped));
         // Le jeu n'enregistre pas de crime pour un coup porte par un pantin : on donne les etoiles nous-memes (elles
         // sont partagees ensuite). Passant tue : 1 etoile, 3 en deux minutes : 2 ; policier touche : 2, tue : 3.
