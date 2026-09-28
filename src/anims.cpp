@@ -126,6 +126,13 @@ typedef void(__cdecl *FrameCb_t)(void *frame, void *updateData);
 static FrameCb_t o_FrameCbVel, o_FrameCb;
 static void __cdecl h_FrameCbVel(void *frame, void *ud) { if (!((void **)ud)[1]) return; o_FrameCbVel(frame, ud); }
 static void __cdecl h_FrameCb(void *frame, void *ud) { if (!((void **)ud)[1]) return; o_FrameCb(frame, ud); }
+// Troisieme callback, celui des personnages a squelette (0x4042A0 -> 0x403DF0) : meme lecture de nodes[0] sans test
+// (plantage 0x403ED2 chez l'hote pendant Jury Fury, 28/09 : acces 0x14, pile 4042C2).
+static void __cdecl h_FrameCbSkin(void *frame, void *ud)
+{
+    if (!((void **)ud)[1]) return;
+    ((void(__cdecl *)(void *, void *))0x403DF0)(frame, ud);
+}
 
 void InstallAnimGuards()
 {
@@ -133,5 +140,7 @@ void InstallAnimGuards()
     static const uint8_t plain[] = { 0x53, 0x56, 0x57, 0x55, 0x83, 0xEC, 0x48 };
     o_FrameCbVel = (FrameCb_t)MakeDetour(0x4042D0, vel, sizeof(vel), (void *)h_FrameCbVel);
     o_FrameCb = (FrameCb_t)MakeDetour(0x403700, plain, sizeof(plain), (void *)h_FrameCb);
+    if (*(uint8_t *)0x4042BD == 0xE8 && *(int32_t *)0x4042BE == 0x403DF0 - 0x4042C2) PatchCall(0x4042BD, (void *)h_FrameCbSkin);
+    else Log("animations : appel 0x4042BD inattendu, garde-fou du squelette non pose");
     Log("animations : garde-fou pose sur les mises a jour d'image (liste vide)");
 }
