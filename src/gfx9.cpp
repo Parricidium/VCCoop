@@ -292,6 +292,7 @@ float4 gLightCount : register(c29);   // nombre, intensite, nombre de lumieres a
 row_major float4x4 gLightVP[4] : register(c174);   // lumieres a ombre : monde -> carte (perspective)
 float4 gLShadow : register(c190);    // taille d'une case (texels), 1 / taille de l'atlas
 sampler2D sLightAtlas : register(s2);
+sampler2D sScene : register(s3);   // l'image avant les lumieres
 
 // Ombre de la lumiere k (cases 2x2 de l'atlas) : filtre 3x3 lisse (16 lectures).
 float LightShadow(int k, float3 P, float3 N, float4 lpos) {
@@ -331,8 +332,9 @@ float3 OneLight(float4 a, float4 b, float4 c, float3 P, float3 N, out float inRa
 
 float4 PsLights(float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
   float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
-  if (d >= 0.999) return 0;
+  if (d >= 0.999) return float4(gLShadow.z > 0.5 ? 0 : scene, 1);   // ciel, feuillages : image inchangee
   float3 P = WorldAt(uv, d);
   float2 dx = float2(gScreen.z, 0), dy = float2(0, gScreen.w);
   float dl = tex2Dlod(sDepth, float4(uv - dx, 0, 0)).r, dr = tex2Dlod(sDepth, float4(uv + dx, 0, 0)).r;
@@ -356,7 +358,13 @@ float4 PsLights(float2 vpos : VPOS) : COLOR {
     float3 l = OneLight(gLightPos[i], gLightCol[i], gLightDir[i], P, N, inRange);
     sum += l;
   }
-  return float4(sum * gLightCount.y, 1);
+  float3 light = sum * gLightCount.y;
+  if (gLShadow.z > 0.5) return float4(light, 1);   // OmbresDebug=2 : lumiere recue seule
+  // Couleur propre de la surface : l'image divisee par la clarte ambiante (la nuit, tout est assombri), en partie
+  // desaturee (sinon un neon rose teintait tout ce qu'un phare eclaire).
+  float lum = dot(scene, float3(0.3, 0.59, 0.11));
+  float3 albedo = saturate(lerp(scene, lum, 0.45) / gLightCount.w);
+  return float4(scene + albedo * light, 1);
 }
 
 // ---- eau moderne
@@ -932,7 +940,7 @@ static CascadeInfo MakeCascade(Vec3 cam, Vec3 fwd, float tanX, float tanY, float
 // ======================================================================= Lumieres du jeu (CPointLights)
 // CPointLights::AddLight (0x567700) : phares, lampadaires, explosions, feux, tirs. Le jeu n'en garde que 32 a moins de
 // 22 m (pour eclairer les personnages et vehicules) ; on les note aussi jusqu'a 150 m pour l'eclairage par pixel.
-struct DynLight { float x, y, z, dx, dy, dz, radius, r, g, b; int type; };
+struct DynLight { float x, y, z, dx, dy, dz, radius, r, g, b; int type; float cone; };
 enum { MAX_LIGHTS = 48 };
 static DynLight g_lightList[MAX_LIGHTS];
 static int g_lightCount;
@@ -941,12 +949,51 @@ static AddLight_t o_AddLight;
 static void __cdecl h_AddLight(int type, float x, float y, float z, float dx, float dy, float dz, float radius, float r, float g, float b, int fog, int extra)
 {
     int t = type & 0xFF;
-    if ((t == 0 || t == 1) && g_lightCount < MAX_LIGHTS && radius > 0.1f && r + g + b > 0.02f) {
+    // Le phare du joueur (genre 1) part du centre de sa voiture : sa carrosserie masquait tout. Les phares sont
+    // refaits a l'avant de chaque vehicule (h_StoreCarLight).
+    if (t == 0 && g_lightCount < MAX_LIGHTS && radius > 0.1f && r + g + b > 0.02f) {
         const float *cam = (const float *)0x7E46B8;   // TheCamera : position
         float ex = x - cam[0], ey = y - cam[1], ez = z - cam[2];
-        if (ex * ex + ey * ey + ez * ez < 150.0f * 150.0f) g_lightList[g_lightCount++] = { x, y, z, dx, dy, dz, radius, r, g, b, t };
+        if (ex * ex + ey * ey + ez * ez < 150.0f * 150.0f) g_lightList[g_lightCount++] = { x, y, z, dx, dy, dz, radius, r, g, b, t, 0.55f };
     }
     o_AddLight(type, x, y, z, dx, dy, dz, radius, r, g, b, fog, extra);
+}
+
+// Phares : le jeu n'en fait une vraie lumiere que pour la voiture du joueur ; les autres ne sont qu'une tache
+// lumineuse peinte au sol (CShadows::StoreCarLightShadow 0x56DCD0, texture des phares 0xA1073C). Chaque vehicule
+// phares allumes recoit ici un projecteur a l'avant (qui eclaire et projette des ombres), et la tache peinte est retiree.
+typedef void(__cdecl *StoreCarLight_t)(void *, int, void *, float *, float, float, float, float, int, int, int, float);
+static StoreCarLight_t o_StoreCarLight;
+static bool g_lightsLive;   // lumieres dynamiques actives a l'image precedente (sinon la tache du jeu reste)
+static float g_night = 1;   // 1 la nuit, 0 en plein jour (ciel du cycle du jour) : les phares portent plus la nuit
+static float SkyLum()
+{
+    int c[3] = { *(int *)0xA0D958, *(int *)0x97F208, *(int *)0x9B6DF4 };   // CTimeCycle : bas du ciel
+    float l = (c[0] * 0.3f + c[1] * 0.59f + c[2] * 0.11f) / 255.0f * 1.25f;
+    return l < 0 ? 0 : l > 1 ? 1 : l;
+}
+static void __cdecl h_StoreCarLight(void *car, int id, void *tex, float *pos, float fx, float fy, float sx, float sy, int r, int g, int b, float maxAngle)
+{
+    if (car && pos && tex && tex == *(void **)0xA1073C && g_lightsLive) {
+        const float *m = (const float *)((uint8_t *)car + 4);   // right, forward, up, position (lignes de 4)
+        Vec3 p = { m[12], m[13], m[14] }, fwd = { m[4], m[5], m[6] }, up = { m[8], m[9], m[10] };
+        // La tache est posee 6 m devant les phares : on retrouve l'avant du vehicule.
+        float front = (pos[0] - p.x) * fwd.x + (pos[1] - p.y) * fwd.y + (pos[2] - p.z) * fwd.z - 6.0f;
+        if (front < 0.8f) front = 0.8f;
+        if (front > 4.0f) front = 4.0f;
+        const float *cam = (const float *)0x7E46B8;
+        float ex = p.x - cam[0], ey = p.y - cam[1];
+        if (g_lightCount < MAX_LIGHTS && ex * ex + ey * ey < 150.0f * 150.0f) {
+            Vec3 o = { p.x + fwd.x * (front + 0.6f) + up.x * 0.15f, p.y + fwd.y * (front + 0.6f) + up.y * 0.15f, p.z + fwd.z * (front + 0.6f) + up.z * 0.15f };   // devant le pare-chocs
+            Vec3 d = Norm({ fwd.x - up.x * 0.12f, fwd.y - up.y * 0.12f, fwd.z - up.z * 0.12f });
+            // L'image est multipliee par (1 + lumiere) : sur une route sombre la nuit, il faut beaucoup plus de lumiere
+            // pour retrouver la tache du jeu (et plus).
+            float k = 2.5f * (1.0f + 0.6f * g_night);   // (la passe applique x0,4 a toutes les lumieres)
+            g_lightList[g_lightCount++] = { o.x, o.y, o.z, d.x, d.y, d.z, 14.0f, 1.15f * k, 1.1f * k, 0.95f * k, 1, 0.80f };
+        }
+        return;
+    }
+    o_StoreCarLight(car, id, tex, pos, fx, fy, sx, sy, r, g, b, maxAngle);
 }
 
 static void SetCommonStates()
@@ -1172,11 +1219,12 @@ static void Apply()
 
     // 4. Lumieres dynamiques : image x (1 + lumiere recue), les plus proches avec leur ombre.
     if (lights) {
-        float lc[4] = { (float)g_lightCount, 1.25f, (float)g_shadowLights, 0 };
+        float amb = 0.22f + 0.78f * SkyLum();   // clarte ambiante de la scene (nuit : ~0,25)
+        float lc[4] = { (float)g_lightCount, 0.4f, (float)g_shadowLights, amb };
         g_dev->SetPixelShaderConstantF(29, lc, 1);
         if (g_shadowLights) {
             g_dev->SetPixelShaderConstantF(174, g_lightVP[0].m, 4 * g_shadowLights);
-            float ls[4] = { (float)LIGHT_TILE, 1.0f / (2 * LIGHT_TILE), 0, 0 };
+            float ls[4] = { (float)LIGHT_TILE, 1.0f / (2 * LIGHT_TILE), g_debugMask == 2 ? 1.0f : 0.0f, 0 };
             g_dev->SetPixelShaderConstantF(190, ls, 1);
             g_dev->SetTexture(2, g_lightAtlas);
             g_dev->SetSamplerState(2, D3DSAMP_MINFILTER, D3DTEXF_POINT);
@@ -1193,7 +1241,7 @@ static void Apply()
             float *q = lp + i * 4; q[0] = l.x; q[1] = l.y; q[2] = l.z; q[3] = range;
             q = lcol + i * 4; q[0] = l.r; q[1] = l.g; q[2] = l.b; q[3] = spot ? 1.0f : 0.0f;
             Vec3 dir = Norm({ l.dx, l.dy, l.dz });
-            q = ldir + i * 4; q[0] = dir.x; q[1] = dir.y; q[2] = dir.z; q[3] = 0.55f;
+            q = ldir + i * 4; q[0] = dir.x; q[1] = dir.y; q[2] = dir.z; q[3] = l.cone;
         }
         g_dev->SetPixelShaderConstantF(30, lp, g_lightCount);
         g_dev->SetPixelShaderConstantF(78, lcol, g_lightCount);
@@ -1201,7 +1249,16 @@ static void Apply()
         g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
         g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR);
         g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
-        if (g_debugMask == 2) g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);   // OmbresDebug=2 : lumiere recue seule
+        if (!g_shadowLights) { float ls[4] = { (float)LIGHT_TILE, 1.0f / (2 * LIGHT_TILE), g_debugMask == 2 ? 1.0f : 0.0f, 0 }; g_dev->SetPixelShaderConstantF(190, ls, 1); }
+        // L'image actuelle (ombres comprises) sert de couleur des surfaces ; la passe la remplace.
+        if (g_refractSurf) g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_NONE);
+        g_dev->SetTexture(3, g_refract);
+        g_dev->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(3, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(3, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        g_dev->SetSamplerState(3, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        g_dev->SetSamplerState(3, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
         g_dev->SetPixelShader(g_psLights);
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
@@ -1210,6 +1267,7 @@ static void Apply()
     g_dev->SetTexture(0, NULL);
     g_dev->SetTexture(1, NULL);
     g_dev->SetTexture(2, NULL);
+    g_dev->SetTexture(3, NULL);
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
     g_state->Apply();
@@ -1456,6 +1514,9 @@ void Gfx9BeforePresent()
     g_after3d = 0;
     g_lightCount = 0;
     g_waterDraws = 0;
+    g_lightsLive = LightsWanted() && g_shadersOk && g_psLights;
+    g_night = 1.0f - SkyLum();
+    if (g_night < 0) g_night = 0;
     g_waterTexSet = false;
     memset(g_why, 0, sizeof(g_why));
     SafeRelease(g_backBuffer);
@@ -1473,6 +1534,9 @@ void InstallGfx9Hooks()
         PatchCall(0x4A6594, (void *)h_RenderWater);
         PatchCall(0x4A65AE, (void *)h_RenderTransparentWater);
     } else Log("rendu : appels de l'eau introuvables (eau moderne coupee)");
+    static const uint8_t carLightPro[] = { 0xBA, 0xB8, 0x46, 0x7E, 0x00 };   // mov edx, 7E46B8h (TheCamera)
+    o_StoreCarLight = (StoreCarLight_t)MakeDetour(0x56DCD0, carLightPro, sizeof(carLightPro), (void *)h_StoreCarLight);
+    if (!o_StoreCarLight) Log("rendu : CShadows::StoreCarLightShadow introuvable (phares : tache du jeu gardee)");
     static const uint8_t addLightPro[] = { 0xD9, 0xEE, 0xD9, 0xEE, 0x83, 0xEC, 0x18 };   // fldz ; fldz ; sub esp, 18h
     o_AddLight = (AddLight_t)MakeDetour(0x567700, addLightPro, sizeof(addLightPro), (void *)h_AddLight);
     if (!o_AddLight) Log("rendu : CPointLights::AddLight introuvable (lumieres dynamiques coupees)");
