@@ -639,31 +639,33 @@ public:
     STDM GetCurrentTexturePalette(UINT *n) { return m_obj->GetCurrentTexturePalette(n); }
     STDM DrawPrimitive(D3DPRIMITIVETYPE t, UINT start, UINT count)
     {
-        if (g_bridgeCasterOnly) { GfxDraw d = { false, (UINT)t, 0, 0, 0, start, count }; Gfx9AfterDraw(m_fvf, d); return D3D_OK; }
+        GfxDraw d = { false, (UINT)t, 0, 0, 0, start, count };
+        if (Gfx9Intercept(m_fvf, d, false)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, false);
         HRESULT hr = m_obj->DrawPrimitive(t, start, count);
-        GfxDraw d = { false, (UINT)t, 0, 0, 0, start, count };
         Gfx9AfterDraw(m_fvf, d);
         return hr;
     }
     STDM DrawIndexedPrimitive(D3DPRIMITIVETYPE t, UINT minIdx, UINT numVerts, UINT start, UINT count)
     {
-        if (g_bridgeCasterOnly) { GfxDraw d = { true, (UINT)t, m_baseVertex, minIdx, numVerts, start, count }; Gfx9AfterDraw(m_fvf, d); return D3D_OK; }
+        GfxDraw d = { true, (UINT)t, m_baseVertex, minIdx, numVerts, start, count };
+        if (Gfx9Intercept(m_fvf, d, false)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, false);
         HRESULT hr = m_obj->DrawIndexedPrimitive(t, m_baseVertex, minIdx, numVerts, start, count);
-        GfxDraw d = { true, (UINT)t, m_baseVertex, minIdx, numVerts, start, count };
         Gfx9AfterDraw(m_fvf, d);
         return hr;
     }
     STDM DrawPrimitiveUP(D3DPRIMITIVETYPE t, UINT count, const void *data, UINT stride)
     {
-        if (g_bridgeCasterOnly) return D3D_OK;
+        GfxDraw d = { false, (UINT)t, 0, 0, 0, 0, count };
+        if (Gfx9Intercept(m_fvf, d, true)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, true);
         return m_obj->DrawPrimitiveUP(t, count, data, stride);
     }
     STDM DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE t, UINT minIdx, UINT numVerts, UINT count, const void *idx, D3DFORMAT fmt, const void *data, UINT stride)
     {
-        if (g_bridgeCasterOnly) return D3D_OK;
+        GfxDraw d = { true, (UINT)t, 0, minIdx, numVerts, 0, count };
+        if (Gfx9Intercept(m_fvf, d, true)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, true);
         return m_obj->DrawIndexedPrimitiveUP(t, minIdx, numVerts, count, idx, fmt, data, stride);
     }

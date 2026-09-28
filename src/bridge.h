@@ -18,6 +18,7 @@ void Gfx9BeforeReset();
 void Gfx9AfterReset(UINT width, UINT height, bool msaa);
 void Gfx9BeginScene();
 void Gfx9EndScene();
+bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up);   // vrai : dessin garde par le rendu moderne, pas affiche
 void Gfx9BeforeDraw(DWORD fvf, bool up);           // avant chaque dessin du jeu (peut poser le masque d'ombre)
 void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d);    // apres chaque dessin du jeu (tampons de sommets / d'indices)
 void Gfx9BeforePresent();

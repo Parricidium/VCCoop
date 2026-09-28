@@ -247,6 +247,124 @@ float4 PsMask(float2 vpos : VPOS) : COLOR {
   if (gAtlas.w > 0.5) return float4(lit, lit, lit, 1) * 0.999 + 0.0005 * c;   // OmbresDebug=1 : masque brut
   return float4(lerp(1, col, k), 1);
 }
+
+// ---- lumieres dynamiques : l'image est multipliee par (1 + lumiere recue)
+float4 gLightPos[48] : register(c30);    // position + portee
+float4 gLightCol[48] : register(c78);    // couleur + genre (1 : phare, en cone)
+float4 gLightDir[48] : register(c126);   // direction + cosinus du cone
+float4 gLightCount : register(c29);
+
+float4 PsLights(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return 0;
+  float3 P = WorldAt(uv, d);
+  float2 dx = float2(gScreen.z, 0), dy = float2(0, gScreen.w);
+  float dl = tex2Dlod(sDepth, float4(uv - dx, 0, 0)).r, dr = tex2Dlod(sDepth, float4(uv + dx, 0, 0)).r;
+  float du = tex2Dlod(sDepth, float4(uv - dy, 0, 0)).r, dd = tex2Dlod(sDepth, float4(uv + dy, 0, 0)).r;
+  float3 ex = abs(dr - d) < abs(d - dl) ? WorldAt(uv + dx, dr) - P : P - WorldAt(uv - dx, dl);
+  float3 ey = abs(dd - d) < abs(d - du) ? WorldAt(uv + dy, dd) - P : P - WorldAt(uv - dy, du);
+  float3 N = normalize(cross(ey, ex));
+  if (dot(N, gCam.xyz - P) < 0) N = -N;
+  float3 sum = 0;
+  [loop] for (int i = 0; i < 48; i++) {
+    if (i >= gLightCount.x) break;
+    float4 a = gLightPos[i], b = gLightCol[i], c = gLightDir[i];
+    float3 L = a.xyz - P;
+    float dist = length(L);
+    [branch] if (dist < a.w) {
+      L /= dist;
+      float att = 1 - dist / a.w; att *= att;
+      float ndl = saturate(dot(N, L) * 0.8 + 0.2);
+      float spot = b.w > 0.5 ? smoothstep(c.w, c.w + 0.15, dot(-L, c.xyz)) : 1;
+      sum += b.rgb * att * ndl * spot;
+    }
+  }
+  return float4(sum * gLightCount.y, 1);
+}
+
+// ---- eau moderne
+row_major float4x4 gWorld : register(c4);
+struct WIn { float4 pos : POSITION; };
+struct WOut { float4 pos : POSITION; float3 world : TEXCOORD0; float depth : TEXCOORD1; };
+WOut VsWater(WIn i) {
+  WOut o; o.pos = mul(float4(i.pos.xyz, 1), gMat);
+  o.world = mul(float4(i.pos.xyz, 1), gWorld).xyz;
+  o.depth = o.pos.w; return o;
+}
+
+sampler2D sRefract : register(s1);
+float4 gWCam : register(c1);        // camera, w = temps (s)
+float4 gWSun : register(c2);        // vers le soleil, w = force du reflet
+float4 gSkyTop : register(c3);
+float4 gSkyBottom : register(c4);
+float4 gWFog : register(c5);        // debut, fin du brouillard, echelle de profondeur
+float4 gFogCol : register(c6);
+float4 gShallow : register(c7);
+float4 gDeep : register(c8);
+float4 gWLight : register(c9);      // x = clarte du jour
+
+float Hash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
+float Noise(float2 p) {
+  float2 i = floor(p), f = frac(p);
+  float2 u = f * f * (3 - 2 * f);
+  return lerp(lerp(Hash(i), Hash(i + float2(1, 0)), u.x), lerp(Hash(i + float2(0, 1)), Hash(i + float2(1, 1)), u.x), u.y);
+}
+// Pente de la surface : vagues directionnelles, plus petites au loin (pas de scintillement).
+float2 WaveSlope(float2 p, float t, float detail) {
+  float2 s = 0;
+  const float2 dirs[6] = { float2(0.8, 0.6), float2(-0.5, 0.86), float2(0.3, -0.95), float2(-0.9, -0.2), float2(0.6, -0.4), float2(-0.2, 0.7) };
+  const float freq[6] = { 0.12, 0.21, 0.37, 0.61, 1.3, 2.4 };
+  const float amp[6] = { 0.30, 0.22, 0.14, 0.09, 0.045, 0.025 };
+  [unroll] for (int k = 0; k < 6; k++) {
+    float w = k < 4 ? 1 : detail;
+    float ph = dot(dirs[k], p) * freq[k] + t * (0.9 + k * 0.35);
+    s += dirs[k] * cos(ph) * freq[k] * amp[k] * w;
+  }
+  float2 q = p * 0.9 + t * float2(0.35, 0.2);
+  s += (float2(Noise(q + float2(0.01, 0)) - Noise(q - float2(0.01, 0)), Noise(q + float2(0, 0.01)) - Noise(q - float2(0, 0.01))) * 1.6) * detail;
+  return s;
+}
+
+float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 V = gWCam.xyz - i.world;
+  float dist = length(V); V /= dist;
+  float detail = saturate(1 - dist / 120);
+  float2 sl = WaveSlope(i.world.xy, gWCam.w, detail);
+  float3 N = normalize(float3(-sl * (0.35 + 0.65 * detail), 1));
+  // Profondeur de l'eau sous ce point (le fond de la scene, vu par la camera).
+  float sceneD = tex2Dlod(sDepth, float4(uv, 0, 0)).r * gWFog.z;
+  float thick = max(sceneD - i.depth, 0);
+  float2 ruv = uv + N.xy * 0.03 * saturate(thick / 4) * detail;
+  float sceneD2 = tex2Dlod(sDepth, float4(ruv, 0, 0)).r * gWFog.z;
+  if (sceneD2 < i.depth) { ruv = uv; sceneD2 = sceneD; }
+  float thick2 = max(sceneD2 - i.depth, 0);
+  float3 refr = tex2Dlod(sRefract, float4(ruv, 0, 0)).rgb;
+  // Couleur de l'eau : turquoise en eau peu profonde, bleu profond au large.
+  float depthMix = saturate(thick2 / 14);
+  float3 body = lerp(gShallow.rgb, gDeep.rgb, depthMix) * gWLight.x;
+  // Lumiere diffusee sous la surface : les flancs des vagues tournes vers le soleil s'eclaircissent en turquoise.
+  body += gShallow.rgb * gWLight.x * 0.25 * saturate(dot(N.xy, gWSun.xy) * 3 + 0.3) * gWSun.w;
+  float clarity = exp(-thick2 * 0.2);
+  float3 col = lerp(body, refr * lerp(float3(1, 1, 1), gShallow.rgb * 1.35, 0.6), clarity * 0.85);
+  // Reflet du ciel (Fresnel, moderee : l'eau garde sa couleur) et du soleil.
+  float3 R = reflect(-V, N);
+  float3 sky = lerp(gSkyBottom.rgb, gSkyTop.rgb, saturate(R.z * 1.6));
+  float fres = 0.02 + 0.98 * pow(1 - saturate(dot(N, V)), 5);
+  col = lerp(col, sky, saturate(fres * 0.6));
+  float spec = pow(saturate(dot(R, gWSun.xyz)), 280) * 3 + pow(saturate(dot(R, gWSun.xyz)), 40) * 0.12;
+  col += spec * gWSun.w * float3(1, 0.95, 0.85);
+  // Ecume le long des rives et autour des objets dans l'eau.
+  float foamEdge = saturate(1 - thick / 0.7);
+  float foamNoise = Noise(i.world.xy * 2.2 + gWCam.w * 0.6) * Noise(i.world.xy * 0.7 - gWCam.w * 0.3);
+  float foam = saturate(foamEdge * (0.35 + foamNoise * 1.3)) * detail;
+  col = lerp(col, float3(0.95, 0.97, 1) * max(gWLight.x, 0.15), foam * 0.75);
+  // Brouillard du jeu.
+  float fog = saturate((dist - gWFog.x) / max(gWFog.y - gWFog.x, 1));
+  col = lerp(col, gFogCol.rgb, fog);
+  return float4(col, 1);
+}
 )HLSL";
 
 typedef HRESULT(WINAPI *D3DCompile_t)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO *, ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
@@ -275,9 +393,10 @@ static IUnknown *CompileShader(const char *entry, const char *target, bool noUv)
 // ======================================================================= Ressources
 enum { CASCADES = 4 };
 static IDirect3DVertexShader9 *g_vsLight[2], *g_vsView[2], *g_vsQuad;   // [0] avec uv, [1] sans
-static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask;
-static IDirect3DTexture9 *g_atlas, *g_screenDepth;
-static IDirect3DSurface9 *g_atlasSurf, *g_atlasDs, *g_screenSurf, *g_screenDs;
+static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater;
+static IDirect3DVertexShader9 *g_vsWater;
+static IDirect3DTexture9 *g_atlas, *g_screenDepth, *g_refract;
+static IDirect3DSurface9 *g_atlasSurf, *g_atlasDs, *g_screenSurf, *g_screenDs, *g_refractSurf;
 static IDirect3DVertexBuffer9 *g_replayVb;
 static IDirect3DIndexBuffer9 *g_replayIb;
 static UINT g_replayVbSize, g_replayIbSize;
@@ -302,6 +421,9 @@ static bool CreateShaders()
     }
     g_vsQuad = (IDirect3DVertexShader9 *)CompileShader("VsQuad", "vs_3_0", false);
     g_psMask = (IDirect3DPixelShader9 *)CompileShader("PsMask", "ps_3_0", false);
+    g_psLights = (IDirect3DPixelShader9 *)CompileShader("PsLights", "ps_3_0", false);
+    g_vsWater = (IDirect3DVertexShader9 *)CompileShader("VsWater", "vs_3_0", false);
+    g_psWater = (IDirect3DPixelShader9 *)CompileShader("PsWater", "ps_3_0", false);
     g_shadersOk = g_vsLight[0] && g_vsLight[1] && g_vsView[0] && g_vsView[1] && g_psDepth[0] && g_psDepth[1] && g_vsQuad && g_psMask;
     Log("rendu : shaders HLSL %s", g_shadersOk ? "prets (vs_3_0 / ps_3_0)" : "en echec");
     return g_shadersOk;
@@ -311,6 +433,7 @@ static void ReleaseResources()
 {
     SafeRelease(g_atlasSurf); SafeRelease(g_atlas); SafeRelease(g_atlasDs);
     SafeRelease(g_screenSurf); SafeRelease(g_screenDepth); SafeRelease(g_screenDs);
+    SafeRelease(g_refractSurf); SafeRelease(g_refract);
     SafeRelease(g_replayVb); SafeRelease(g_replayIb);
     SafeRelease(g_state);
     g_replayVbSize = g_replayIbSize = 0;
@@ -340,10 +463,13 @@ static bool CreateResources()
         return false;
     }
     g_screenDepth->GetSurfaceLevel(0, &g_screenSurf);
+    if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &g_refract, NULL)))
+        g_refract->GetSurfaceLevel(0, &g_refractSurf);
     if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_state))) { Log("rendu : bloc d'etats impossible"); ReleaseResources(); return false; }
     g_resourcesFailed = false;
     g_resourcesOk = true;
-    Log("rendu : ombres pretes (4 cascades de %dx%d, ecran %ux%u)", g_cascadeSize, g_cascadeSize, g_width, g_height);
+    Log("rendu : ombres pretes (4 cascades de %dx%d, ecran %ux%u) ; eau %s, lumieres %s", g_cascadeSize, g_cascadeSize, g_width, g_height,
+        g_psWater && g_refract ? "prete" : "indisponible", g_psLights ? "pretes" : "indisponibles");
     return true;
 }
 
@@ -354,6 +480,7 @@ struct Rec {
     IDirect3DBaseTexture9 *tex;
     UINT stride;
     bool replayVb, replayIb, receiver, mainView;
+    bool caster, water;   // projette une ombre ; surface de l'eau (dessinee par nous)
     GfxDraw d;
     DWORD fvf;
     float world[16];
@@ -384,13 +511,15 @@ static UINT VertexCount(UINT type, UINT count)
     return 0;
 }
 
-static bool ShadowsWanted()
+static bool Outdoors()
 {
-    if (!g_cfg.sunShadows || GameState() != GS_PLAYING) return false;
     void *me = FindPlayerPed();
-    if (me && AreaCode(me) != 0) return false;   // interieurs : pas de soleil
-    return true;
+    return !me || AreaCode(me) == 0;
 }
+static bool ShadowsWanted() { return g_cfg.sunShadows && GameState() == GS_PLAYING && Outdoors(); }   // interieurs : pas de soleil
+static bool LightsWanted() { return g_cfg.dynLights && GameState() == GS_PLAYING; }
+static bool WaterWanted() { return g_cfg.modernWater && GameState() == GS_PLAYING && g_shadersOk && g_psWater; }
+static bool RecordingWanted() { return ShadowsWanted() || LightsWanted() || WaterWanted(); }
 
 static float g_sunK;          // force des ombres de cette image (0 : rien a faire)
 static Vec3 g_sun;            // vers le soleil (lisse)
@@ -506,14 +635,6 @@ void Gfx9SettingsChanged()
     g_resourcesFailed = false;
 }
 
-void InstallGfx9Hooks()
-{
-    static bool done;
-    if (done) return;
-    done = true;
-    if (*(uint8_t *)0x4A6584 == 0xE8 && *(int32_t *)0x4A6585 == 0x4C9F40 - 0x4A6589) PatchCall(0x4A6584, (void *)h_RenderEverythingBarRoads);
-    else Log("rendu : appel de RenderEverythingBarRoads introuvable (projeteurs hors champ coupes)");
-}
 
 // ======================================================================= Appels du pont
 void Gfx9DeviceCreated(IDirect3DDevice9 *dev, UINT width, UINT height, bool msaa)
@@ -522,7 +643,7 @@ void Gfx9DeviceCreated(IDirect3DDevice9 *dev, UINT width, UINT height, bool msaa
     Log("rendu : Direct3D 9 actif (%ux%u%s)", width, height, msaa ? ", anticrenelage" : "");
     FpuGuard fpu;
     g_debugMask = GetPrivateProfileIntA("VCCoop", "OmbresDebug", 0, IniPath());
-    if (g_cfg.sunShadows) CreateShaders();   // au lancement (pas au milieu d'une image de jeu)
+    if (g_cfg.sunShadows || g_cfg.modernWater || g_cfg.dynLights) CreateShaders();   // au lancement (pas au milieu d'une image de jeu)
 }
 void Gfx9BeforeReset() { SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; }
 void Gfx9AfterReset(UINT width, UINT height, bool msaa) { g_width = width; g_height = height; g_msaa = msaa; }
@@ -542,11 +663,13 @@ static bool DrawingToBackBuffer()
     return main;
 }
 
+static bool BuildRec(DWORD fvf, const GfxDraw &d, Rec &r);
+
 void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
 {
     if (g_applied || !g_dev || (fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZ) return;
     if (!(d.type == D3DPT_TRIANGLELIST || d.type == D3DPT_TRIANGLESTRIP || d.type == D3DPT_TRIANGLEFAN)) { g_why[0]++; return; }
-    if (!ShadowsWanted() || g_recs.size() >= 6000) return;
+    if (!RecordingWanted() || g_recs.size() >= 6000) return;
     DWORD zen = 0, zw = 0, blend = 0, at = 0, aref = 0;
     g_dev->GetRenderState(D3DRS_ZENABLE, &zen);
     g_dev->GetRenderState(D3DRS_ZWRITEENABLE, &zw);
@@ -570,9 +693,22 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     g_dev->GetRenderState(D3DRS_ALPHATESTENABLE, &at);
     g_dev->GetRenderState(D3DRS_ALPHAREF, &aref);
     Rec r = {};
+    if (!BuildRec(fvf, d, r)) return;
+    r.alphaTest = at || blend;
+    r.alphaRef = blend ? 0.5f : (at ? (aref & 255) / 255.0f : 0.0f);
+    if (r.alphaTest && r.alphaRef < 0.02f) r.alphaRef = 0.02f;
+    r.receiver = !blend && zw && r.mainView && !g_bridgeCasterOnly;
+    r.caster = true;
+    g_recs.push_back(r);
+}
+
+// Tampons, matrices et texture du dessin en cours ; les parties dynamiques (le jeu les reecrit dans l'image) sont
+// recopiees tout de suite.
+static bool BuildRec(DWORD fvf, const GfxDraw &d, Rec &r)
+{
     UINT off = 0;
-    if (FAILED(g_dev->GetStreamSource(0, &r.vb, &off, &r.stride)) || !r.vb) { g_why[4]++; return; }
-    if (d.indexed && (FAILED(g_dev->GetIndices(&r.ib)) || !r.ib)) { r.vb->Release(); return; }
+    if (FAILED(g_dev->GetStreamSource(0, &r.vb, &off, &r.stride)) || !r.vb) { g_why[4]++; return false; }
+    if (d.indexed && (FAILED(g_dev->GetIndices(&r.ib)) || !r.ib)) { r.vb->Release(); r.vb = NULL; return false; }
     r.d = d; r.fvf = fvf;
     g_dev->GetTransform(D3DTS_WORLD, (D3DMATRIX *)r.world);
     float view[16], proj[16];
@@ -580,10 +716,6 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     g_dev->GetTransform(D3DTS_PROJECTION, (D3DMATRIX *)proj);
     if (!g_haveMain && !g_bridgeCasterOnly) { memcpy(g_mainView, view, 64); memcpy(g_mainProj, proj, 64); g_haveMain = true; }
     r.mainView = memcmp(view, g_mainView, 64) == 0 && memcmp(proj, g_mainProj, 64) == 0;
-    r.alphaTest = at || blend;
-    r.alphaRef = blend ? 0.5f : (at ? (aref & 255) / 255.0f : 0.0f);
-    if (r.alphaTest && r.alphaRef < 0.02f) r.alphaRef = 0.02f;
-    r.receiver = !blend && zw && r.mainView && !g_bridgeCasterOnly;
     if (fvf & D3DFVF_TEXCOUNT_MASK) g_dev->GetTexture(0, &r.tex);
     // Tampons dynamiques (le jeu les reecrit dans l'image) : on garde tout de suite la partie dessinee.
     const BYTE *vm = BridgeVertexMirror(r.vb);
@@ -592,7 +724,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
         D3DINDEXBUFFER_DESC idesc;
         r.ib->GetDesc(&idesc);
         UINT n = VertexCount(d.type, d.count);
-        if (idesc.Format != D3DFMT_INDEX16 || (d.start + n) * 2 > idesc.Size) { g_why[5]++; SafeRelease(r.vb); SafeRelease(r.ib); SafeRelease(r.tex); return; }
+        if (idesc.Format != D3DFMT_INDEX16 || (d.start + n) * 2 > idesc.Size) { g_why[5]++; SafeRelease(r.vb); SafeRelease(r.ib); SafeRelease(r.tex); return false; }
         UINT q = (UINT)g_cpuIb.size();
         g_cpuIb.insert(g_cpuIb.end(), (const WORD *)im + d.start, (const WORD *)im + d.start + n);
         r.d.start = q;
@@ -603,7 +735,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
         r.vb->GetDesc(&vdesc);
         UINT first = d.indexed ? d.baseVertex + d.minIndex : d.start;
         UINT n = d.indexed ? d.numVerts : VertexCount(d.type, d.count);
-        if ((first + n) * r.stride > vdesc.Size || !r.stride) { g_why[6]++; SafeRelease(r.vb); SafeRelease(r.ib); SafeRelease(r.tex); return; }
+        if ((first + n) * r.stride > vdesc.Size || !r.stride) { g_why[6]++; SafeRelease(r.vb); SafeRelease(r.ib); SafeRelease(r.tex); return false; }
         UINT pos = ((UINT)g_cpuVb.size() + r.stride - 1) / r.stride * r.stride;
         g_cpuVb.resize(pos + n * r.stride);
         memcpy(g_cpuVb.data() + pos, vm + first * r.stride, n * r.stride);
@@ -611,7 +743,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
         else r.d.start = pos / r.stride;
         r.replayVb = true;
     }
-    g_recs.push_back(r);
+    return true;
 }
 
 // Recopie des parties dynamiques dans nos tampons.
@@ -693,36 +825,28 @@ static CascadeInfo MakeCascade(Vec3 cam, Vec3 fwd, float tanX, float tanY, float
     return ci;
 }
 
-static void Apply()
+// ======================================================================= Lumieres du jeu (CPointLights)
+// CPointLights::AddLight (0x567700) : phares, lampadaires, explosions, feux, tirs. Le jeu n'en garde que 32 a moins de
+// 22 m (pour eclairer les personnages et vehicules) ; on les note aussi jusqu'a 150 m pour l'eclairage par pixel.
+struct DynLight { float x, y, z, dx, dy, dz, radius, r, g, b; int type; };
+enum { MAX_LIGHTS = 48 };
+static DynLight g_lightList[MAX_LIGHTS];
+static int g_lightCount;
+typedef void(__cdecl *AddLight_t)(int, float, float, float, float, float, float, float, float, float, float, int, int);
+static AddLight_t o_AddLight;
+static void __cdecl h_AddLight(int type, float x, float y, float z, float dx, float dy, float dz, float radius, float r, float g, float b, int fog, int extra)
 {
-    FpuGuard fpu;
-    g_applied = true;
-    UpdateSun();
-    if (g_recs.empty() || !g_haveMain || g_sunK <= 0.01f || !CreateResources()) return;
-    int receivers = 0;
-    for (const Rec &r : g_recs) receivers += r.receiver;
-    if (receivers < 20) return;
+    int t = type & 0xFF;
+    if ((t == 0 || t == 1) && g_lightCount < MAX_LIGHTS && radius > 0.1f && r + g + b > 0.02f) {
+        const float *cam = (const float *)0x7E46B8;   // TheCamera : position
+        float ex = x - cam[0], ey = y - cam[1], ez = z - cam[2];
+        if (ex * ex + ey * ey + ez * ez < 150.0f * 150.0f) g_lightList[g_lightCount++] = { x, y, z, dx, dy, dz, radius, r, g, b, t };
+    }
+    o_AddLight(type, x, y, z, dx, dy, dz, radius, r, g, b, fog, extra);
+}
 
-    // Camera principale.
-    M4 view, proj, vp, invVp;
-    memcpy(view.m, g_mainView, 64); memcpy(proj.m, g_mainProj, 64);
-    vp = Mul(view, proj);
-    if (!Invert(vp, invVp)) return;
-    M4 invView;
-    if (!Invert(view, invView)) return;
-    Vec3 cam = { invView.m[12], invView.m[13], invView.m[14] };
-    Vec3 ahead = Transform(invVp, 0, 0, 0.5f, 1);
-    Vec3 fwd = Norm(Sub(ahead, cam));
-    float tanX = fabsf(1.0f / proj.m[0]), tanY = fabsf(1.0f / proj.m[5]);
-    float p34 = proj.m[11] != 0 ? proj.m[11] : 1.0f;
-
-    IDirect3DSurface9 *oldRt = NULL, *oldDs = NULL;
-    g_dev->GetRenderTarget(0, &oldRt);
-    g_dev->GetDepthStencilSurface(&oldDs);
-    g_state->Capture();
-    if (!UploadReplay()) { SafeRelease(oldRt); SafeRelease(oldDs); return; }
-
-    // Etats communs a nos passes.
+static void SetCommonStates()
+{
     g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
     g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
     g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
@@ -745,38 +869,84 @@ static void Apply()
         g_dev->SetSamplerState(s, D3DSAMP_ADDRESSV, s == 0 ? D3DTADDRESS_WRAP : D3DTADDRESS_CLAMP);
         g_dev->SetSamplerState(s, D3DSAMP_SRGBTEXTURE, FALSE);
     }
+}
+
+// Profondeur de la scene vue de la camera (R32F, metres / 1000) : ce que le jeu a dessine d'opaque jusqu'ici.
+static const float kDepthScale = 1.0f / 1000.0f;
+static void RenderScreenDepth(const M4 &vp, bool withWater)
+{
+    g_dev->SetRenderTarget(0, g_screenSurf);
+    g_dev->SetDepthStencilSurface(g_screenDs);
+    g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xFFFFFFFF, 1.0f, 0);
+    float vsParams[4] = { kDepthScale, 0, 0, 0 };
+    g_dev->SetVertexShaderConstantF(4, vsParams, 1);
+    g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    for (const Rec &r : g_recs) {
+        if (!r.receiver || (r.water && !withWater)) continue;
+        M4 w; memcpy(w.m, r.world, 64);
+        DrawRec(r, Mul(w, vp), true);
+    }
+}
+
+static void Apply()
+{
+    FpuGuard fpu;
+    g_applied = true;
+    UpdateSun();
+    bool shadows = ShadowsWanted() && g_sunK > 0.01f;
+    bool lights = LightsWanted() && g_lightCount > 0;
+    if (g_recs.empty() || !g_haveMain || (!shadows && !lights) || !CreateResources()) return;
+    if (lights && !g_psLights) lights = false;
+    int receivers = 0;
+    for (const Rec &r : g_recs) receivers += r.receiver;
+    if (receivers < 20 || (!shadows && !lights)) return;
+
+    // Camera principale.
+    M4 view, proj, vp, invVp;
+    memcpy(view.m, g_mainView, 64); memcpy(proj.m, g_mainProj, 64);
+    vp = Mul(view, proj);
+    if (!Invert(vp, invVp)) return;
+    M4 invView;
+    if (!Invert(view, invView)) return;
+    Vec3 cam = { invView.m[12], invView.m[13], invView.m[14] };
+    Vec3 ahead = Transform(invVp, 0, 0, 0.5f, 1);
+    Vec3 fwd = Norm(Sub(ahead, cam));
+    float tanX = fabsf(1.0f / proj.m[0]), tanY = fabsf(1.0f / proj.m[5]);
+    float p34 = proj.m[11] != 0 ? proj.m[11] : 1.0f;
+
+    IDirect3DSurface9 *oldRt = NULL, *oldDs = NULL;
+    g_dev->GetRenderTarget(0, &oldRt);
+    g_dev->GetDepthStencilSurface(&oldDs);
+    g_state->Capture();
+    if (!UploadReplay()) { SafeRelease(oldRt); SafeRelease(oldDs); return; }
+
+    // Etats communs a nos passes.
+    SetCommonStates();
 
     // 1. Cascades.
     static const float splits[CASCADES] = { 12.0f, 35.0f, 90.0f, 220.0f };
-    CascadeInfo casc[CASCADES];
+    CascadeInfo casc[CASCADES] = {};
+    int casters = 0;
+    if (shadows) {
     g_dev->SetRenderTarget(0, g_atlasSurf);
     g_dev->SetDepthStencilSurface(g_atlasDs);
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xFFFFFFFF, 1.0f, 0);
-    int casters = 0;
     for (int c = 0; c < CASCADES; c++) {
         casc[c] = MakeCascade(cam, fwd, tanX, tanY, c ? splits[c - 1] : 0.3f, splits[c], g_cascadeSize);
         D3DVIEWPORT9 vpt = { (DWORD)((c & 1) * g_cascadeSize), (DWORD)((c >> 1) * g_cascadeSize), (DWORD)g_cascadeSize, (DWORD)g_cascadeSize, 0, 1 };
         g_dev->SetViewport(&vpt);
         for (const Rec &r : g_recs) {
+            if (!r.caster) continue;
             M4 w; memcpy(w.m, r.world, 64);
             DrawRec(r, Mul(w, casc[c].light), false);
             casters++;
         }
     }
-
-    // 2. Profondeur de la scene vue de la camera.
-    const float depthScale = 1.0f / 1000.0f;
-    g_dev->SetRenderTarget(0, g_screenSurf);
-    g_dev->SetDepthStencilSurface(g_screenDs);
-    g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xFFFFFFFF, 1.0f, 0);
-    float vsParams[4] = { depthScale, 0, 0, 0 };
-    g_dev->SetVertexShaderConstantF(4, vsParams, 1);
-    g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-    for (const Rec &r : g_recs) {
-        if (!r.receiver) continue;
-        M4 w; memcpy(w.m, r.world, 64);
-        DrawRec(r, Mul(w, vp), true);
     }
+
+    // 2. Profondeur de la scene vue de la camera (l'eau comprise : elle recoit ombres et lumieres).
+    const float depthScale = kDepthScale;
+    RenderScreenDepth(vp, true);
 
     // 3. Masque d'ombre sur l'image.
     if (g_captureStage == 1 && !g_captureBefore && SUCCEEDED(g_dev->CreateRenderTarget(g_width, g_height, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &g_captureBefore, NULL)))
@@ -818,10 +988,36 @@ static void Apply()
     for (int c = 0; c < CASCADES; c++) { c28[c] = casc[c].texelWorld; c29[c] = casc[c].bias; }
     g_dev->SetPixelShaderConstantF(0, pc, 30);
     g_dev->SetVertexShader(g_vsQuad);
-    g_dev->SetPixelShader(g_psMask);
     g_dev->SetFVF(D3DFVF_XYZW);
     static const float tri[12] = { -1, -1, 0.5f, 1, -1, 3, 0.5f, 1, 3, -1, 0.5f, 1 };
-    g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+    if (shadows) {
+        g_dev->SetPixelShader(g_psMask);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+    }
+
+    // 4. Lumieres dynamiques : image x (1 + lumiere recue).
+    if (lights) {
+        float lc[4] = { (float)g_lightCount, 1.25f, 0, 0 };
+        g_dev->SetPixelShaderConstantF(29, lc, 1);
+        float lp[MAX_LIGHTS * 4], lcol[MAX_LIGHTS * 4], ldir[MAX_LIGHTS * 4];
+        for (int i = 0; i < g_lightCount; i++) {
+            const DynLight &l = g_lightList[i];
+            bool spot = l.type == 1;
+            float range = spot ? l.radius * 2.2f : l.radius * 1.6f;
+            float *q = lp + i * 4; q[0] = l.x; q[1] = l.y; q[2] = l.z; q[3] = range;
+            q = lcol + i * 4; q[0] = l.r; q[1] = l.g; q[2] = l.b; q[3] = spot ? 1.0f : 0.0f;
+            Vec3 dir = Norm({ l.dx, l.dy, l.dz });
+            q = ldir + i * 4; q[0] = dir.x; q[1] = dir.y; q[2] = dir.z; q[3] = 0.55f;
+        }
+        g_dev->SetPixelShaderConstantF(30, lp, g_lightCount);
+        g_dev->SetPixelShaderConstantF(78, lcol, g_lightCount);
+        g_dev->SetPixelShaderConstantF(126, ldir, g_lightCount);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+        g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR);
+        g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+        g_dev->SetPixelShader(g_psLights);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+    }
 
     // Retour a l'etat du jeu.
     g_dev->SetTexture(0, NULL);
@@ -837,10 +1033,159 @@ static void Apply()
         lastLog = GetTickCount();
         int dyn = 0;
         for (const Rec &r : g_recs) dyn += r.replayVb;
-        Log("rendu : ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
-            g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
+        Log("rendu : %d lumieres ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
+            lights ? g_lightCount : 0, g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
             g_why[0], g_why[1], g_why[2], g_why[3], g_why[4], g_why[5], g_why[6], g_why[7]);
     }
+}
+
+// ======================================================================= Eau moderne
+// CWaterLevel::RenderWater (appel 0x4A6594) et RenderTransparentWater (0x4A65AE) : les surfaces d'eau du jeu (texture
+// du premier dessin de RenderWater) sont notees sans etre affichees ; les oiseaux et bateaux a l'horizon restent. Apres
+// RenderTransparentWater (bateaux et objets sous l'eau deja dessines), l'eau est dessinee avec notre shader :
+// turquoise selon la profondeur, fond vu a travers (refraction de l'image), reflet du ciel du cycle du jour, soleil,
+// ecume sur les rives, vagues calculees par pixel.
+static int g_waterPass;          // 1 : RenderWater, 2 : RenderTransparentWater
+static bool g_waterTexSet;
+static void *g_waterTex;
+static int g_waterDraws;
+
+bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
+{
+    if (g_bridgeCasterOnly) { if (!up) Gfx9AfterDraw(fvf, d); return true; }
+    if (!g_waterPass || !g_dev || !WaterWanted()) return false;
+    // Sur PC, RenderWater ne dessine que la mer au loin ; l'eau proche vient de RenderTransparentWater (meme texture),
+    // suivie d'un masque (autre texture) qu'on retire aussi.
+    IDirect3DBaseTexture9 *t = NULL;
+    g_dev->GetTexture(0, &t);
+    if (t) t->Release();
+    if (!g_waterTexSet) { g_waterTexSet = true; g_waterTex = t; }
+    if (t != g_waterTex) return g_waterPass == 2;
+    if (up || (fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZ || !(d.type == D3DPT_TRIANGLELIST || d.type == D3DPT_TRIANGLESTRIP || d.type == D3DPT_TRIANGLEFAN)) return true;
+    if (g_recs.size() >= 6000) return true;
+    Rec r = {};
+    if (BuildRec(fvf, d, r)) {
+        r.water = true;
+        r.receiver = r.mainView;
+        g_recs.push_back(r);
+        g_waterDraws++;
+    }
+    return true;
+}
+
+static float SkyChan(uintptr_t a) { int v = *(int *)a; return (v < 0 ? 0 : v > 255 ? 255 : v) / 255.0f; }
+
+static void DrawModernWater()
+{
+    FpuGuard fpu;
+    int n = 0;
+    for (const Rec &r : g_recs) n += r.water;
+    if (!n || !g_haveMain || !CreateResources() || !g_refractSurf || !g_psWater) return;
+    UpdateSun();
+    M4 view, proj, vp, invView;
+    memcpy(view.m, g_mainView, 64); memcpy(proj.m, g_mainProj, 64);
+    vp = Mul(view, proj);
+    if (!Invert(view, invView)) return;
+    Vec3 cam = { invView.m[12], invView.m[13], invView.m[14] };
+    DWORD fogCol = 0;
+    g_dev->GetRenderState(D3DRS_FOGCOLOR, &fogCol);
+
+    IDirect3DSurface9 *oldRt = NULL, *oldDs = NULL;
+    g_dev->GetRenderTarget(0, &oldRt);
+    g_dev->GetDepthStencilSurface(&oldDs);
+    g_state->Capture();
+    if (!UploadReplay()) { SafeRelease(oldRt); SafeRelease(oldDs); return; }
+    SetCommonStates();
+    RenderScreenDepth(vp, false);                                   // le fond, sans l'eau
+    g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_LINEAR);   // l'image sous l'eau
+
+    g_dev->SetRenderTarget(0, oldRt);
+    g_dev->SetDepthStencilSurface(oldDs);
+    D3DVIEWPORT9 full = { 0, 0, g_width, g_height, 0, 1 };
+    g_dev->SetViewport(&full);
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0x7);
+    g_dev->SetTexture(0, g_screenDepth);
+    g_dev->SetTexture(1, g_refract);
+    for (int s = 0; s < 2; s++) {
+        g_dev->SetSamplerState(s, D3DSAMP_MINFILTER, s ? D3DTEXF_LINEAR : D3DTEXF_POINT);
+        g_dev->SetSamplerState(s, D3DSAMP_MAGFILTER, s ? D3DTEXF_LINEAR : D3DTEXF_POINT);
+        g_dev->SetSamplerState(s, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        g_dev->SetSamplerState(s, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        g_dev->SetSamplerState(s, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    }
+    // Couleurs du ciel du cycle du jour (CTimeCycle : haut 0xA0CE98.., bas 0xA0D958..).
+    float top[3] = { SkyChan(0xA0CE98), SkyChan(0xA0FD70), SkyChan(0x978D1C) };
+    float bot[3] = { SkyChan(0xA0D958), SkyChan(0x97F208), SkyChan(0x9B6DF4) };
+    float day = (bot[0] * 0.3f + bot[1] * 0.59f + bot[2] * 0.11f) * 1.25f;
+    if (day < 0.07f) day = 0.07f; if (day > 1) day = 1;
+    float fogStart = *(float *)0x978660, farClip = *(float *)0x9B6A6C;
+    if (farClip < fogStart + 1) farClip = fogStart + 1;
+    float elev = (g_sun.z - 0.02f) / 0.12f; if (elev < 0) elev = 0; if (elev > 1) elev = 1;
+    float pc[10 * 4] = {};
+    pc[0] = (float)g_width; pc[1] = (float)g_height; pc[2] = 1.0f / g_width; pc[3] = 1.0f / g_height;
+    pc[4] = cam.x; pc[5] = cam.y; pc[6] = cam.z; pc[7] = (float)(GetTickCount() % 600000) / 1000.0f;
+    pc[8] = g_sun.x; pc[9] = g_sun.y; pc[10] = g_sun.z; pc[11] = elev * (0.35f + 0.65f * (g_sunK > 0.3f ? 1.0f : g_sunK / 0.3f));
+    pc[12] = top[0]; pc[13] = top[1]; pc[14] = top[2];
+    pc[16] = bot[0]; pc[17] = bot[1]; pc[18] = bot[2];
+    pc[20] = fogStart; pc[21] = farClip; pc[22] = 1.0f / kDepthScale;
+    pc[24] = ((fogCol >> 16) & 255) / 255.0f; pc[25] = ((fogCol >> 8) & 255) / 255.0f; pc[26] = (fogCol & 255) / 255.0f;
+    pc[28] = 0.10f; pc[29] = 0.82f; pc[30] = 0.76f;   // eau peu profonde : turquoise clair
+    pc[32] = 0.02f; pc[33] = 0.38f; pc[34] = 0.50f;   // au large : bleu-vert des Caraibes
+    pc[36] = day;
+    g_dev->SetPixelShaderConstantF(0, pc, 10);
+    g_dev->SetVertexShader(g_vsWater);
+    g_dev->SetPixelShader(g_psWater);
+    for (const Rec &r : g_recs) {
+        if (!r.water) continue;
+        M4 w; memcpy(w.m, r.world, 64);
+        M4 wvp = Mul(w, vp);
+        g_dev->SetVertexShaderConstantF(0, wvp.m, 4);
+        g_dev->SetVertexShaderConstantF(4, w.m, 4);
+        g_dev->SetFVF(r.fvf);
+        g_dev->SetStreamSource(0, r.replayVb ? g_replayVb : r.vb, 0, r.stride);
+        if (r.d.indexed) {
+            g_dev->SetIndices(r.replayIb ? g_replayIb : r.ib);
+            g_dev->DrawIndexedPrimitive((D3DPRIMITIVETYPE)r.d.type, (INT)r.d.baseVertex, r.d.minIndex, r.d.numVerts, r.d.start, r.d.count);
+        } else g_dev->DrawPrimitive((D3DPRIMITIVETYPE)r.d.type, r.d.start, r.d.count);
+    }
+    g_dev->SetTexture(0, NULL);
+    g_dev->SetTexture(1, NULL);
+    g_dev->SetRenderTarget(0, oldRt);
+    g_dev->SetDepthStencilSurface(oldDs);
+    g_state->Apply();
+    SafeRelease(oldRt);
+    SafeRelease(oldDs);
+    static uint32_t lastLog;
+    if (GetTickCount() - lastLog > 10000) {
+        lastLog = GetTickCount();
+        // Point d'eau le plus proche de la camera (tests : ou regarder).
+        float best = 1e12f; Vec3 at = { 0, 0, 0 };
+        for (const Rec &r : g_recs) {
+            if (!r.water || !r.replayVb || r.stride < 12) continue;
+            UINT first = r.d.indexed ? r.d.baseVertex + r.d.minIndex : r.d.start;
+            UINT cnt = r.d.indexed ? r.d.numVerts : VertexCount(r.d.type, r.d.count);
+            for (UINT k = 0; k < cnt && (first + k + 1) * r.stride <= g_cpuVb.size(); k++) {
+                const float *v = (const float *)(g_cpuVb.data() + (first + k) * r.stride);
+                float dx = v[0] - cam.x, dy = v[1] - cam.y, d2 = dx * dx + dy * dy;
+                if (d2 < best) { best = d2; at = { v[0], v[1], v[2] }; }
+            }
+        }
+        Log("rendu : eau moderne : %d dessins, clarte %.2f ; eau la plus proche en %.0f %.0f %.1f (%.0f m)", n, day, at.x, at.y, at.z, sqrtf(best));
+    }
+}
+
+static void __cdecl h_RenderWater()
+{
+    g_waterPass = 1;
+    ((void(__cdecl *)())0x5C1710)();
+    g_waterPass = 0;
+}
+static void __cdecl h_RenderTransparentWater()
+{
+    g_waterPass = 2;
+    ((void(__cdecl *)())0x5BFF00)();
+    g_waterPass = 0;
+    if (WaterWanted() && !g_applied) DrawModernWater();
 }
 
 void Gfx9BeforeDraw(DWORD fvf, bool up)
@@ -921,6 +1266,26 @@ void Gfx9BeforePresent()
     ReleaseRecs();
     g_applied = false;
     g_after3d = 0;
+    g_lightCount = 0;
+    g_waterDraws = 0;
+    g_waterTexSet = false;
     memset(g_why, 0, sizeof(g_why));
     SafeRelease(g_backBuffer);
+}
+
+void InstallGfx9Hooks()
+{
+    static bool done;
+    if (done) return;
+    done = true;
+    if (*(uint8_t *)0x4A6584 == 0xE8 && *(int32_t *)0x4A6585 == 0x4C9F40 - 0x4A6589) PatchCall(0x4A6584, (void *)h_RenderEverythingBarRoads);
+    else Log("rendu : appel de RenderEverythingBarRoads introuvable (projeteurs hors champ coupes)");
+    if (*(uint8_t *)0x4A6594 == 0xE8 && *(int32_t *)0x4A6595 == 0x5C1710 - 0x4A6599 &&
+        *(uint8_t *)0x4A65AE == 0xE8 && *(int32_t *)0x4A65AF == 0x5BFF00 - 0x4A65B3) {
+        PatchCall(0x4A6594, (void *)h_RenderWater);
+        PatchCall(0x4A65AE, (void *)h_RenderTransparentWater);
+    } else Log("rendu : appels de l'eau introuvables (eau moderne coupee)");
+    static const uint8_t addLightPro[] = { 0xD9, 0xEE, 0xD9, 0xEE, 0x83, 0xEC, 0x18 };   // fldz ; fldz ; sub esp, 18h
+    o_AddLight = (AddLight_t)MakeDetour(0x567700, addLightPro, sizeof(addLightPro), (void *)h_AddLight);
+    if (!o_AddLight) Log("rendu : CPointLights::AddLight introuvable (lumieres dynamiques coupees)");
 }

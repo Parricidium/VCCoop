@@ -57,6 +57,8 @@ static void LoadConfig()
     g_cfg.sunShadows = GetPrivateProfileIntA("VCCoop", "OmbresSoleil", 1, ini) != 0;
     g_cfg.shadowRes = GetPrivateProfileIntA("VCCoop", "OmbresResolution", 4096, ini);
     g_cfg.renderer = GetPrivateProfileIntA("VCCoop", "Rendu", 9, ini);
+    g_cfg.modernWater = GetPrivateProfileIntA("VCCoop", "EauModerne", 1, ini) != 0;
+    g_cfg.dynLights = GetPrivateProfileIntA("VCCoop", "LumieresDynamiques", 1, ini) != 0;
     g_cfg.captureSecs = GetPrivateProfileIntA("VCCoop", "CaptureRendu", 0, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;

@@ -24,6 +24,8 @@
 //   Autotest=cours : cycles de 3 s : marche, course, sprint, arret (tourne un peu pour rester dans la zone)
 //   Autotest=rejoindre : idem, puis se teleporte devant le joueur 0, un peu de cote (une fois)
 #include "util.h"
+#include <stdio.h>
+#include <stdlib.h>
 #include "vccoop.h"
 #include "game.h"
 #include "net.h"
@@ -273,13 +275,20 @@ void AutotestFrame()
         static bool done;
         if (!done && frame - controlSince > 30) {
             done = true;
-            int32_t t[2] = { 16, 30 };
+            // TestHeure=H, TestPos=x,y,z, TestCap=degres (vccoop.ini) : sinon 16 h 30 devant l'hotel Ocean View.
+            char ini[MAX_PATH], pos[64];
+            lstrcpynA(ini, IniPath(), MAX_PATH);
+            int32_t t[2] = { (int32_t)GetPrivateProfileIntA("VCCoop", "TestHeure", 16, ini), 30 };
             MirrorLocal(0x00C0, 2, t);
             float xyz[3] = { 260.0f, -1290.0f, 12.0f };   // devant l'hotel Ocean View, cote plage : en plein soleil
+            GetPrivateProfileStringA("VCCoop", "TestPos", "", pos, sizeof(pos), ini);
+            if (pos[0]) sscanf(pos, "%f,%f,%f", &xyz[0], &xyz[1], &xyz[2]);
             int32_t p[4] = { 0 };
             memcpy(p + 1, xyz, 12);
             MirrorLocal(0x0055, 4, p);
-            Log("autotest : 16 h 30, devant l'hotel");
+            GetPrivateProfileStringA("VCCoop", "TestCap", "", pos, sizeof(pos), ini);
+            if (pos[0]) { float h = (float)atof(pos); int32_t a[2] = { 0, 0 }; memcpy(&a[1], &h, 4); MirrorLocal(0x0171, 2, a); }
+            Log("autotest : %d h 30 en %.0f %.0f %.0f", t[0], xyz[0], xyz[1], xyz[2]);
         }
         return;
     }
