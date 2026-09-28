@@ -102,9 +102,32 @@ static Vec3 Transform(const M4 &m, float x, float y, float z, float w)
     return { r[0] / r[3], r[1] / r[3], r[2] / r[3] };
 }
 static float Dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+static Vec3 NormV(Vec3 a);
 static Vec3 Cross(Vec3 a, Vec3 b) { return { a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x }; }
 static Vec3 Norm(Vec3 a) { float l = sqrtf(Dot(a, a)); return l > 0 ? Vec3{ a.x / l, a.y / l, a.z / l } : a; }
 static Vec3 Sub(Vec3 a, Vec3 b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
+static Vec3 NormV(Vec3 a) { return Norm(a); }
+// Vue d'une lumiere (main gauche, comme Direct3D) et projection en perspective.
+static M4 LookDir(Vec3 eye, Vec3 dir)
+{
+    Vec3 z = Norm(dir);
+    Vec3 up = fabsf(z.z) > 0.9f ? Vec3{ 0, 1, 0 } : Vec3{ 0, 0, 1 };
+    Vec3 x = Norm(Cross(up, z));
+    Vec3 y = Cross(z, x);
+    M4 r = {};
+    r.m[0] = x.x; r.m[4] = x.y; r.m[8] = x.z;  r.m[12] = -Dot(x, eye);
+    r.m[1] = y.x; r.m[5] = y.y; r.m[9] = y.z;  r.m[13] = -Dot(y, eye);
+    r.m[2] = z.x; r.m[6] = z.y; r.m[10] = z.z; r.m[14] = -Dot(z, eye);
+    r.m[15] = 1;
+    return r;
+}
+static M4 Perspective(float fovDeg, float zn, float zf)
+{
+    float ys = 1.0f / tanf(fovDeg * 0.5f * 3.14159265f / 180.0f);
+    M4 r = {};
+    r.m[0] = ys; r.m[5] = ys; r.m[10] = zf / (zf - zn); r.m[11] = 1; r.m[14] = -zn * zf / (zf - zn);
+    return r;
+}
 
 // ======================================================================= Shaders
 static const char kShaders[] = R"HLSL(
@@ -126,6 +149,19 @@ VOut VsLight(VIn i) {
   o.uv = 0;
 #endif
   o.depth = o.pos.z; return o;
+}
+// Carte d'ombre d'une lumiere : distance a la lumiere / portee.
+row_major float4x4 gWorldS : register(c8);
+float4 gLPos : register(c12);   // position de la lumiere, w = 1 / portee
+VOut VsSpot(VIn i) {
+  VOut o; o.pos = mul(float4(i.pos.xyz, 1), gMat);
+#ifndef NOUV
+  o.uv = i.uv;
+#else
+  o.uv = 0;
+#endif
+  float3 w = mul(float4(i.pos.xyz, 1), gWorldS).xyz;
+  o.depth = length(w - gLPos.xyz) * gLPos.w; return o;
 }
 VOut VsView(VIn i) {
   VOut o; o.pos = mul(float4(i.pos.xyz, 1), gMat);
@@ -252,7 +288,46 @@ float4 PsMask(float2 vpos : VPOS) : COLOR {
 float4 gLightPos[48] : register(c30);    // position + portee
 float4 gLightCol[48] : register(c78);    // couleur + genre (1 : phare, en cone)
 float4 gLightDir[48] : register(c126);   // direction + cosinus du cone
-float4 gLightCount : register(c29);
+float4 gLightCount : register(c29);   // nombre, intensite, nombre de lumieres a ombre
+row_major float4x4 gLightVP[4] : register(c174);   // lumieres a ombre : monde -> carte (perspective)
+float4 gLShadow : register(c190);    // taille d'une case (texels), 1 / taille de l'atlas
+sampler2D sLightAtlas : register(s2);
+
+// Ombre de la lumiere k (cases 2x2 de l'atlas) : filtre 3x3 lisse (16 lectures).
+float LightShadow(int k, float3 P, float3 N, float4 lpos) {
+  float4 lp = mul(float4(P + N * 0.05, 1), gLightVP[k]);
+  if (lp.w <= 0.02) return 1;
+  float2 uv = lp.xy / lp.w * float2(0.5, -0.5) + 0.5;
+  if (any(uv < 0.002) || any(uv > 0.998)) return 1;
+  float z = length(P - lpos.xyz) / lpos.w - 0.012;
+  float2 tile = float2(k % 2, k / 2);
+  float size = gLShadow.x;
+  float2 st = uv * size - 0.5;
+  float2 f = frac(st);
+  float2 base = floor(st) - 1;
+  float wx[4] = { 1 - f.x, 1, 1, f.x };
+  float wy[4] = { 1 - f.y, 1, 1, f.y };
+  float sum = 0;
+  [unroll] for (int y = 0; y < 4; y++) {
+    [unroll] for (int x = 0; x < 4; x++) {
+      float2 t = clamp(base + float2(x, y) + 0.5, 0.5, size - 0.5);
+      float m = tex2Dlod(sLightAtlas, float4((t + tile * size) * gLShadow.y, 0, 0)).r;
+      sum += (z <= m ? 1.0 : 0.0) * wx[x] * wy[y];
+    }
+  }
+  return sum / 9;
+}
+
+float3 OneLight(float4 a, float4 b, float4 c, float3 P, float3 N, out float inRange) {
+  float3 L = a.xyz - P;
+  float dist = length(L);
+  inRange = dist < a.w ? 1 : 0;
+  L /= max(dist, 0.001);
+  float att = saturate(1 - dist / a.w); att *= att;
+  float ndl = saturate(dot(N, L) * 0.8 + 0.2);
+  float spot = b.w > 0.5 ? smoothstep(c.w, c.w + 0.15, dot(-L, c.xyz)) : 1;
+  return b.rgb * att * ndl * spot;
+}
 
 float4 PsLights(float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
@@ -267,18 +342,19 @@ float4 PsLights(float2 vpos : VPOS) : COLOR {
   float3 N = normalize(cross(ey, ex));
   if (dot(N, gCam.xyz - P) < 0) N = -N;
   float3 sum = 0;
+  float inRange;
+  // Les premieres lumieres (au plus 4) ont une carte d'ombre.
+  [unroll] for (int k = 0; k < 4; k++) {
+    [branch] if (k < gLightCount.z) {
+      float3 l = OneLight(gLightPos[k], gLightCol[k], gLightDir[k], P, N, inRange);
+      [branch] if (inRange > 0 && dot(l, 1) > 0.001) sum += l * LightShadow(k, P, N, gLightPos[k]);
+    }
+  }
   [loop] for (int i = 0; i < 48; i++) {
     if (i >= gLightCount.x) break;
-    float4 a = gLightPos[i], b = gLightCol[i], c = gLightDir[i];
-    float3 L = a.xyz - P;
-    float dist = length(L);
-    [branch] if (dist < a.w) {
-      L /= dist;
-      float att = 1 - dist / a.w; att *= att;
-      float ndl = saturate(dot(N, L) * 0.8 + 0.2);
-      float spot = b.w > 0.5 ? smoothstep(c.w, c.w + 0.15, dot(-L, c.xyz)) : 1;
-      sum += b.rgb * att * ndl * spot;
-    }
+    if (i < gLightCount.z) continue;
+    float3 l = OneLight(gLightPos[i], gLightCol[i], gLightDir[i], P, N, inRange);
+    sum += l;
   }
   return float4(sum * gLightCount.y, 1);
 }
@@ -394,7 +470,10 @@ static IUnknown *CompileShader(const char *entry, const char *target, bool noUv)
 enum { CASCADES = 4 };
 static IDirect3DVertexShader9 *g_vsLight[2], *g_vsView[2], *g_vsQuad;   // [0] avec uv, [1] sans
 static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater;
-static IDirect3DVertexShader9 *g_vsWater;
+static IDirect3DVertexShader9 *g_vsWater, *g_vsSpot[2];
+static IDirect3DTexture9 *g_lightAtlas;
+static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
+enum { LIGHT_TILE = 1024 };
 static IDirect3DTexture9 *g_atlas, *g_screenDepth, *g_refract;
 static IDirect3DSurface9 *g_atlasSurf, *g_atlasDs, *g_screenSurf, *g_screenDs, *g_refractSurf;
 static IDirect3DVertexBuffer9 *g_replayVb;
@@ -422,6 +501,7 @@ static bool CreateShaders()
     g_vsQuad = (IDirect3DVertexShader9 *)CompileShader("VsQuad", "vs_3_0", false);
     g_psMask = (IDirect3DPixelShader9 *)CompileShader("PsMask", "ps_3_0", false);
     g_psLights = (IDirect3DPixelShader9 *)CompileShader("PsLights", "ps_3_0", false);
+    for (int v = 0; v < 2; v++) g_vsSpot[v] = (IDirect3DVertexShader9 *)CompileShader("VsSpot", "vs_3_0", v == 1);
     g_vsWater = (IDirect3DVertexShader9 *)CompileShader("VsWater", "vs_3_0", false);
     g_psWater = (IDirect3DPixelShader9 *)CompileShader("PsWater", "ps_3_0", false);
     g_shadersOk = g_vsLight[0] && g_vsLight[1] && g_vsView[0] && g_vsView[1] && g_psDepth[0] && g_psDepth[1] && g_vsQuad && g_psMask;
@@ -434,6 +514,7 @@ static void ReleaseResources()
     SafeRelease(g_atlasSurf); SafeRelease(g_atlas); SafeRelease(g_atlasDs);
     SafeRelease(g_screenSurf); SafeRelease(g_screenDepth); SafeRelease(g_screenDs);
     SafeRelease(g_refractSurf); SafeRelease(g_refract);
+    SafeRelease(g_lightAtlasSurf); SafeRelease(g_lightAtlas); SafeRelease(g_lightAtlasDs);
     SafeRelease(g_replayVb); SafeRelease(g_replayIb);
     SafeRelease(g_state);
     g_replayVbSize = g_replayIbSize = 0;
@@ -465,6 +546,10 @@ static bool CreateResources()
     g_screenDepth->GetSurfaceLevel(0, &g_screenSurf);
     if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &g_refract, NULL)))
         g_refract->GetSurfaceLevel(0, &g_refractSurf);
+    if (SUCCEEDED(g_dev->CreateTexture(LIGHT_TILE * 2, LIGHT_TILE * 2, 1, D3DUSAGE_RENDERTARGET, D3DFMT_R32F, D3DPOOL_DEFAULT, &g_lightAtlas, NULL)) &&
+        SUCCEEDED(g_dev->CreateDepthStencilSurface(LIGHT_TILE * 2, LIGHT_TILE * 2, D3DFMT_D24X8, D3DMULTISAMPLE_NONE, 0, TRUE, &g_lightAtlasDs, NULL)))
+        g_lightAtlas->GetSurfaceLevel(0, &g_lightAtlasSurf);
+    else { SafeRelease(g_lightAtlas); SafeRelease(g_lightAtlasDs); Log("rendu : atlas des ombres des lumieres impossible"); }
     if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_state))) { Log("rendu : bloc d'etats impossible"); ReleaseResources(); return false; }
     g_resourcesFailed = false;
     g_resourcesOk = true;
@@ -516,13 +601,14 @@ static bool Outdoors()
     void *me = FindPlayerPed();
     return !me || AreaCode(me) == 0;
 }
-static bool ShadowsWanted() { return g_cfg.sunShadows && GameState() == GS_PLAYING && Outdoors(); }   // interieurs : pas de soleil
+static bool ShadowsWanted() { return (g_cfg.sunShadows || g_cfg.moonShadows) && GameState() == GS_PLAYING && Outdoors(); }   // interieurs : pas de soleil
 static bool LightsWanted() { return g_cfg.dynLights && GameState() == GS_PLAYING; }
 static bool WaterWanted() { return g_cfg.modernWater && GameState() == GS_PLAYING && g_shadersOk && g_psWater; }
 static bool RecordingWanted() { return ShadowsWanted() || LightsWanted() || WaterWanted(); }
 
 static float g_sunK;          // force des ombres de cette image (0 : rien a faire)
-static Vec3 g_sun;            // vers le soleil (lisse)
+static Vec3 g_sun;            // vers le soleil, ou la lune la nuit (lisse)
+static bool g_moon;           // la lumiere des ombres est la lune
 
 static void UpdateSun()
 {
@@ -535,9 +621,27 @@ static void UpdateSun()
     else g_sun = Norm({ g_sun.x + (s.x - g_sun.x) * 0.05f, g_sun.y + (s.y - g_sun.y) * 0.05f, g_sun.z + (s.z - g_sun.z) * 0.05f });
     float strength = *(short *)0xA10A34 / 255.0f;   // CTimeCycle::m_nCurrentShadowStrength (heure, meteo)
     if (strength > 1) strength = 1;
-    float elev = (g_sun.z - 0.04f) / 0.16f;         // apparaissent avec le soleil au-dessus de l'horizon
+    float elev = (s.z - 0.04f) / 0.16f;             // apparaissent avec le soleil au-dessus de l'horizon
     if (elev < 0) elev = 0; if (elev > 1) elev = 1;
-    g_sunK = strength * elev;
+    g_sunK = g_cfg.sunShadows ? strength * elev : 0.0f;
+    g_moon = false;
+    // La nuit : la lune du jeu (CClouds::Render : fixe a (0, -100, 15) de la camera, visible de 0 h a 6 h, pleine a
+    // 3 h, voilee par les nuages, la pluie et le brouillard). Ombres plus faibles et bleutees.
+    if (g_sunK <= 0.01f && g_cfg.moonShadows) {
+        float minute = ClockHours() * 60.0f + ClockMinutes();
+        float fade = fabsf(minute - 180.0f);
+        int w = NewWeather();
+        float cover = (w == 0 || w == 4) ? 0.0f : w == 1 ? 0.5f : 1.0f;
+        float bright = fade < 180 ? (1 - cover) * (180 - fade) / 180.0f : 0.0f;
+        bright = bright * 1.6f; if (bright > 1) bright = 1;
+        if (bright > 0.02f) {
+            Vec3 m = Norm({ 0, -100, 15 });
+            if (Dot(m, g_sun) < 0.99f) g_sun = m;
+            else g_sun = Norm({ g_sun.x + (m.x - g_sun.x) * 0.05f, g_sun.y + (m.y - g_sun.y) * 0.05f, g_sun.z + (m.z - g_sun.z) * 0.05f });
+            g_sunK = 0.55f * bright;
+            g_moon = true;
+        }
+    }
 }
 
 // ======================================================================= Projeteurs hors champ
@@ -888,6 +992,70 @@ static void RenderScreenDepth(const M4 &vp, bool withWater)
     }
 }
 
+// Les lumieres qui meritent une ombre (fortes, grandes, proches de la camera) passent en tete de liste ; chacune a sa
+// carte (perspective depuis la lumiere : les lampadaires regardent vers le bas en grand angle, les phares vers l'avant).
+static int g_shadowLights;
+static M4 g_lightVP[4];
+static float LightRange(const DynLight &l) { return l.type == 1 ? l.radius * 2.2f : l.radius * 1.6f; }
+static void PrepareLightShadows(Vec3 cam)
+{
+    if (!g_cfg.lightShadows || !g_lightAtlasSurf || !g_vsSpot[0] || !g_vsSpot[1]) return;
+    int want = g_cfg.lightShadows < g_lightCount ? g_cfg.lightShadows : g_lightCount;
+    for (int k = 0; k < want; k++) {
+        int best = -1; float bestScore = 0;
+        for (int i = k; i < g_lightCount; i++) {
+            const DynLight &l = g_lightList[i];
+            Vec3 d = Sub({ l.x, l.y, l.z }, cam);
+            float dist = sqrtf(Dot(d, d));
+            if (dist > 60.0f + LightRange(l)) continue;
+            float score = (l.r + l.g + l.b) * LightRange(l) / (4.0f + dist);
+            if (score > bestScore) { bestScore = score; best = i; }
+        }
+        if (best < 0) break;
+        DynLight t = g_lightList[k]; g_lightList[k] = g_lightList[best]; g_lightList[best] = t;
+        g_shadowLights = k + 1;
+    }
+    if (!g_shadowLights) return;
+    g_dev->SetRenderTarget(0, g_lightAtlasSurf);
+    g_dev->SetDepthStencilSurface(g_lightAtlasDs);
+    g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xFFFFFFFF, 1.0f, 0);
+    for (int k = 0; k < g_shadowLights; k++) {
+        const DynLight &l = g_lightList[k];
+        bool spot = l.type == 1;
+        float range = LightRange(l);
+        Vec3 pos = { l.x, l.y, l.z };
+        Vec3 dir = spot ? Norm({ l.dx, l.dy, l.dz }) : Vec3{ 0, 0, -1 };
+        if (spot && Dot(dir, dir) < 0.5f) dir = { 0, 0, -1 };
+        g_lightVP[k] = Mul(LookDir(pos, dir), Perspective(spot ? 110.0f : 150.0f, 0.05f, range));
+        D3DVIEWPORT9 vpt = { (DWORD)((k & 1) * LIGHT_TILE), (DWORD)((k >> 1) * LIGHT_TILE), LIGHT_TILE, LIGHT_TILE, 0, 1 };
+        g_dev->SetViewport(&vpt);
+        float lpos[4] = { l.x, l.y, l.z, 1.0f / range };
+        g_dev->SetVertexShaderConstantF(12, lpos, 1);
+        for (const Rec &r : g_recs) {
+            if (!r.caster) continue;
+            // Objets loin de la lumiere : ignores (position de l'objet ; les dessins sans matrice sont des effets).
+            float ox = r.world[12] - l.x, oy = r.world[13] - l.y, oz = r.world[14] - l.z;
+            if (ox * ox + oy * oy + oz * oz > (range + 45.0f) * (range + 45.0f)) continue;
+            int v = (r.fvf & D3DFVF_TEXCOUNT_MASK) ? 0 : 1;
+            M4 w; memcpy(w.m, r.world, 64);
+            M4 wvp = Mul(w, g_lightVP[k]);
+            g_dev->SetVertexShader(g_vsSpot[v]);
+            g_dev->SetPixelShader(g_psDepth[v]);
+            g_dev->SetFVF(r.fvf);
+            g_dev->SetVertexShaderConstantF(0, wvp.m, 4);
+            g_dev->SetVertexShaderConstantF(8, w.m, 4);
+            float alpha[4] = { r.alphaRef, r.alphaTest && r.tex ? 1.0f : 0.0f, 0, 0 };
+            g_dev->SetPixelShaderConstantF(0, alpha, 1);
+            g_dev->SetTexture(0, r.tex);
+            g_dev->SetStreamSource(0, r.replayVb ? g_replayVb : r.vb, 0, r.stride);
+            if (r.d.indexed) {
+                g_dev->SetIndices(r.replayIb ? g_replayIb : r.ib);
+                g_dev->DrawIndexedPrimitive((D3DPRIMITIVETYPE)r.d.type, (INT)r.d.baseVertex, r.d.minIndex, r.d.numVerts, r.d.start, r.d.count);
+            } else g_dev->DrawPrimitive((D3DPRIMITIVETYPE)r.d.type, r.d.start, r.d.count);
+        }
+    }
+}
+
 static void Apply()
 {
     FpuGuard fpu;
@@ -944,6 +1112,10 @@ static void Apply()
     }
     }
 
+    // 1b. Cartes d'ombre des lumieres les plus importantes (au plus 4, dans l'atlas 2x2).
+    g_shadowLights = 0;
+    if (lights) PrepareLightShadows(cam);
+
     // 2. Profondeur de la scene vue de la camera (l'eau comprise : elle recoit ombres et lumieres).
     const float depthScale = kDepthScale;
     RenderScreenDepth(vp, true);
@@ -978,8 +1150,11 @@ static void Apply()
     for (int c = 0; c < CASCADES; c++) memcpy(pc + 24 + c * 16, casc[c].light.m, 64);
     float *c22 = pc + 88; for (int c = 0; c < CASCADES; c++) c22[c] = splits[c];
     float *c23 = pc + 92; c23[0] = g_sun.x; c23[1] = g_sun.y; c23[2] = g_sun.z; c23[3] = g_sunK;
-    float *c24 = pc + 96; c24[0] = 0.42f; c24[1] = 0.46f; c24[2] = 0.58f; c24[3] = 1;
-    float *c25 = pc + 100; c25[0] = (float)g_cascadeSize; c25[1] = 1.0f / (2 * g_cascadeSize); c25[2] = 0.15f; c25[3] = (float)g_debugMask;
+    float *c24 = pc + 96;
+    if (g_moon) { c24[0] = 0.40f; c24[1] = 0.46f; c24[2] = 0.66f; }   // lune : ombre bleutee
+    else { c24[0] = 0.42f; c24[1] = 0.46f; c24[2] = 0.58f; }
+    c24[3] = 1;
+    float *c25 = pc + 100; c25[0] = (float)g_cascadeSize; c25[1] = 1.0f / (2 * g_cascadeSize); c25[2] = 0.15f; c25[3] = g_debugMask == 1 ? 1.0f : 0.0f;
     float fogStart = *(float *)0x978660, farClip = *(float *)0x9B6A6C;   // CTimeCycle : brouillard et distance de vue
     if (farClip < fogStart + 1) farClip = fogStart + 1;
     float *c26 = pc + 104; c26[0] = fogStart; c26[1] = farClip; c26[2] = splits[CASCADES - 1]; c26[3] = splits[CASCADES - 1] * 0.8f;
@@ -990,15 +1165,26 @@ static void Apply()
     g_dev->SetVertexShader(g_vsQuad);
     g_dev->SetFVF(D3DFVF_XYZW);
     static const float tri[12] = { -1, -1, 0.5f, 1, -1, 3, 0.5f, 1, 3, -1, 0.5f, 1 };
-    if (shadows) {
+    if (shadows && g_debugMask != 2) {
         g_dev->SetPixelShader(g_psMask);
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
 
-    // 4. Lumieres dynamiques : image x (1 + lumiere recue).
+    // 4. Lumieres dynamiques : image x (1 + lumiere recue), les plus proches avec leur ombre.
     if (lights) {
-        float lc[4] = { (float)g_lightCount, 1.25f, 0, 0 };
+        float lc[4] = { (float)g_lightCount, 1.25f, (float)g_shadowLights, 0 };
         g_dev->SetPixelShaderConstantF(29, lc, 1);
+        if (g_shadowLights) {
+            g_dev->SetPixelShaderConstantF(174, g_lightVP[0].m, 4 * g_shadowLights);
+            float ls[4] = { (float)LIGHT_TILE, 1.0f / (2 * LIGHT_TILE), 0, 0 };
+            g_dev->SetPixelShaderConstantF(190, ls, 1);
+            g_dev->SetTexture(2, g_lightAtlas);
+            g_dev->SetSamplerState(2, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(2, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(2, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+            g_dev->SetSamplerState(2, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            g_dev->SetSamplerState(2, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        }
         float lp[MAX_LIGHTS * 4], lcol[MAX_LIGHTS * 4], ldir[MAX_LIGHTS * 4];
         for (int i = 0; i < g_lightCount; i++) {
             const DynLight &l = g_lightList[i];
@@ -1015,6 +1201,7 @@ static void Apply()
         g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
         g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR);
         g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+        if (g_debugMask == 2) g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);   // OmbresDebug=2 : lumiere recue seule
         g_dev->SetPixelShader(g_psLights);
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
@@ -1022,6 +1209,7 @@ static void Apply()
     // Retour a l'etat du jeu.
     g_dev->SetTexture(0, NULL);
     g_dev->SetTexture(1, NULL);
+    g_dev->SetTexture(2, NULL);
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
     g_state->Apply();
@@ -1033,8 +1221,8 @@ static void Apply()
         lastLog = GetTickCount();
         int dyn = 0;
         for (const Rec &r : g_recs) dyn += r.replayVb;
-        Log("rendu : %d lumieres ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
-            lights ? g_lightCount : 0, g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
+        Log("rendu : %d lumieres (%d avec ombre) ; %s ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
+            lights ? g_lightCount : 0, g_shadowLights, g_moon ? "lune" : "soleil", g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
             g_why[0], g_why[1], g_why[2], g_why[3], g_why[4], g_why[5], g_why[6], g_why[7]);
     }
 }

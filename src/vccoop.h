@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28s"
+#define VCCOOP_VERSION "2026.09.28t"
 struct Config {
     bool windowed;
     bool borderless;
@@ -31,6 +31,8 @@ struct Config {
     bool sunShadows;    // OmbresSoleil=1 : ombres projetees du soleil (carte d'ombre, gfx.cpp)
     int shadowRes;      // OmbresResolution=4096 (ou 2048) : taille de la carte d'ombre
     bool modernWater;   // EauModerne=1 (rendu moderne) : eau turquoise, reflets, refraction, ecume
+    int lightShadows;   // OmbresLumieres=4 : nombre de lumieres (0 a 4) qui projettent une ombre
+    bool moonShadows;   // OmbresLune=1 : la lune projette des ombres (plus faibles que le soleil)
     bool dynLights;     // LumieresDynamiques=1 (rendu moderne) : lampadaires, phares, explosions eclairent par pixel
     int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine
     int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)

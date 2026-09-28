@@ -73,7 +73,7 @@ Start `gta-vc.exe` normally. Main menu > **COOP**:
 | **Host a game** | Opens the lobby with the list of connected players. **New game** or **Load a game**: the guests follow you by themselves (your save is sent to them). |
 | **Join** | **Address** (the host's IP: Enter, type, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
 | **Nickname** | Your name, set before hosting or joining. |
-| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows and their quality, modern water, dynamic lights, modern renderer (next launch). Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
+| **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows and their quality, modern water, dynamic lights, light shadows, moon shadows, modern renderer (next launch). Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` go straight to hosting / joining. Without COOP the
 game stays single player. **Esc > COOP** in game shows the same page.
@@ -152,7 +152,10 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   waves and foam along the shores. Seabirds and boats on the horizon are kept.
 - **Dynamic lights** (`LumieresDynamiques`, modern renderer): every light the game registers (street lamps,
   neons, headlights, explosions, fire, muzzle flashes) now lights the scenery per pixel up to 150 m, not only
-  the characters and vehicles within 22 m.
+  the characters and vehicles within 22 m. The 4 most important lights near the camera (`OmbresLumieres`)
+  cast shadows: street lamps down around them, headlights forward (pedestrians, cars, objects).
+- **Moon shadows** (`OmbresLune`): at night the game's moon (visible from 0:00 to 6:00, veiled by clouds,
+  rain and fog) casts soft bluish shadows, weaker than the sun's.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -283,7 +286,7 @@ Lancer `gta-vc.exe` normalement. Menu principal > **COOP** :
 | **Créer une partie** | Ouvre le salon avec la liste des joueurs connectés. **Nouvelle partie** ou **Charger une partie** : les invités suivent tout seuls (la sauvegarde leur est envoyée). |
 | **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
 | **Pseudo** | Votre nom, à régler avant de créer ou rejoindre. |
-| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil et leur qualité, eau moderne, lumières dynamiques, rendu moderne (au prochain lancement). Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
+| **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil et leur qualité, eau moderne, lumières dynamiques, ombres des lumières, ombres de la lune, rendu moderne (au prochain lancement). Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
 
 `VCCoop - Heberger.cmd` / `VCCoop - Rejoindre.cmd` vont droit à l'hébergement / la connexion. Sans
 passer par COOP, le jeu reste en solo. **Échap > COOP** en jeu montre la même page.
@@ -364,7 +367,11 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   pixel et de l'écume sur les rives. Les oiseaux et bateaux à l'horizon restent.
 - **Lumières dynamiques** (`LumieresDynamiques`, rendu moderne) : toutes les lumières du jeu (lampadaires,
   néons, phares, explosions, feux, tirs) éclairent maintenant le décor par pixel jusqu'à 150 m, et plus
-  seulement les personnages et véhicules à moins de 22 m.
+  seulement les personnages et véhicules à moins de 22 m. Les 4 lumières les plus importantes près de la caméra
+  (`OmbresLumieres`) projettent des ombres : les lampadaires tout autour vers le bas, les phares vers l'avant
+  (passants, voitures, objets).
+- **Ombres de la lune** (`OmbresLune`) : la nuit, la lune du jeu (visible de 0 h à 6 h, voilée par les nuages,
+  la pluie et le brouillard) projette des ombres douces et bleutées, plus faibles que celles du soleil.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont
