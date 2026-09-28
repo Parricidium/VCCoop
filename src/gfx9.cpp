@@ -1539,8 +1539,14 @@ static bool g_waterTexSet;
 static void *g_waterTex;
 static int g_waterDraws;
 
+extern bool g_hideOwnGlass;   // camera.cpp : vehicule du joueur en vue a la premiere personne
 bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
 {
+    if (g_hideOwnGlass && g_dev) {   // ses vitres (dessins transparents) ne sont pas dessinees
+        DWORD blend = 0;
+        g_dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+        if (blend) return true;
+    }
     if (g_bridgeCasterOnly) { if (!up) Gfx9AfterDraw(fvf, d); return true; }
     if (!g_waterPass || !g_dev || !WaterWanted()) return false;
     // Sur PC, RenderWater ne dessine que la mer au loin ; l'eau proche vient de RenderTransparentWater (meme texture),

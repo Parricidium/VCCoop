@@ -122,6 +122,121 @@ static void Normalize(Vec3 &v)
     if (l > 1e-5f) { v.x /= l; v.y /= l; v.z /= l; }
 }
 
+// --- Vue a la premiere personne (touche ToucheVue, F6 par defaut ; VuePremierePersonne=1) ---
+// A pied et en vehicule, la camera est posee dans la tete de Tommy, comme la vue de visee du M4 du jeu
+// (CCam::Process_1rstPersonPedOnPC 0x481AB3) : os "head" du squelette (GetAnimHierarchyFromSkinClump 0x57F250,
+// ConvertPedNode2BoneTag 0x405DE0, RpHAnimIDGetIndex 0x646390, RpHAnimHierarchyGetMatrixArray 0x646370), point
+// (0.06, 0.05, 0) de l'os (les yeux) transforme par RwV3dTransformPoints 0x647160, puis l'os mis a l'echelle 0
+// (RwMatrixScale 0x644190) : la tete n'est pas dessinee. Plan proche a 0,1 m (RwCameraSetNearClipPlane 0x64A860 sur
+// Scene.camera 0x8100BC ; 0,9 m sinon : le volant, les bras disparaissaient). La marche suit la vue : le jeu tire
+// TheCamera.Orientation de la vue finale.
+static bool g_fps;
+bool FirstPersonActive() { return g_fps; }
+
+static bool HeadEyes(void *ped, Vec3 &eyes)
+{
+    void *clump = Field<void *>(ped, 0x4C);
+    if (!clump) return false;
+    void *hier = ((void *(__cdecl *)(void *))0x57F250)(clump);
+    if (!hier) return false;
+    int tag = ((int(__cdecl *)(int))0x405DE0)(2);   // PED_HEAD
+    int idx = ((int(__cdecl *)(void *, int))0x646390)(hier, tag);
+    uint8_t *mats = ((uint8_t *(__cdecl *)(void *))0x646370)(hier);
+    if (idx < 0 || !mats) return false;
+    uint8_t *m = mats + idx * 0x40;
+    float p[3] = { 0.06f, 0.05f, 0.0f };
+    ((void *(__cdecl *)(float *, const float *, int, void *))0x647160)(p, p, 1, m);
+    float zero[3] = { 0, 0, 0 };
+    ((void *(__cdecl *)(void *, const float *, int))0x644190)(m, zero, 1);   // tete cachee (rwCOMBINEPRECONCAT)
+    eyes = { p[0], p[1], p[2] };
+    return true;
+}
+
+// Vitres du vehicule du joueur : vues de l'interieur, teintees et avec leur reflet d'environnement, elles
+// couvraient tout l'ecran de noir. Pendant le dessin de ce vehicule (CEntity::Render, vtable[13], detournee dans la
+// vtable de sa classe), le pont Direct3D 9 saute les dessins transparents (gfx9.cpp, Gfx9Intercept).
+bool g_hideOwnGlass;
+static bool g_fpsShown;   // la vue a la premiere personne est affichee cette image
+typedef void(__fastcall *EntRender_t)(void *e, void *edx);
+static struct { void **vt; EntRender_t orig; } g_vehRender[8];
+static int g_vehRenderCount;
+static void __fastcall h_VehRender(void *e, void *edx)
+{
+    void **vt = *(void ***)e;
+    EntRender_t orig = NULL;
+    for (int i = 0; i < g_vehRenderCount; i++) if (g_vehRender[i].vt == vt) orig = g_vehRender[i].orig;
+    if (!orig) return;
+    void *me = FindPlayerPed();
+    bool own = g_fpsShown && me && InVehicle(me) && PedVehicle(me) == e;
+    g_hideOwnGlass = own;
+    orig(e, edx);
+    g_hideOwnGlass = false;
+}
+static void HookVehicleRender(void *veh)
+{
+    void **vt = *(void ***)veh;
+    for (int i = 0; i < g_vehRenderCount; i++) if (g_vehRender[i].vt == vt) return;
+    if (g_vehRenderCount >= 8 || vt[13] == (void *)h_VehRender) return;
+    g_vehRender[g_vehRenderCount].vt = vt;
+    g_vehRender[g_vehRenderCount].orig = (EntRender_t)PatchPointer(&vt[13], (void *)h_VehRender);
+    g_vehRenderCount++;
+}
+
+static void MouseOrbit(void *me, uint32_t now);   // plus bas : la souris tourne la vue (camera libre et premiere personne)
+
+// Vrai si la vue a ete remplacee.
+static bool FirstPersonView(void *cam, short mode)
+{
+    void *me = FindPlayerPed();
+    if (!me || *(bool *)0xA10AB2) return false;   // cinematique : la camera du jeu
+    void *veh = InVehicle(me) ? PedVehicle(me) : NULL;
+    // A pied : la camera de suivi (MODE_FOLLOWPED 4) seulement (visee, bagarre, arrestation... : celle du jeu).
+    // En vehicule : la camera de poursuite (18), derriere la voiture (3) ou le bateau (22).
+    if (veh ? (mode != 18 && mode != 3 && mode != 22) : mode != 4) return false;
+    Vec3 eyes;
+    if (!HeadEyes(me, eyes)) return false;
+    Vec3 &src = Field<Vec3>(cam, 0x174), &front = Field<Vec3>(cam, 0x168), &up = Field<Vec3>(cam, 0x18C);
+    Vec3 f;
+    if (veh) {
+        HookVehicleRender(veh);
+        // Droit devant le vehicule (avec son tangage et son roulis) ; la souris tourne la tete, qui revient seule.
+        MouseOrbit(me, GetTickCount());
+        Vec3 vr = Field<Vec3>(veh, 0x4), vf = Field<Vec3>(veh, 0x14), vu = Field<Vec3>(veh, 0x24);
+        float yaw = g_yaw, pitch = g_pitch - 0.22f;
+        float cy = cosf(yaw), sy = sinf(yaw), cp = cosf(pitch), sp = sinf(pitch);
+        f = { (vf.x * cy - vr.x * sy) * cp - vu.x * sp, (vf.y * cy - vr.y * sy) * cp - vu.y * sp, (vf.z * cy - vr.z * sy) * cp - vu.z * sp };
+        Normalize(f);
+        Vec3 right = { f.y * vu.z - f.z * vu.y, f.z * vu.x - f.x * vu.z, f.x * vu.y - f.y * vu.x };   // f x haut du vehicule
+        Normalize(right);
+        up = { right.y * f.z - right.z * f.y, right.z * f.x - right.x * f.z, right.x * f.y - right.y * f.x };
+    } else {
+        // A pied : la direction de la camera du jeu (sa souris, sa sensibilite, son inversion), depuis les yeux.
+        f = front;
+        Normalize(f);
+        Vec3 right = { f.y, -f.x, 0 };
+        Normalize(right);
+        up = { right.y * f.z - right.z * f.y, right.z * f.x - right.x * f.z, right.x * f.y - right.y * f.x };
+        g_aim = false;
+    }
+    src = eyes;
+    front = f;
+    ((void(__cdecl *)(void *, float))0x64A860)(*(void **)0x8100BC, 0.1f);   // plan proche
+    // CCamera::m_bMoveCamToAvoidGeom (+0x5D) : pose par le jeu pres d'un obstacle (en vehicule, presque toujours avec
+    // la camera dans l'habitacle) ; CCamera::Process decalait alors la position et visait son propre point : la vue
+    // partait vers le ciel, de travers.
+    TheCam()[0x5D] = 0;
+    if (g_cfg.logScripts) {
+        static uint32_t last;
+        if (GetTickCount() - last > 1500) {
+            last = GetTickCount();
+            Vec3 pp = Pos(me), vp = veh ? Pos(veh) : pp;
+            Log("camera : premiere personne, yeux %.2f %.2f %.2f, perso %.2f %.2f %.2f, vehicule %.2f %.2f %.2f, regard %.2f %.2f %.2f, mode %d",
+                eyes.x, eyes.y, eyes.z, pp.x, pp.y, pp.z, vp.x, vp.y, vp.z, f.x, f.y, f.z, mode);
+        }
+    }
+    return true;
+}
+
 typedef void(__fastcall *CamProcess_t)(void *cam, void *edx);
 static CamProcess_t o_CamProcess;
 
@@ -139,35 +254,21 @@ static void __fastcall h_CamProcess(void *cam, void *edx)
         }
     }
     o_CamProcess(cam, edx);
-    if (!g_cfg.freeCam || cam != ActiveCam()) return;
+    if (cam != ActiveCam()) return;
+    short mode = *(short *)((uint8_t *)cam + 0xC);
+    g_fpsShown = g_fps && FirstPersonView(cam, mode);
+    if (g_fpsShown) return;
+    if (!g_cfg.freeCam) return;
     void *me = FindPlayerPed();
     void *veh = me && InVehicle(me) ? PedVehicle(me) : NULL;
-    short mode = *(short *)((uint8_t *)cam + 0xC);
     // Camera de poursuite du vehicule seulement (pas les cameras de mission, cinematiques, vue interieure...).
     static short loggedMode = -1;
     if (veh && mode != loggedMode && g_cfg.logScripts) { loggedMode = mode; Log("camera : mode %d en vehicule", mode); }
     if (!veh || (mode != 18 && mode != 3) || *(bool *)0xA10AB2) { g_orbit = g_aim = false; g_yaw = 0; return; }
 
     uint32_t now = GetTickCount();
-    float mx = *(float *)(Mouse() + 8) + g_testMouseX, my = *(float *)(Mouse() + 0xC);
-    if (fabsf(mx) + fabsf(my) > 0.3f) {
-        g_orbit = true;
-        g_lastMove = now;
-        g_yaw -= mx * 0.005f * g_cfg.camSensitivity;
-        g_pitch -= my * 0.004f * g_cfg.camSensitivity;   // souris vers le haut : la camera regarde plus haut (retour de JD)
-        if (g_pitch < -0.25f) g_pitch = -0.25f;
-        if (g_pitch > 1.2f) g_pitch = 1.2f;
-    }
-    g_aim = (g_realRmb || Mouse()[1] || g_testAim) && DriveByWeapon(me);
-    if (g_aim) { g_orbit = true; g_lastMove = now; }
+    MouseOrbit(me, now);
     if (!g_orbit) return;
-    if (now - g_lastMove > 2500) {   // plus de souris : retour en douceur derriere le vehicule
-        while (g_yaw > 3.14159f) g_yaw -= 6.28318f;
-        while (g_yaw < -3.14159f) g_yaw += 6.28318f;
-        g_yaw *= 0.9f;
-        g_pitch += (0.22f - g_pitch) * 0.1f;
-        if (fabsf(g_yaw) < 0.02f) { g_orbit = false; g_yaw = 0; return; }
-    }
 
     Vec3 &src = Field<Vec3>(cam, 0x174), &front = Field<Vec3>(cam, 0x168), &up = Field<Vec3>(cam, 0x18C);
     Vec3 target = Pos(veh);
@@ -204,6 +305,30 @@ static void __fastcall h_CamProcess(void *cam, void *edx)
     }
 }
 
+// Souris en vehicule : tourne la camera (g_yaw, g_pitch) ; sans mouvement pendant 2,5 s, retour en douceur derriere
+// le vehicule (vue libre) ou droit devant (premiere personne). Clic droit avec une arme de tir : visee.
+static void MouseOrbit(void *me, uint32_t now)
+{
+    float mx = *(float *)(Mouse() + 8) + g_testMouseX, my = *(float *)(Mouse() + 0xC);
+    if (fabsf(mx) + fabsf(my) > 0.3f) {
+        g_orbit = true;
+        g_lastMove = now;
+        g_yaw -= mx * 0.005f * g_cfg.camSensitivity;
+        g_pitch -= my * 0.004f * g_cfg.camSensitivity;   // souris vers le haut : la camera regarde plus haut (retour de JD)
+        if (g_pitch < -0.25f) g_pitch = -0.25f;
+        if (g_pitch > 1.2f) g_pitch = 1.2f;
+    }
+    g_aim = (g_realRmb || Mouse()[1] || g_testAim) && DriveByWeapon(me);
+    if (g_aim) { g_orbit = true; g_lastMove = now; }
+    if (g_orbit && !g_aim && now - g_lastMove > 2500) {
+        while (g_yaw > 3.14159f) g_yaw -= 6.28318f;
+        while (g_yaw < -3.14159f) g_yaw += 6.28318f;
+        g_yaw *= 0.9f;
+        g_pitch += (0.22f - g_pitch) * 0.1f;
+        if (fabsf(g_yaw) < 0.02f) { g_orbit = false; g_yaw = 0; g_pitch = 0.22f; }
+    }
+}
+
 // Point vise : rayon depuis la camera (celle qu'on vient de calculer) ; le vehicule du joueur est ignore en partant
 // un peu devant lui.
 static void AimPoint(float *out)
@@ -237,6 +362,16 @@ static void __cdecl h_AutoAim(void *shooter, void *veh, float *start, float *end
 // marchait plus a pied) et pas CVehicle::m_bDisableMouseSteering (0x69C610) : c'est ce dernier qu'on pose.
 void CameraFrame()
 {
+    // Touche de la premiere personne (en partie, jeu au premier plan, hors menus).
+    static bool was;
+    bool down = g_cfg.fpsView && g_cfg.fpsKey && GameHasFocus() && GameState() == GS_PLAYING && !*(char *)0x869668 &&
+                (GetAsyncKeyState(g_cfg.fpsKey) & 0x8000);
+    static int test = -1;   // TestPremierePersonne=1 : active des l'arrivee (captures)
+    if (test < 0) test = GetPrivateProfileIntA("VCCoop", "TestPremierePersonne", 0, IniPath());
+    if (test > 0 && GameState() == GS_PLAYING) { test = 0; g_fps = true; Log("camera : premiere personne (test)"); }
+    if (down && !was) { g_fps = !g_fps; g_yaw = 0; g_pitch = 0.22f; g_orbit = false; Log("camera : premiere personne %s", g_fps ? "oui" : "non"); }
+    was = down;
+    if (!g_cfg.fpsView) g_fps = false;
     if (!g_cfg.freeCam) return;
     *(bool *)0x69C610 = true;
     // La 2026.09.27c remettait m_bUseMouse3rdPerson a zero (et le jeu a pu l'enregistrer dans gta_vc.set en

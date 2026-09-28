@@ -3,6 +3,7 @@
 
 void InstallCamera();
 void CameraFrame();
+bool FirstPersonActive();  // vue depuis la tete de Tommy (touche ToucheVue)
 bool FreeAimActive();      // clic droit en vehicule avec une arme de tir en voiture
 extern float g_testMouseX; // autotest
 extern bool g_testAim;

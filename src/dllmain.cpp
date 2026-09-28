@@ -8,6 +8,7 @@
 #include "net.h"
 #include "anims.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 Config g_cfg;
 
@@ -67,6 +68,15 @@ static void LoadConfig()
     g_cfg.ambientOcclusion = GetPrivateProfileIntA("VCCoop", "OcclusionAmbiante", 1, ini) != 0;
     g_cfg.captureSecs = GetPrivateProfileIntA("VCCoop", "CaptureRendu", 0, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
+    g_cfg.fpsView = GetPrivateProfileIntA("VCCoop", "VuePremierePersonne", 1, ini) != 0;
+    {
+        char k[16];
+        GetPrivateProfileStringA("VCCoop", "ToucheVue", "F6", k, sizeof(k), ini);
+        CharUpperA(k);
+        if (k[0] == 'F' && k[1] >= '1' && k[1] <= '9') g_cfg.fpsKey = VK_F1 + atoi(k + 1) - 1;
+        else if (k[0] && !k[1]) g_cfg.fpsKey = (unsigned char)k[0];
+        else g_cfg.fpsKey = VK_F6;
+    }
     g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;
     g_cfg.showNames = GetPrivateProfileIntA("VCCoop", "AfficherPseudos", 1, ini) != 0;
     g_cfg.sharedMods = GetPrivateProfileIntA("VCCoop", "ModsPartages", 1, ini) != 0;

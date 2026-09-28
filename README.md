@@ -92,6 +92,7 @@ player, and guests see the destination markers.
 | **Tab** (held) | Player list: health, armour, ping, distance. |
 | **B** | Put a meeting point where you look (seen by everybody, in your colour); B again to remove it. |
 | **Mouse** (vehicle) | Orbits the camera around the vehicle (back behind after 2.5 s). **Right click** with a pistol or SMG: aim at the centre of the screen, left click fires — driver or passenger. The mouse no longer steers. `CameraLibre=0` for the original camera. |
+| **F6** | First person view from Tommy's head, on foot and in any vehicle (hands on the wheel, dashboard, bike fairing); the mouse turns the head in a vehicle. F6 again for the normal camera. `ToucheVue` changes the key, `VuePremierePersonne=0` disables it (also in Video options). |
 | **Passenger** | Look left / right and shoot like the driver (pistols, SMGs). |
 
 Each player has a colour (blue = host, orange, green, purple): a blip on the radar and the map, and
@@ -312,6 +313,7 @@ remplis par n'importe quel joueur, et les invités voient les marqueurs de desti
 | **Tab** (maintenu) | Liste des joueurs : santé, gilet, ping, distance. |
 | **B** | Poser un point de rendez-vous là où on regarde (vu de tous, dans sa couleur) ; B à nouveau pour le retirer. |
 | **Souris** (véhicule) | Fait tourner la caméra autour du véhicule (retour derrière au bout de 2,5 s). **Clic droit** avec un pistolet ou une mitraillette : visée au centre de l'écran, clic gauche pour tirer, conducteur comme passager. La souris ne dirige plus la voiture. `CameraLibre=0` pour la caméra d'origine. |
+| **F6** | Vue à la première personne depuis la tête de Tommy, à pied et dans tous les véhicules (mains sur le volant, tableau de bord, carénage de moto) ; la souris tourne la tête en véhicule. F6 à nouveau : caméra normale. `ToucheVue` change la touche, `VuePremierePersonne=0` la désactive (aussi dans Options vidéo). |
 | **Passager** | Regarder à gauche / à droite et tirer comme le conducteur (pistolets, mitraillettes). |
 
 Chaque joueur a sa couleur (bleu = hôte, orange, vert, violet) : un point sur le radar et la carte, et
