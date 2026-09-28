@@ -24,7 +24,40 @@ static void CollectParameters(void *script, int count)
 
 enum { OP_TERMINATE_THIS_SCRIPT = 0x004E, OP_START_MISSION = 0x0417 };
 
-char CallOriginalProcessOneCommand(void *script) { return o_ProcessOneCommand(script); }
+// --- Cinematiques et tenue F7 de personnage ---
+// Le jeu choisit le corps de Tommy dans une cinematique d'apres le nom du modele 0 : LOAD_SPECIAL_CHARACTER 'CSPlay'
+// (CStreaming::RequestSpecialModel) et LOAD_CUTSCENE (CAnimBlendAssocGroup::CreateAssociations, qui cherche le modele
+// de chaque animation) transforment un nom "ig..." en "cs..." (igphil -> csphil). Avec une tenue F7 sans version de
+// cinematique (igphil2, igpercy...), le modele n'existe pas : l'animation reste vide dans le groupe, et le
+// SET_CUTSCENE_ANIM suivant plantait en la lisant (0x401212, vu chez un invite en tenue igphil2). Le temps de ces deux
+// commandes, le modele 0 s'appelle "player" : Tommy joue la cinematique avec son corps habituel.
+static char g_savedPlayerName[24];
+static bool PlayerNameSwap(uint16_t op)
+{
+    if (op != 0x023C && op != 0x02E4) return false;
+    static int off = -1;   // test : TestSansCorrectifTenue=1 remet l'ancien comportement (pour reproduire le plantage)
+    if (off < 0) off = GetPrivateProfileIntA("VCCoop", "TestSansCorrectifTenue", 0, IniPath());
+    if (off) return false;
+    char *name = (char *)ModelName(0);
+    if (!name[0] || _strnicmp(name, "ig", 2) != 0) return false;
+    lstrcpynA(g_savedPlayerName, name, 21);
+    lstrcpynA(name, "player", 21);
+    Log("script : %04X avec la tenue %s : cinematique jouee avec le corps de Tommy", op, g_savedPlayerName);
+    return true;
+}
+static char RunOriginal(void *script, uint16_t op)
+{
+    bool swapped = PlayerNameSwap(op);
+    char r = (*o_ProcessOneCommand)(script);
+    if (swapped) lstrcpynA((char *)ModelName(0), g_savedPlayerName, 21);
+    return r;
+}
+
+char CallOriginalProcessOneCommand(void *script)
+{
+    uint16_t op = *(uint16_t *)(ScriptSpace() + Field<int>(script, 0x10)) & 0x7FFF;
+    return RunOriginal(script, op);
+}
 
 // Vehicules des missions secondaires : c'est en y etant (et en appuyant sur le bouton de mission) que le script
 // principal lance taxi, ambulance, pompiers, vigilante, pizzas. Aucune mission de l'histoire ne demarre ainsi.
@@ -42,6 +75,10 @@ static bool InSideMissionVehicle()
 
 static bool g_sideMission, g_buyMission;
 bool GuestSideMission() { return g_sideMission; }
+static bool PropertyBuyPending();
+// Invite : peut-il lancer une mission ? Seulement les secondaires (au volant du bon vehicule) et l'achat d'un immeuble ;
+// les missions de l'histoire, c'est l'hote (conditions.cpp coupe CAN_PLAYER_START_MISSION pour le reste).
+bool GuestMayStartMission() { return InSideMissionVehicle() || PropertyBuyPending(); }
 
 // --- Achat d'immeubles par l'invite ---
 // Les icones d'immeuble (CREATE_PROTECTION_PICKUP 0517 verrouillee / 0518 a vendre) sont creees par le script
@@ -92,11 +129,11 @@ static char __fastcall h_ProcessOneCommand(void *script)
         g_propCollectedAt = 0;
         if (g_buyMission) OverlayBuyStart();
         Log("script : l'invite lance une mission %s (par %.8s)", g_buyMission ? "d'achat d'immeuble" : "secondaire", (char *)script + 8);
-        return o_ProcessOneCommand(script);
+        return RunOriginal(script, op);
     }
     if (!g_cfg.host && (op == 0x0517 || op == 0x0518)) {   // icone d'immeuble : on retient sa reference
         int gofs = LastGlobalParam(ip, op == 0x0517 ? 5 : 6);
-        char r = o_ProcessOneCommand(script);
+        char r = RunOriginal(script, op);
         if (gofs > 0) { g_propPickups[g_propAt++ % 32] = *(uint32_t *)(ScriptSpace() + gofs); if (g_cfg.logScripts) Log("script : icone d'immeuble %08X (globale %d)", g_propPickups[(g_propAt - 1) % 32], gofs / 4); }
         return r;
     }
@@ -109,7 +146,7 @@ static char __fastcall h_ProcessOneCommand(void *script)
         if (*(int *)0x7D7438 == 0) {
             Field<int>(script, 0x10) = ip;
             Log("script : l'invite joue INITIAL lui-meme");
-            return o_ProcessOneCommand(script);
+            return RunOriginal(script, op);
         }
         uint32_t now = GetTickCount();
         if (now - lastLog > 5000) {
@@ -179,15 +216,15 @@ static char __fastcall h_ProcessOneCommand(void *script)
             Log("script : l'hote lance la mission %d (%.8s)", n, (char *)script + 8);
         }
         if (MirrorBefore(script, ip, op)) {
-            char r = o_ProcessOneCommand(script);
+            char r = RunOriginal(script, op);
             MirrorAfter(script);
             return r;
         }
-        char r = o_ProcessOneCommand(script);
+        char r = RunOriginal(script, op);
         ConditionsAfterCommand(script, op, ip);
         return r;
     }
-    return o_ProcessOneCommand(script);
+    return RunOriginal(script, op);
 }
 
 void InstallScriptHooks()

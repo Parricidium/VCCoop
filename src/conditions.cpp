@@ -117,6 +117,20 @@ static void __fastcall h_UpdateCompareFlag(void *script, void *edx, uint8_t flag
         if (IsPropertyPickup((uint32_t)P(0))) NotePropertyCollected();
         else flag = 0;
     }
+    // Invite : les missions de l'histoire ne se lancent que chez l'hote. Les points de contact du script principal
+    // demandent CAN_PLAYER_START_MISSION (03EE) avant tout (titre, controle coupe, START_MISSION) : chez l'invite, c'est
+    // "non", sauf mission secondaire (taxi, pompiers, police...) ou achat d'immeuble, qu'il joue chez lui. Avant, il
+    // entrait dans le marqueur : titre affiche, controle coupe, mission jamais lancee.
+    if (!g_cfg.host && flag && g_curOp == 0x03EE && script == g_curScript && !Field<bool>(script, 0x85) && !GuestMayStartMission()) {
+        flag = 0;
+        static char lastName[9];
+        static uint32_t lastLog;
+        if (memcmp(lastName, (char *)script + 8, 8) != 0 || GetTickCount() - lastLog > 120000) {
+            memcpy(lastName, (char *)script + 8, 8);
+            lastLog = GetTickCount();
+            Log("conditions : mission de l'histoire refusee a l'invite (%.8s) : c'est l'hote qui la lance", (char *)script + 8);
+        }
+    }
     // Hote : une voiture de mission conduite par un invite est une copie tenue immobile par la physique (sa vitesse
     // vient du reseau) : "arretee ?" doit lire la vitesse recue (IS_CAR_STOPPED 01C1, IS_CAR_STOPPED_IN_AREA 01AB-01AC, LOCATE_STOPPED_CAR 01AE/01B0).
     if (script == g_curScript && flag && (g_curOp == 0x01C1 || g_curOp == 0x01AB || g_curOp == 0x01AC || g_curOp == 0x01AE || g_curOp == 0x01B0)) {
