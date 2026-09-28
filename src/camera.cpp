@@ -182,7 +182,7 @@ static void HookVehicleRender(void *veh)
     g_vehRenderCount++;
 }
 
-static void MouseOrbit(void *me, uint32_t now);   // plus bas : la souris tourne la vue (camera libre et premiere personne)
+static void MouseOrbit(void *me, uint32_t now, uint32_t recenterMs = 2500, float pitchMin = -0.25f);   // plus bas : la souris tourne la vue (camera libre et premiere personne)
 
 // Vrai si la vue a ete remplacee.
 static bool FirstPersonView(void *cam, short mode)
@@ -199,9 +199,27 @@ static bool FirstPersonView(void *cam, short mode)
     Vec3 f;
     if (veh) {
         HookVehicleRender(veh);
-        // Droit devant le vehicule (avec son tangage et son roulis) ; la souris tourne la tete, qui revient seule.
-        MouseOrbit(me, GetTickCount());
-        Vec3 vr = Field<Vec3>(veh, 0x4), vf = Field<Vec3>(veh, 0x14), vu = Field<Vec3>(veh, 0x24);
+        // Droit devant le vehicule (avec son tangage et son roulis) ; la souris tourne la tete librement, qui ne
+        // revient droit devant qu'au bout de 5 s sans souris.
+        MouseOrbit(me, GetTickCount(), 5000, -0.9f);   // tete : on peut aussi lever les yeux
+        Vec3 vr = Field<Vec3>(veh, 0x4), vf = Field<Vec3>(veh, 0x14), vu = Field<Vec3>(veh, 0x24), vp = Pos(veh);
+        // Yeux fixes dans le repere du vehicule : les os de la tete datent de l'image precedente (la voiture a avance
+        // depuis) et la vue reculait d'autant plus qu'on allait vite. Position mesuree vehicule arrete ; en roulant,
+        // la premiere mesure est corrigee de la vitesse (une image).
+        static void *s_veh;
+        static Vec3 s_local;
+        Vec3 mv = MoveSpeed(veh);
+        bool calm = mv.x * mv.x + mv.y * mv.y + mv.z * mv.z < 0.01f * 0.01f;
+        if (veh != s_veh || calm) {
+            Vec3 e = eyes;
+            if (!calm) { float ts = TimeStep(); e = { e.x + mv.x * ts, e.y + mv.y * ts, e.z + mv.z * ts }; }
+            Vec3 d = { e.x - vp.x, e.y - vp.y, e.z - vp.z };
+            s_local = { d.x * vr.x + d.y * vr.y + d.z * vr.z, d.x * vf.x + d.y * vf.y + d.z * vf.z, d.x * vu.x + d.y * vu.y + d.z * vu.z };
+            s_veh = veh;
+        }
+        eyes = { vp.x + vr.x * s_local.x + vf.x * s_local.y + vu.x * s_local.z,
+                 vp.y + vr.y * s_local.x + vf.y * s_local.y + vu.y * s_local.z,
+                 vp.z + vr.z * s_local.x + vf.z * s_local.y + vu.z * s_local.z };
         float yaw = g_yaw, pitch = g_pitch - 0.22f;
         float cy = cosf(yaw), sy = sinf(yaw), cp = cosf(pitch), sp = sinf(pitch);
         f = { (vf.x * cy - vr.x * sy) * cp - vu.x * sp, (vf.y * cy - vr.y * sy) * cp - vu.y * sp, (vf.z * cy - vr.z * sy) * cp - vu.z * sp };
@@ -307,7 +325,7 @@ static void __fastcall h_CamProcess(void *cam, void *edx)
 
 // Souris en vehicule : tourne la camera (g_yaw, g_pitch) ; sans mouvement pendant 2,5 s, retour en douceur derriere
 // le vehicule (vue libre) ou droit devant (premiere personne). Clic droit avec une arme de tir : visee.
-static void MouseOrbit(void *me, uint32_t now)
+static void MouseOrbit(void *me, uint32_t now, uint32_t recenterMs, float pitchMin)
 {
     float mx = *(float *)(Mouse() + 8) + g_testMouseX, my = *(float *)(Mouse() + 0xC);
     if (fabsf(mx) + fabsf(my) > 0.3f) {
@@ -315,12 +333,12 @@ static void MouseOrbit(void *me, uint32_t now)
         g_lastMove = now;
         g_yaw -= mx * 0.005f * g_cfg.camSensitivity;
         g_pitch -= my * 0.004f * g_cfg.camSensitivity;   // souris vers le haut : la camera regarde plus haut (retour de JD)
-        if (g_pitch < -0.25f) g_pitch = -0.25f;
+        if (g_pitch < pitchMin) g_pitch = pitchMin;
         if (g_pitch > 1.2f) g_pitch = 1.2f;
     }
     g_aim = (g_realRmb || Mouse()[1] || g_testAim) && DriveByWeapon(me);
     if (g_aim) { g_orbit = true; g_lastMove = now; }
-    if (g_orbit && !g_aim && now - g_lastMove > 2500) {
+    if (g_orbit && !g_aim && now - g_lastMove > recenterMs) {
         while (g_yaw > 3.14159f) g_yaw -= 6.28318f;
         while (g_yaw < -3.14159f) g_yaw += 6.28318f;
         g_yaw *= 0.9f;

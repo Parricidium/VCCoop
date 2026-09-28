@@ -123,11 +123,13 @@ static void __fastcall h_UpdateCompareFlag(void *script, void *edx, uint8_t flag
     // entrait dans le marqueur : titre affiche, controle coupe, mission jamais lancee.
     if (!g_cfg.host && flag && g_curOp == 0x03EE && script == g_curScript && !Field<bool>(script, 0x85) && !GuestMayStartMission()) {
         flag = 0;
-        static char lastName[9];
-        static uint32_t lastLog;
-        if (memcmp(lastName, (char *)script + 8, 8) != 0 || GetTickCount() - lastLog > 120000) {
-            memcpy(lastName, (char *)script + 8, 8);
-            lastLog = GetTickCount();
+        // Une ligne par fil (les points de contact et d'achat le demandent a chaque image).
+        static char seen[48][8];
+        static int seenCount;
+        bool known = false;
+        for (int i = 0; i < seenCount && !known; i++) known = memcmp(seen[i], (char *)script + 8, 8) == 0;
+        if (!known && seenCount < 48) {
+            memcpy(seen[seenCount++], (char *)script + 8, 8);
             Log("conditions : mission de l'histoire refusee a l'invite (%.8s) : c'est l'hote qui la lance", (char *)script + 8);
         }
     }

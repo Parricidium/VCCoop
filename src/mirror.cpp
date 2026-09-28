@@ -394,6 +394,15 @@ void MirrorAfter(void *script)
         buf[len++] = (uint8_t)kind;
         memcpy(buf + len, &v, 4); len += 4;
     }
+    // Une mission qui retire en boucle un marqueur deja retire (law2) : on ne l'envoie qu'une fois.
+    static uint32_t removed[32];
+    static int removedAt;
+    if (sig->op == 0x0164 && entity) {
+        for (uint32_t r : removed) if (r == entity) return;
+        removed[removedAt++ % 32] = entity;
+    } else if (CreatesBlip(sig->op) && entity) {
+        for (uint32_t &r : removed) if (r == entity) r = 0;   // reference reutilisee par un nouveau marqueur
+    }
     if (!g_captureOnly) {
         NetSendReliable(buf, len);
         RememberActiveBlip(sig->op, buf, len, entity);
@@ -840,11 +849,21 @@ static bool Execute(const uint8_t *d, int len, bool force)
         if ((op == 0x0055 || op == 0x012A) && i == 1) { float x; memcpy(&x, &v, 4); x += 1.5f * g_localId; memcpy(&v, &x, 4); }
         uint32_t g;
         if (!Translate(kind, v, g)) {
-            if (!force) return false;
-            // Toujours pas d'equivalent chez nous apres 3 s : la commande est sautee. (Avant : executee avec -1,
-            // que CPool::GetAt ne verifie pas : pointeur faux, plantage possible dans le gestionnaire d'opcode.)
-            const OpSig *s = FindOp(op);
-            Log("miroir : %s ignoree (reference %c %08X introuvable chez nous)", s ? s->name : "?", kind, v);
+            // Suppression (marqueur, pickup, objet...) de quelque chose qu'on n'a pas : rien a faire, tout de suite.
+            // Avant, chacune attendait 3 s ; une mission qui retire le meme marqueur en boucle (law2) remplissait la
+            // file plus vite qu'elle ne se vidait, et plus rien ne passait derriere (objectifs, cinematiques, fin de
+            // mission) pour le reste de la partie. File en retard (40 commandes) : on n'attend plus non plus.
+            bool removal = op == 0x0164 || op == 0x0215 || op == 0x0108 || op == 0x01C4 || op == 0x009B || op == 0x00A6 || op == 0x01C2 || op == 0x01C3;
+            int backlog = (g_qTail - g_qHead + QUEUE_SIZE) % QUEUE_SIZE;
+            if (!force && !removal && backlog < 40) return false;
+            // Pas d'equivalent chez nous : la commande est sautee. (Avant : executee avec -1, que CPool::GetAt ne
+            // verifie pas : pointeur faux, plantage possible dans le gestionnaire d'opcode.)
+            static uint32_t lastLog;
+            if (!removal || GetTickCount() - lastLog > 10000) {
+                lastLog = GetTickCount();
+                const OpSig *s = FindOp(op);
+                Log("miroir : %s ignoree (reference %c %08X introuvable chez nous, file %d)", s ? s->name : "?", kind, v, backlog);
+            }
             return true;
         }
         ss[w] = 1;
