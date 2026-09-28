@@ -45,6 +45,7 @@ struct Puppet {
     uint32_t seatedAt;        // derniere installation dans un vehicule (montee finie ou pose)
     uint32_t exitedAt;        // derniere descente animee finie...
     uint32_t exitedFrom;      // ...et de quel vehicule reseau (pas reassis dedans tant que son etat dit encore "a bord")
+    uint32_t mismatchSince;   // depuis quand son double n'est pas ou il est chez lui (dehors / dans un vehicule)
 };
 
 // La tenue de Tommy est le modele 0, propre a chaque instance : le Tommy d'un autre joueur utilise un
@@ -193,12 +194,13 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         // (une montee a pris 9,5 s chez JD) ; pas si quelqu'un la conduit ici.
         if (target && !cur && !LocallyDriven(target, ped)) { MoveSpeed(target) = { 0, 0, 0 }; TurnSpeed(target) = { 0, 0, 0 }; }
         int st = PedState(ped);
-        bool atDoor = st == 58 || st == 59;   // porte ouverte, en train de s'asseoir : on laisse finir
+        bool atDoor = st >= 56 && st <= 59;   // car-jack, porte ouverte, en train de s'asseoir : on laisse finir
         { static uint32_t lastDiag; if (now - lastDiag > 1000) { lastDiag = now; char who[24]; wsprintfA(who, "Tommy %d", s.id); LogEnterProgress(ped, who); } }
         if (cur) { pp.entering = false; pp.seatedAt = now; Field<int>(ped, 0x164) = 0; Log("coop : Tommy %d est monte (animation)", s.id); }
-        // Chez lui c'est fini depuis 3,5 s et notre double n'y est toujours pas (il cherche encore la portiere) : on le pose.
-        else if (!(atDoor && now - pp.busySince < 10000) &&
-                 (now - pp.busySince > 8000 || (!target && now - pp.busySince > 2500) || driving || (s.inVehicle && now - pp.busySince > 3500))) {
+        // La voiture roule, ou chez lui il est assis depuis un moment et notre double n'y est toujours pas : on le pose
+        // (avant : jusqu'a 10 s d'attente "a la portiere" pendant que la voiture partait vide).
+        else if (driving || now - pp.busySince > (atDoor ? 6000u : 4000u) || (!target && now - pp.busySince > 2500) ||
+                 (s.inVehicle && now - pp.busySince > (atDoor ? 2500u : 1800u))) {
             pp.entering = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
             Vec3 at = Pos(ped);
@@ -235,9 +237,12 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         // (seats.cpp) quand le double arrive pres de la portiere. Jusque-la il suit la position recue : c'est
         // l'autre joueur qui marche jusqu'a la porte chez lui (la marche de l'IA ne deplacait pas le double).
         if (veh && EntityStatus(veh) != STATUS_WRECKED && DoorDistance(ped, veh, passenger ? 1 : 0) < 2.5f) {
-            if (!passenger) EvictNpcDriver(veh, s);
             if (!LocallyDriven(veh, ped)) { MoveSpeed(veh) = { 0, 0, 0 }; TurnSpeed(veh) = { 0, 0, 0 }; }
-            if (StartEnterAnimated(ped, veh, passenger ? 1 : 0, false)) {
+            // (Un personnage de l'IA au volant : StartEnterAnimated le tire dehors avec l'animation du jeu ; il n'est
+            // sorti d'office que si l'animation est refusee.)
+            if (StartEnterAnimated(ped, veh, passenger ? 1 : 0, false) ||
+                (!passenger && VehDriver(veh) && !IsPuppet(VehDriver(veh)) && VehDriver(veh) != FindPlayerPed() &&
+                 (EvictNpcDriver(veh, s), StartEnterAnimated(ped, veh, 0, false)))) {
                 pp.entering = true;
                 pp.busySince = now;
                 pp.anims.count = 0;
@@ -318,6 +323,37 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     if (!InVehicle(ped) && !EnterInProgress(ped)) {   // (le jeu coupe la collision pendant la montee : on n'y touche pas)
         uint8_t &col = Field<uint8_t>(ped, 0x51);
         if (down) col &= ~0x01; else col |= 0x01;
+    }
+    // Controle permanent : chez lui il est dans un vehicule et son double dehors (ou l'inverse), hors animation de
+    // montee / descente, depuis plus de 2 s : on le remet a sa place (ou on le cache si c'est impossible).
+    {
+        uint32_t now = GetTickCount();
+        bool inside = InVehicle(ped) != 0;
+        bool busy = pp.entering || pp.exiting || EnterInProgress(ped);
+        // (Vehicule sans copie ici, trop loin : son double est deja cache, rien a faire.)
+        bool mismatch = !busy && ((s.inVehicle && !inside && NetVehicleById(s.vehicleId)) || (!s.inVehicle && !s.enterId && !s.exiting && inside));
+        if (!mismatch) pp.mismatchSince = 0;
+        else if (!pp.mismatchSince) pp.mismatchSince = now;
+        else if (now - pp.mismatchSince > 2000) {
+            pp.mismatchSince = now;
+            if (s.inVehicle) {
+                void *want = NetVehicleById(s.vehicleId);
+                bool ok = false;
+                if (want && EntityStatus(want) != STATUS_WRECKED) {
+                    if (s.seat == 0) EvictNpcDriver(want, s);
+                    ok = WarpIntoSeat(ped, want, s.seat);
+                    for (int seat = 1; !ok && seat <= 3; seat++) ok = WarpIntoSeat(ped, want, seat);   // sa place est prise ici
+                }
+                Log("coop : Tommy %d etait dehors alors qu'il est en vehicule chez lui : %s", s.id, ok ? "remis a bord" : "cache (vehicule absent)");
+                if (ok) pp.seatedAt = now;
+            } else {
+                Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
+                WarpOutOfVehicle(ped, &at);
+                pp.lastMoveState = -1;
+                pp.anims.count = 0;
+                Log("coop : Tommy %d etait en vehicule alors qu'il est dehors chez lui : pose dehors", s.id);
+            }
+        }
     }
     if (UpdatePuppetVehicle(pp, s)) {
         pp.anims.count = 0;
@@ -412,7 +448,12 @@ void PuppetsAfterProcess()
             }
         }
         Pos(pp.ped) = { n.pos[0], n.pos[1], n.pos[2] };
-        MoveSpeed(pp.ped) = { n.vel[0], n.vel[1], n.vel[2] };
+        // Vitesse bornee (et jamais NaN) : un saut de position (teleportation, voiture qui explose) donnait une vitesse
+        // de -69 m par image ; la physique envoyait le personnage hors du monde (secteurs corrompus, plantage 0x4B0347).
+        Vec3 vel = { n.vel[0], n.vel[1], n.vel[2] };
+        float vl = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+        if (!(vl <= 2.0f)) { float k = vl > 0 && vl < 1e30f ? 2.0f / vl : 0.0f; vel = { vel.x * k, vel.y * k, vel.z * k }; }
+        MoveSpeed(pp.ped) = vel;
         SetHeadingMatrix(pp.ped, n.heading);
         Heading(pp.ped) = HeadingGoal(pp.ped) = n.heading;
     }

@@ -127,6 +127,17 @@ static CamProcess_t o_CamProcess;
 
 static void __fastcall h_CamProcess(void *cam, void *edx)
 {
+    // Camera de cinematique (MODE_FLYBY 17) sans son trace (CCamera::m_arrPathArray, 0x7E4E98..0x7E4EA4) : le jeu
+    // plante (0x47E4C9) ; ca arrive chez l'invite quand les commandes camera de fin de mission de l'hote arrivent
+    // toutes dans la meme image. On fait comme si la cinematique etait finie (m_bcutsceneFinished, 0x7E46D5), le
+    // test que la fonction fait elle-meme en entrant.
+    if (*(short *)((uint8_t *)cam + 0xC) == 17) {
+        void **path = (void **)0x7E4E98;
+        if (!path[0] || !path[1] || !path[2] || !path[3]) {
+            if (!TheCam()[0x4D]) Log("camera : cinematique sans trace, arretee (evite le plantage 0x47E4C9)");
+            TheCam()[0x4D] = 1;
+        }
+    }
     o_CamProcess(cam, edx);
     if (!g_cfg.freeCam || cam != ActiveCam()) return;
     void *me = FindPlayerPed();

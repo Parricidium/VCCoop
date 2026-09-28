@@ -127,8 +127,57 @@ static void ApplyDrawDistance()
     if (*(int *)0x94DD54 < mem) *(int *)0x94DD54 = mem;
 }
 
+// Garde-fou avant la physique : un vehicule ou un personnage dont la matrice, la position ou la vitesse n'est plus un
+// nombre (NaN) ou est aberrante fait calculer au jeu un secteur du monde hors de la grille, qui corrompt ses listes
+// (plantage 0x4B0347 dans CPhysical::ProcessCollisionSectorList, vu chez un invite en pleine poursuite). On remet sa
+// derniere matrice saine, vitesses a zero, et on le note.
+struct SaneState { float m[16]; uint16_t handle; bool valid; };
+static SaneState g_saneVeh[256], g_sanePed[512];
+
+static bool Finite(const float *v, int n, float lim)
+{
+    for (int i = 0; i < n; i++) if (!(fabsf(v[i]) <= lim)) return false;   // NaN : la comparaison echoue
+    return true;
+}
+
+static int SanitizePool(Pool *pool, int entry, SaneState *saved, int maxSlots, const char *what)
+{
+    int fixed = 0;
+    for (int i = 0; i < pool->size && i < maxSlots; i++) {
+        if (pool->flags[i] & 0x80) { saved[i].valid = false; continue; }
+        uint8_t *e = pool->objects + i * entry;
+        float *m = (float *)(e + 4);   // CMatrix : right, forward, up, position (lignes de 4)
+        uint16_t h = (uint16_t)((i << 8) | pool->flags[i]);
+        bool ok = Finite(m, 3, 4.0f) && Finite(m + 4, 3, 4.0f) && Finite(m + 8, 3, 4.0f) && Finite(m + 12, 3, 12000.0f) &&
+                  Finite(&MoveSpeed(e).x, 3, 50.0f) && Finite(&TurnSpeed(e).x, 3, 50.0f);
+        if (ok) { memcpy(saved[i].m, m, 64); saved[i].handle = h; saved[i].valid = true; continue; }
+        fixed++;
+        Log("garde-fou : %s %d (modele %d, etat %d) aberrant : pos %.1f %.1f %.1f, axes %.2f %.2f %.2f / %.2f %.2f %.2f / %.2f %.2f %.2f, vitesse %.2f %.2f %.2f, rotation %.2f %.2f %.2f ; %s",
+            what, i, *(short *)(e + 0x5C), entry == PED_POOL_ENTRY ? PedState(e) : -1, m[12], m[13], m[14], m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10],
+            MoveSpeed(e).x, MoveSpeed(e).y, MoveSpeed(e).z, TurnSpeed(e).x, TurnSpeed(e).y, TurnSpeed(e).z,
+            saved[i].valid && saved[i].handle == h ? "remis a sa derniere position saine" : "remis a plat au sol");
+        if (saved[i].valid && saved[i].handle == h) memcpy(m, saved[i].m, 64);
+        else {
+            float px = Finite(m + 12, 3, 12000.0f) ? m[12] : 0, py = Finite(m + 12, 3, 12000.0f) ? m[13] : 0, pz = Finite(m + 12, 3, 12000.0f) ? m[14] : 20;
+            memset(m, 0, 64);
+            m[0] = 1; m[5] = 1; m[10] = 1;
+            m[12] = px; m[13] = py; m[14] = pz;
+        }
+        MoveSpeed(e) = { 0, 0, 0 };
+        TurnSpeed(e) = { 0, 0, 0 };
+    }
+    return fixed;
+}
+
+static void SanitizeWorld()
+{
+    SanitizePool(VehiclePool(), VEHICLE_POOL_ENTRY, g_saneVeh, 256, "vehicule");
+    SanitizePool(PedPool(), PED_POOL_ENTRY, g_sanePed, 512, "personnage");
+}
+
 static void __cdecl h_GameProcess()
 {
+    if (GameState() == GS_PLAYING && FindPlayerPed()) SanitizeWorld();
     // Copies de vehicules placees AVANT la physique aussi : CWorld::Process y assoit leurs occupants et la camera
     // du passager suit ; placees seulement apres, conducteur et passagers avaient une image de retard sur la voiture.
     if (GameState() == GS_PLAYING && FindPlayerPed()) VehiclesAfterProcess();
