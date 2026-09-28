@@ -7,6 +7,7 @@
 #include "camera.h"
 #include "net.h"
 #include "anims.h"
+#include "vehicles.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -172,6 +173,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallDisplay();
     InstallInterface();
     InstallPopulation();
+    InstallVehicleAudio();
     InstallConditions();
     InstallInterp();
     InstallEnterHooks();

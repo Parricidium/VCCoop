@@ -130,6 +130,94 @@ void AutotestFrame()
         }
         return;
     }
+    // Autotest=memevoiture : l'hote cree une voiture vide ; les deux joueurs se placent a 2 m d'elle et appuient sur F
+    // presque en meme temps : un seul doit prendre le volant, l'autre monte en passager (coop.cpp BoardingFrame).
+    if (_stricmp(g_cfg.autotest, "memevoiture") == 0) {
+        static void *car;
+        static uint32_t readyAt, pressed;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        if (g_cfg.host && !car && t > 200) {
+            if (!HasModelLoaded(130)) { RequestModel(130, 1); return; }
+            float h = Heading(me);
+            void *v = VehicleAlloc();
+            AutomobileCtor(v, 130, 1);
+            Pos(v) = { Pos(me).x - sinf(h) * 4.0f, Pos(me).y + cosf(h) * 4.0f, Pos(me).z + 0.3f };
+            SetHeadingMatrix(v, h);
+            SetEntityStatus(v, STATUS_ABANDONED);
+            WorldAdd(v);
+            car = v; RegisterReference(v, &car);
+            Log("autotest : memevoiture, voiture vide creee");
+        }
+        if (!g_cfg.host && !car) {   // la copie de la voiture de l'hote la plus proche
+            Pool *vp = VehiclePool();
+            for (int i = 0; i < vp->size && !car; i++) {
+                if (vp->flags[i] & 0x80) continue;
+                void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+                if (ModelIndex(v) == 130 && NetVehicleId(v) && !VehDriver(v)) { car = v; RegisterReference(v, &car); }
+            }
+        }
+        if (car && !readyAt) {
+            Vec3 r = Field<Vec3>(car, 0x04);
+            float side = g_cfg.host ? -2.2f : 2.2f;   // l'hote a gauche (portiere conducteur), l'invite a droite
+            Pos(me) = { Pos(car).x + r.x * side, Pos(car).y + r.y * side, Pos(car).z + 0.4f };
+            MoveSpeed(me) = { 0, 0, 0 };
+            readyAt = frame;
+        }
+        if (readyAt && !pressed && frame - readyAt > (g_cfg.host ? 120u : 90u)) {   // l'invite (arrive apres) appuie un peu plus tot
+            pressed = frame;
+            Press(PAD_TRIANGLE, 255);
+            Log("autotest : memevoiture, F");
+        }
+        if (pressed && (frame - pressed == 150 || frame - pressed == 300)) {
+            void *v = InVehicle(me) ? PedVehicle(me) : NULL;
+            Log("autotest : memevoiture, a bord %d, place %d", v != NULL, v ? SeatOf(v, me) : -1);
+        }
+        return;
+    }
+    // Autotest=decor : (hote) fonce en voiture sur l'objet du decor le plus proche (lampadaire, borne, panneau...) ;
+    // l'invite doit le voir tomber aussi (objsync.cpp).
+    if (_stricmp(g_cfg.autotest, "decor") == 0) {
+        static void *car, *target;
+        static uint32_t seatedAt;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        if (!g_cfg.host) return;
+        if (!HasModelLoaded(130)) { RequestModel(130, 1); return; }
+        if (!target && t > 150 && t % 30 == 0) {
+            Pool *op = *(Pool **)0x94DBE0;
+            float best = 60.0f * 60.0f;
+            for (int i = 0; i < op->size; i++) {
+                if (op->flags[i] & 0x80) continue;
+                void *o = op->objects + i * 0x1A0;
+                if (!(Field<uint8_t>(o, 0x51) & 0x04)) continue;
+                const char *n = ModelName(ModelIndex(o));
+                if (!strstr(n, "lamp") && !strstr(n, "bollard") && !strstr(n, "sign") && !strstr(n, "hydrant") && !strstr(n, "bin") && !strstr(n, "post") && !strstr(n, "parkingmeter")) continue;
+                float dx = Pos(o).x - Pos(me).x, dy = Pos(o).y - Pos(me).y, d = dx * dx + dy * dy;
+                if (d > 25.0f && d < best) { best = d; target = o; }
+            }
+            if (target) {
+                float dx = Pos(target).x - Pos(me).x, dy = Pos(target).y - Pos(me).y, l = sqrtf(dx * dx + dy * dy);
+                float h = atan2f(-dx / l, dy / l);
+                void *v = VehicleAlloc();
+                AutomobileCtor(v, 130, 1);
+                Pos(v) = { Pos(target).x - dx / l * 10.0f, Pos(target).y - dy / l * 10.0f, Pos(target).z + 0.5f };
+                SetHeadingMatrix(v, h);
+                SetEntityStatus(v, STATUS_ABANDONED);
+                WorldAdd(v);
+                car = v; RegisterReference(v, &car);
+                WarpIntoSeat(me, v, 0);
+                seatedAt = frame;
+                Log("autotest : decor, cible %s (modele %d) a %.1f m", ModelName(ModelIndex(target)), ModelIndex(target), l);
+            }
+        }
+        if (car && target && frame - seatedAt == 60) {
+            float dx = Pos(target).x - Pos(car).x, dy = Pos(target).y - Pos(car).y, l = sqrtf(dx * dx + dy * dy);
+            MoveSpeed(car) = { dx / l * 0.4f, dy / l * 0.4f, 0 };
+            Log("autotest : decor, lance vers la cible");
+        }
+        return;
+    }
     // Autotest=renverse : l'hote au volant sur une route degagee ; l'invite, a pied, se place 8 m devant sa voiture ;
     // l'hote le percute a ~60 km/h (vehicles.cpp RunOverByPlayers, chez l'invite).
     if (_stricmp(g_cfg.autotest, "renverse") == 0) {
