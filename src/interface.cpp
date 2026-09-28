@@ -4,7 +4,7 @@
 //    en 1080p (floue) ; plus petite, elle reste nette ;
 //  - images prises dans VCCoop\interface (png, jpg ou bmp, a n'importe quelle taille) : fond_menu (tout l'ecran,
 //    sans deformation : l'image est recadree au format de l'ecran), logo (en haut a gauche, transparence du png
-//    gardee), chargement* (ecrans de chargement, tires au hasard).
+//    gardee), chargement* (ecrans de chargement, tires au hasard), fermeture* (image en quittant le jeu).
 // Les images sont lues avec WIC (Windows), mises a une taille en puissance de deux (ce que demande la carte
 // graphique en Direct3D 8) puis chargees par le lecteur de textures du jeu depuis un TXD fabrique en memoire.
 #include "util.h"
@@ -304,6 +304,22 @@ static void __fastcall h_DrawSplash(void *sprite, void *, const float *rect, con
     ((void(__thiscall *)(void *, const float *, const uint8_t *))0x578710)(sprite, rect, color);
 }
 
+// --- Ecran de fermeture ("Greetings from Vice City", splash OUTRO) ---
+// CMenuManager (0x495792) dessine OUTRO en plein ecran en 0x495951, avec son fondu : remplace par
+// VCCoop\interface\fermeture*.png|jpg|bmp s'il y en a (tiree au hasard).
+static Image g_outro;
+static void __fastcall h_DrawOutro(void *sprite, void *, const float *rect, const uint8_t *color)
+{
+    static bool tried;
+    if (!tried) {
+        tried = true;
+        std::vector<std::wstring> list = FindImages(L"fermeture");
+        if (!list.empty()) LoadImageFile(list[rand() % list.size()], g_outro);
+    }
+    if (g_outro.tex) { DrawCover(g_outro, color); return; }
+    ((void(__thiscall *)(void *, const float *, const uint8_t *))0x578710)(sprite, rect, color);
+}
+
 void InterfaceFrame()
 {
     if (g_load.tex && GameState() == GS_PLAYING) FreeImage(g_load);
@@ -344,9 +360,10 @@ static void StyledPrint(float x, float y, const wchar_t *s)
     if (g_style && shadowPass) return;   // ombre dessinee a la main par le menu : le contour la remplace
 
     // Plus petit, a la meme place : le haut descend de la moitie de la hauteur gagnee (lettres ~18 points x echelle).
-    sx = osx * g_textScale;
-    sy = osy * g_textScale;
-    float ty = y + (1.0f - g_textScale) * osy * 9.0f;
+    float scale = g_textScale * CoopMenuTextScale();
+    sx = osx * scale;
+    sy = osy * scale;
+    float ty = y + (1.0f - scale) * osy * 9.0f;
 
     if (g_style && (pink || dim || saveList) && !*(bool *)0x97F83B) {
         float o = ScreenH() / 450.0f;   // 2,4 points en 1080p
@@ -441,6 +458,7 @@ void InstallInterface()
     PatchDrawCall(0x4A2CB2, 0x578710, (void *)h_DrawBackground);
     PatchDrawCall(0x4A3503, 0x578710, (void *)h_DrawLogo);
     PatchDrawCall(0x4A6A7E, 0x578710, (void *)h_DrawSplash);
+    PatchDrawCall(0x495951, 0x578710, (void *)h_DrawOutro);
     static const uintptr_t quads[] = { 0x4A2831, 0x4A292B, 0x4A2A34, 0x4A2DB9, 0x4A2EB3, 0x4A2FC2, 0x4A30D1 };
     for (uintptr_t a : quads) PatchDrawCall(a, 0x578520, (void *)h_FrameQuad);
     g_barsOk = true;

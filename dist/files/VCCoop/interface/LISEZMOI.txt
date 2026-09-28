@@ -26,6 +26,11 @@ chargement1.jpg, chargement2.jpg, ...
     La barre de progression du jeu reste dessinee en bas : evitez d'y mettre
     un texte important.
 
+fermeture.jpg (ou fermeture1, fermeture2...)
+    Image affichee en quittant le jeu, a la place de la carte postale
+    "Greetings from Vice City" (avec le meme fondu). Tout l'ecran, memes
+    regles que le fond. Plusieurs images : une est tiree au hasard.
+
 Remarques
 - Au-dela de 2048 points, l'image est reduite a 2048 (limite de la carte en
   Direct3D 8) : 2560x1440 garde donc une meilleure nettete que 1920x1080

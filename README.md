@@ -199,7 +199,8 @@ at most (extension included). GTA V `handling.xml` files are not Vice City's for
   pages use white text on the background with a pink selection bar.
 - Images in `VCCoop\interface\`: `fond_menu.png` (menu background, 1920×1080 or 2560×1440),
   `logo.png` (512×512, transparent), `chargement1.jpg`, `chargement2.jpg`... (loading screens,
-  picked at random). Shown at their real size without stretching; see the folder's `LISEZMOI.txt`.
+  picked at random), `fermeture.jpg` (image shown when quitting, instead of "Greetings from Vice City").
+  Shown at their real size without stretching; see the folder's `LISEZMOI.txt`.
 
 ## Network
 
@@ -421,7 +422,8 @@ ne sont pas au format de Vice City : prendre la ligne `handling.cfg` fournie par
   sélection rose.
 - Images dans `VCCoop\interface\` : `fond_menu.png` (fond des menus, 1920×1080 ou 2560×1440),
   `logo.png` (512×512, transparent), `chargement1.jpg`, `chargement2.jpg`... (écrans de chargement,
-  tirés au hasard). Affichées à leur vraie taille sans déformation ; voir le `LISEZMOI.txt` du dossier.
+  tirés au hasard), `fermeture.jpg` (image en quittant le jeu, à la place de « Greetings from Vice City »).
+  Affichées à leur vraie taille sans déformation ; voir le `LISEZMOI.txt` du dossier.
 
 ## Réseau
 

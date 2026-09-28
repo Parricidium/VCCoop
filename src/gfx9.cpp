@@ -1504,7 +1504,7 @@ void Gfx9BeforePresent()
         SaveCapture(NULL, "");
         g_captureIndex++;
     }
-    if (g_cfg.captureSecs > 0 && GameState() == GS_PLAYING && GetTickCount() - last > (uint32_t)g_cfg.captureSecs * 1000) {
+    if (g_cfg.captureSecs > 0 && (GameState() == GS_PLAYING || GameState() == GS_FRONTEND) && GetTickCount() - last > (uint32_t)g_cfg.captureSecs * 1000) {
         last = GetTickCount();
         g_captureStage = 1;   // l'image suivante : avant et apres les ombres
     }
