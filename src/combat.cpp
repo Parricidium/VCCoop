@@ -471,6 +471,7 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         return;
     }
     if (data[0] >= 20) { SaveShareOnReliable(from, data, len); return; }   // saveshare.cpp
+    if (data[0] == 19) { ObjSyncOnReliable(from, data, len); return; }      // objsync.cpp : decor renverse
     if (data[0] == RL_WANTED && len >= (int)sizeof(RlWanted)) {
         void *me = FindPlayerPed();
         int level = ((const RlWanted *)data)->level;

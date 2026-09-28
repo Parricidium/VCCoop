@@ -681,6 +681,52 @@ static void RunOverByPlayers()
     }
 }
 
+// --- Sons du vehicule pour son passager ---
+// Pour le jeu, le vehicule ou l'on est assis est "le vehicule du joueur" : son moteur est joue d'apres NOTRE manette
+// (Pads[0].GetAccelerate / GetBrake, reVC ProcessPlayersVehicleEngine), et le passager n'accelere pas : moteur au
+// ralenti pendant que l'autre joueur roule a fond. Dans le code audio seulement (appels 0x5EE3A5..0x5F3E72 ; ceux
+// de 0x60A7xx pilotent la voiture et ne sont pas touches), en passager on rend les pedales du conducteur, que la
+// copie recoit (+0x1F0 accelerateur, +0x1F4 frein), comme le fait le jeu pendant un replay.
+static void *PassengerVehicle()
+{
+    void *me = FindPlayerPed();
+    if (!me || !InVehicle(me)) return NULL;
+    void *v = PedVehicle(me);
+    return v && VehDriver(v) != me ? v : NULL;
+}
+static int16_t Pedal(void *v, int off) { float g = Field<float>(v, off); return (int16_t)((g < 0.0f ? 0.0f : g > 1.0f ? 1.0f : g) * 255.0f); }
+static int16_t __fastcall h_AudioAccelerate(void *pad, void *)
+{
+    void *v = PassengerVehicle();
+    if (v && pad == (void *)0x7DBCB0) {
+        int16_t r = Pedal(v, 0x1F0);
+        static bool logged;
+        if (!logged && r > 0) { logged = true; Log("vehicules : passager, son du moteur a l'accelerateur du conducteur (%d/255)", r); }
+        return r;
+    }
+    return ((int16_t(__thiscall *)(void *))0x4AA760)(pad);
+}
+static int16_t __fastcall h_AudioBrake(void *pad, void *)
+{
+    void *v = PassengerVehicle();
+    if (v && pad == (void *)0x7DBCB0) return Pedal(v, 0x1F4);
+    return ((int16_t(__thiscall *)(void *))0x4AA960)(pad);
+}
+void InstallVehicleAudio()
+{
+    static const uintptr_t accel[] = { 0x5EE3B1, 0x5EE3C0, 0x5F1107, 0x5F33D6, 0x5F37E3, 0x5F3E64 };
+    static const uintptr_t brake[] = { 0x5EE3A5, 0x5EE3CC, 0x5F1115, 0x5F33E2, 0x5F37F0, 0x5F3E72 };
+    int n = 0;
+    auto hook = [&](uintptr_t at, uintptr_t fn, void *to) {
+        if (*(uint8_t *)at != 0xE8 || (uintptr_t)(at + 5 + *(int32_t *)(at + 1)) != fn) return;
+        PatchCall(at, to);
+        n++;
+    };
+    for (uintptr_t a : accel) hook(a, 0x4AA760, (void *)h_AudioAccelerate);
+    for (uintptr_t a : brake) hook(a, 0x4AA960, (void *)h_AudioBrake);
+    Log("vehicules : sons du passager d'apres les pedales du conducteur (%d appels sur 12)", n);
+}
+
 void VehiclesFrame(bool inGame)
 {
     if (inGame) { CopyCollisions(); RunOverByPlayers(); }

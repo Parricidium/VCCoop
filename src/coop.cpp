@@ -939,12 +939,27 @@ static bool OtherPlayersConnected()
     return false;
 }
 
-// Un autre joueur est-il a bord (au volant ou passager) ?
+// Places reservees a l'appui sur F : un autre joueur qui est EN TRAIN de monter dans ce vehicule (son etat recu :
+// enterId, enterSeat 0 volant / 1 passager) le "tient" deja. Avant, deux joueurs appuyant sur F en meme temps sur
+// une voiture vide montaient tous deux au volant, chacun chez soi : les deux parties se desynchronisaient.
+static int OtherEntering(void *v, bool driverOnly)
+{
+    uint32_t id = NetVehicleId(v);
+    if (!id) return -1;
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (i == g_localId || !g_players[i].connected || GetTickCount() - g_players[i].lastStateAt > 1500) continue;
+        const MsgState &s = g_players[i].state;
+        if (!s.inVehicle && s.enterId == id && (!driverOnly || s.enterSeat == 0)) return i;
+    }
+    return -1;
+}
+
+// Un autre joueur est-il a bord (au volant ou passager), ou en train d'y monter ?
 static bool PlayerAboard(void *v)
 {
     if (VehDriver(v) && IsPuppet(VehDriver(v))) return true;
     for (int i = 0; i < 8; i++) if (VehPassenger(v, i) && IsPuppet(VehPassenger(v, i))) return true;
-    return false;
+    return OtherEntering(v, false) >= 0;
 }
 
 // Touche F (ou G) : pres d'un vehicule ou se trouve un autre joueur (a moins de 6 m), on s'installe a la premiere
@@ -954,10 +969,36 @@ static bool PlayerAboard(void *v)
 // (SET_CHAR_OBJ_ENTER_CAR_AS_PASSENGER 01D4 / LEAVE_CAR 01D3). S'il ne bouge pas (le joueur ne suit pas toujours les
 // objectifs) ou que ca traine, on le pose directement comme avant.
 
+// Monter en passager pendant qu'un autre joueur monte au volant : on attend qu'il soit assis. Entre par la portiere
+// passager (la plus proche de lui), il "glisse" jusqu'au volant et le jeu sortait le passager deja assis.
+static void *g_deferBoard;
+static uint32_t g_deferSince;
+
 static void BoardingFrame()
 {
     void *me = FindPlayerPed();
     uint32_t now = GetTickCount();
+    if (g_deferBoard && me) {
+        void *v = g_deferBoard;
+        bool seated = VehDriver(v) && IsPuppet(VehDriver(v));
+        if (seated || OtherEntering(v, true) < 0 || now - g_deferSince > 6000) {
+            g_deferBoard = NULL;
+            Log("coop : le conducteur est %s, je monte en passager", seated ? "assis" : "parti ou trop lent");
+            TogglePassenger();
+        }
+    }
+    // Deux joueurs vers le meme volant au meme moment : le plus petit numero (l'hote d'abord) le garde, l'autre
+    // (nous) passe passager ; de meme si un autre joueur s'y est deja assis entre-temps.
+    if (me && !g_boarding && !InVehicle(me) && PedVehicle(me) && EnteringState(PedState(me)) && Field<int>(me, 0x164) != 0x11) {
+        void *v = PedVehicle(me);
+        int other = OtherEntering(v, true);
+        bool taken = VehDriver(v) && IsPuppet(VehDriver(v));
+        if (taken || (other >= 0 && other < g_localId)) {
+            AbortEnter(me);
+            Log("coop : volant %s par le joueur %d, je monte en passager", taken ? "pris" : "reserve", taken ? PuppetPlayer(VehDriver(v)) : other);
+            TogglePassenger();
+        }
+    }
     if (g_boarding && me) {
         bool in = InVehicle(me) && PedVehicle(me) == g_boarding;
         bool moving = EnteringState(PedState(me));
@@ -998,7 +1039,7 @@ bool TogglePassenger()
 {
     void *me = FindPlayerPed();
     if (!me) return false;
-    if (g_boarding || g_leaving) return true;   // deja en cours
+    if (g_boarding || g_leaving || g_deferBoard) return true;   // deja en cours
     if (InVehicle(me)) {
         void *veh = PedVehicle(me);
         if (veh && SeatOf(veh, me) > 0) {
@@ -1023,6 +1064,13 @@ bool TogglePassenger()
         if (d < bestD) { bestD = d; best = v; }
     }
     if (!best) return false;
+    if (!VehDriver(best) && OtherEntering(best, true) >= 0) {   // il monte au volant : on attend qu'il soit assis
+        g_deferBoard = best;
+        RegisterReference(best, &g_deferBoard);
+        g_deferSince = GetTickCount();
+        Log("coop : le joueur %d monte au volant, j'attends qu'il soit assis pour monter en passager", OtherEntering(best, true));
+        return true;
+    }
     int seat = VehDriver(best) ? 1 : 0;
     if (seat && Field<uint8_t>(best, 0x1CC) >= Field<uint8_t>(best, 0x1D0)) { Log("coop : plus de place dans ce vehicule"); return true; }
     // Pres de la portiere : la sequence animee du jeu ; loin : pose directement (la marche de l'IA n'avance pas).
@@ -1144,6 +1192,7 @@ void CoopFrame()
     if (inGame) { KeepAIOffPlayerCars(); HostPoliceChasesGuests(); }
     if (inGame) { CameraFrame(); PassengerShooting(); }
     VehiclesFrame(inGame);
+    ObjSyncFrame(inGame);
     EntitiesFrame(inGame);
     MirrorFrame(inGame);
     OverlayFrame(inGame);
