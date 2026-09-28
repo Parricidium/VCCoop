@@ -158,6 +158,9 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   bike with its lights on gets a real headlight beam (the game only painted a light patch on the ground).
 - **Moon shadows** (`OmbresLune`): at night the game's moon (visible from 0:00 to 6:00, veiled by clouds,
   rain and fog) casts soft bluish shadows, weaker than the sun's.
+- **Ambient occlusion** (`OcclusionAmbiante`, modern renderer): corners, the foot of walls, palm trees and
+  characters, and the underside of cars get a soft contact shade (screen-space, edge-aware blur, fades out
+  after 90 m).
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -377,6 +380,9 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   qu'une tache lumineuse au sol).
 - **Ombres de la lune** (`OmbresLune`) : la nuit, la lune du jeu (visible de 0 h à 6 h, voilée par les nuages,
   la pluie et le brouillard) projette des ombres douces et bleutées, plus faibles que celles du soleil.
+- **Occlusion ambiante** (`OcclusionAmbiante`, rendu moderne) : les coins, le pied des murs, des palmiers et des
+  personnages, le dessous des voitures reçoivent une ombre de contact douce (calculée à l'écran, flou qui
+  respecte les bords, s'efface après 90 m).
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont

@@ -64,6 +64,7 @@ static void LoadConfig()
     if (g_cfg.lightShadows < 0) g_cfg.lightShadows = 0;
     if (g_cfg.lightShadows > 4) g_cfg.lightShadows = 4;
     g_cfg.moonShadows = GetPrivateProfileIntA("VCCoop", "OmbresLune", 1, ini) != 0;
+    g_cfg.ambientOcclusion = GetPrivateProfileIntA("VCCoop", "OcclusionAmbiante", 1, ini) != 0;
     g_cfg.captureSecs = GetPrivateProfileIntA("VCCoop", "CaptureRendu", 0, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;

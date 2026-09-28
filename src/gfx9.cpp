@@ -455,7 +455,7 @@ float4 PsRefl(ROut i) : COLOR {
 }
 
 sampler2D sRefl : register(s2);
-float4 gWRefl : register(c10);    // x = reflet disponible, y = force
+float4 gWRefl : register(c10);    // x = reflet disponible, y = force, z = hauteur du plan du miroir
 
 float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
@@ -487,8 +487,11 @@ float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
   float reflK = 0.6;
   if (gWRefl.x > 0.5) {
     // Reflet de la scene (batiments, palmiers, bateaux, voitures), deforme par les vagues ; le ciel la ou il n'y a rien.
-    float4 rs = tex2Dlod(sRefl, float4(uv + N.xy * 0.035 * (0.4 + 0.6 * detail), 0, 0));
-    refl = lerp(sky, rs.rgb, rs.a * saturate(thick2 / 1.2));   // pas sur le liseré du rivage (plage reflétée en escalier)
+    // Deformation faible et qui diminue au loin : plus forte, le reflet d'un rocher ou d'un quai se decollait de
+    // l'objet et tremblait a cote de lui.
+    float4 rs = tex2Dlod(sRefl, float4(uv + N.xy * 0.010 * detail, 0, 0));
+    float onPlane = saturate(1 - abs(i.world.z - gWRefl.z) / 0.6);   // piscine, bassin : autre hauteur, ciel seul
+    refl = lerp(sky, rs.rgb, rs.a * onPlane * saturate(thick2 / 1.2));   // pas sur le liseré du rivage (plage reflétée en escalier)
     reflK = gWRefl.y;
   }
   col = lerp(col, refl, saturate(fres * reflK));
@@ -503,6 +506,69 @@ float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
   float fog = saturate((dist - gWFog.x) / max(gWFog.y - gWFog.x, 1));
   col = lerp(col, gFogCol.rgb, fog);
   return float4(col, 1);
+}
+)HLSL" R"HLSL(
+// ---- occlusion ambiante : coins, pieds des murs, dessous des voitures, des bancs et des arbres assombris
+row_major float4x4 gAoVP : register(c30);   // monde -> clip (camera principale)
+float4 gAo : register(c34);                  // rayon (m), force, distance de fin (m)
+sampler2D sAO : register(s1);
+
+float4 PsAO(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return 1;
+  float w0 = d * gProj.z;
+  if (w0 > gAo.z) return 1;
+  float3 P = WorldAt(uv, d);
+  float2 dx = float2(gScreen.z, 0), dy = float2(0, gScreen.w);
+  float dl = tex2Dlod(sDepth, float4(uv - dx, 0, 0)).r, dr = tex2Dlod(sDepth, float4(uv + dx, 0, 0)).r;
+  float du = tex2Dlod(sDepth, float4(uv - dy, 0, 0)).r, dd = tex2Dlod(sDepth, float4(uv + dy, 0, 0)).r;
+  float3 ex = abs(dr - d) < abs(d - dl) ? WorldAt(uv + dx, dr) - P : P - WorldAt(uv - dx, dl);
+  float3 ey = abs(dd - d) < abs(d - du) ? WorldAt(uv + dy, dd) - P : P - WorldAt(uv - dy, du);
+  float3 N = normalize(cross(ey, ex));
+  if (dot(N, gCam.xyz - P) < 0) N = -N;
+  // Rotation differente sur chaque case d'une grille 4x4 : le flou 4x4 qui suit fait la moyenne des 16.
+  float2 cell = fmod(floor(vpos), 4);
+  float idx = cell.x * 4 + cell.y;
+  float rot = idx * 0.39269908;
+  float jit = frac(idx * 0.618034);
+  float3 T = normalize(abs(N.z) < 0.9 ? cross(N, float3(0, 0, 1)) : cross(N, float3(1, 0, 0)));
+  float3 B = cross(N, T);
+  float R = gAo.x;
+  float occ = 0;
+  [unroll] for (int k = 0; k < 12; k++) {
+    float u = (k + jit) / 12;
+    float a = rot + k * 2.3999632;
+    float3 dir = (T * cos(a) + B * sin(a)) * sqrt(u) + N * sqrt(1 - u);   // hemisphere, plus dense vers la normale
+    float sc = lerp(0.15, 1, ((k + 1) / 12.0) * ((k + 1) / 12.0));      // plus d'echantillons pres du point
+    float4 c = mul(float4(P + N * 0.03 + dir * R * sc, 1), gAoVP);
+    float2 su = c.xy / max(c.w, 0.05) * float2(0.5, -0.5) + 0.5;
+    float sw = tex2Dlod(sDepth, float4(su, 0, 0)).r * gProj.z;
+    float hit = (c.w - sw > 0.04 && c.w > 0.05 && all(su > 0) && all(su < 1)) ? 1 : 0;
+    occ += hit * saturate(R / max(abs(w0 - sw), 0.001));   // pas d'ombre d'un objet loin devant
+  }
+  float ao = 1 - occ / 12 * gAo.y;
+  ao = lerp(ao, 1, saturate((w0 - gAo.z * 0.6) / (gAo.z * 0.4)));   // s'efface au loin
+  return float4(ao, ao, ao, 1);
+}
+
+// Flou 4x4 qui respecte les bords (profondeur) : enleve le motif des rotations sans baver sur les silhouettes.
+float4 PsAOBlur(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d0 = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d0 >= 0.999) return 1;
+  float sum = 0, wsum = 0;
+  [unroll] for (int y = -2; y < 2; y++) {
+    [unroll] for (int x = -2; x < 2; x++) {
+      float2 o = uv + float2(x, y) * gScreen.zw;
+      float dk = tex2Dlod(sDepth, float4(o, 0, 0)).r;
+      float wk = saturate(1 - abs(dk - d0) / (d0 * 0.03 + 0.0002));
+      sum += tex2Dlod(sAO, float4(o, 0, 0)).r * wk;
+      wsum += wk;
+    }
+  }
+  float ao = sum / max(wsum, 0.001);
+  return float4(ao, ao, ao, 1);
 }
 )HLSL";
 
@@ -558,6 +624,9 @@ static IDirect3DTexture9 *g_lightAtlas;
 static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
 static IDirect3DVertexShader9 *g_vsRefl[8];   // selon le format : normale (1), couleur (2), uv (4)
 static IDirect3DPixelShader9 *g_psRefl;
+static IDirect3DPixelShader9 *g_psAO, *g_psAOBlur;
+static IDirect3DTexture9 *g_ao;          // occlusion ambiante avant le flou
+static IDirect3DSurface9 *g_aoSurf;
 static IDirect3DTexture9 *g_refl;
 static IDirect3DSurface9 *g_reflSurf, *g_reflDs;
 enum { LIGHT_TILE = 1024 };
@@ -591,6 +660,8 @@ static bool CreateShaders()
     for (int v = 0; v < 2; v++) g_vsSpot[v] = (IDirect3DVertexShader9 *)CompileShader("VsSpot", "vs_3_0", v == 1);
     for (int v = 0; v < 8; v++) g_vsRefl[v] = (IDirect3DVertexShader9 *)CompileReflShader(v);
     g_psRefl = (IDirect3DPixelShader9 *)CompileShader("PsRefl", "ps_3_0", false);
+    g_psAO = (IDirect3DPixelShader9 *)CompileShader("PsAO", "ps_3_0", false);
+    g_psAOBlur = (IDirect3DPixelShader9 *)CompileShader("PsAOBlur", "ps_3_0", false);
     g_vsWater = (IDirect3DVertexShader9 *)CompileShader("VsWater", "vs_3_0", false);
     g_psWater = (IDirect3DPixelShader9 *)CompileShader("PsWater", "ps_3_0", false);
     g_shadersOk = g_vsLight[0] && g_vsLight[1] && g_vsView[0] && g_vsView[1] && g_psDepth[0] && g_psDepth[1] && g_vsQuad && g_psMask;
@@ -605,6 +676,7 @@ static void ReleaseResources()
     SafeRelease(g_refractSurf); SafeRelease(g_refract);
     SafeRelease(g_lightAtlasSurf); SafeRelease(g_lightAtlas); SafeRelease(g_lightAtlasDs);
     SafeRelease(g_reflSurf); SafeRelease(g_refl); SafeRelease(g_reflDs);
+    SafeRelease(g_aoSurf); SafeRelease(g_ao);
     SafeRelease(g_replayVb); SafeRelease(g_replayIb);
     SafeRelease(g_state);
     g_replayVbSize = g_replayIbSize = 0;
@@ -644,6 +716,9 @@ static bool CreateResources()
         SUCCEEDED(g_dev->CreateDepthStencilSurface(g_width / 2, g_height / 2, D3DFMT_D24X8, D3DMULTISAMPLE_NONE, 0, TRUE, &g_reflDs, NULL)))
         g_refl->GetSurfaceLevel(0, &g_reflSurf);
     else { SafeRelease(g_refl); SafeRelease(g_reflDs); Log("rendu : cible des reflets impossible"); }
+    if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &g_ao, NULL)))
+        g_ao->GetSurfaceLevel(0, &g_aoSurf);
+    else Log("rendu : cible de l'occlusion ambiante impossible");
     if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_state))) { Log("rendu : bloc d'etats impossible"); ReleaseResources(); return false; }
     g_resourcesFailed = false;
     g_resourcesOk = true;
@@ -719,7 +794,8 @@ static bool Outdoors()
 static bool ShadowsWanted() { return (g_cfg.sunShadows || g_cfg.moonShadows) && GameState() == GS_PLAYING && Outdoors(); }   // interieurs : pas de soleil
 static bool LightsWanted() { return g_cfg.dynLights && GameState() == GS_PLAYING; }
 static bool WaterWanted() { return g_cfg.modernWater && GameState() == GS_PLAYING && g_shadersOk && g_psWater; }
-static bool RecordingWanted() { return ShadowsWanted() || LightsWanted() || WaterWanted(); }
+static bool AoWanted() { return g_cfg.ambientOcclusion && GameState() == GS_PLAYING; }
+static bool RecordingWanted() { return ShadowsWanted() || LightsWanted() || WaterWanted() || AoWanted(); }
 
 static float g_sunK;          // force des ombres de cette image (0 : rien a faire)
 static Vec3 g_sun;            // vers le soleil, ou la lune la nuit (lisse)
@@ -1243,11 +1319,13 @@ static void Apply()
     ChooseMainView();
     bool shadows = ShadowsWanted() && g_sunK > 0.01f;
     bool lights = LightsWanted() && g_lightCount > 0;
-    if (g_recs.empty() || !g_haveMain || (!shadows && !lights) || !CreateResources()) return;
+    bool aoWanted = AoWanted();
+    if (g_recs.empty() || !g_haveMain || (!shadows && !lights && !aoWanted) || !CreateResources()) return;
     if (lights && !g_psLights) lights = false;
+    bool ao = aoWanted && g_psAO && g_psAOBlur && g_aoSurf;
     int receivers = 0;
     for (const Rec &r : g_recs) receivers += r.receiver;
-    if (receivers < 20 || (!shadows && !lights)) return;
+    if (receivers < 20 || (!shadows && !lights && !ao)) return;
 
     // Camera principale.
     M4 view, proj, vp, invVp;
@@ -1345,13 +1423,40 @@ static void Apply()
     g_dev->SetVertexShader(g_vsQuad);
     g_dev->SetFVF(D3DFVF_XYZW);
     static const float tri[12] = { -1, -1, 0.5f, 1, -1, 3, 0.5f, 1, 3, -1, 0.5f, 1 };
-    if (shadows && g_debugMask != 2) {
+    if (shadows && g_debugMask != 2 && g_debugMask != 3) {
         g_dev->SetPixelShader(g_psMask);
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
 
+    // 3b. Occlusion ambiante : calculee dans g_ao (rotations en grille 4x4), puis floutee en multipliant l'image.
+    if (ao) {
+        float ac[5 * 4] = {};
+        memcpy(ac, vp.m, 64);
+        ac[16] = 1.2f; ac[17] = 0.85f; ac[18] = 90.0f;   // rayon (m), force, fin (m)
+        g_dev->SetPixelShaderConstantF(30, ac, 5);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+        g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+        g_dev->SetRenderTarget(0, g_aoSurf);
+        g_dev->SetPixelShader(g_psAO);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+        g_dev->SetRenderTarget(0, oldRt);
+        g_dev->SetViewport(&full);
+        g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0x7);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, g_debugMask == 3 ? FALSE : TRUE);
+        g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
+        g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_SRCCOLOR);
+        g_dev->SetTexture(1, g_ao);
+        g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(1, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+        g_dev->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        g_dev->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        g_dev->SetPixelShader(g_psAOBlur);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+    }
+
     // 4. Lumieres dynamiques : image x (1 + lumiere recue), les plus proches avec leur ombre.
-    if (lights) {
+    if (lights && g_debugMask != 3) {
         float amb = 0.22f + 0.78f * SkyLum();   // clarte ambiante de la scene (nuit : ~0,25)
         float lc[4] = { (float)g_lightCount, 0.4f, (float)g_shadowLights, amb };
         g_dev->SetPixelShaderConstantF(29, lc, 1);
@@ -1412,8 +1517,8 @@ static void Apply()
         lastLog = GetTickCount();
         int dyn = 0;
         for (const Rec &r : g_recs) dyn += r.replayVb;
-        Log("rendu : %d cameras (principale %d dessins) ; %d lumieres (%d avec ombre) ; %s ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
-            g_viewCount, g_mainIdx >= 0 ? g_views[g_mainIdx].count : 0, lights ? g_lightCount : 0, g_shadowLights, g_moon ? "lune" : "soleil", g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
+        Log("rendu : %d cameras (principale %d dessins) ; occlusion %s ; %d lumieres (%d avec ombre) ; %s ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
+            g_viewCount, g_mainIdx >= 0 ? g_views[g_mainIdx].count : 0, ao ? "oui" : "non", lights ? g_lightCount : 0, g_shadowLights, g_moon ? "lune" : "soleil", g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
             g_why[0], g_why[1], g_why[2], g_why[3], g_why[4], g_why[5], g_why[6], g_why[7]);
     }
 }
@@ -1454,35 +1559,58 @@ bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
 
 static float SkyChan(uintptr_t a) { int v = *(int *)a; return (v < 0 ? 0 : v > 255 ? 255 : v) / 255.0f; }
 
-// Hauteur de l'eau : moyenne des sommets d'eau notes (tampons dynamiques) ; 6 m sinon (niveau de la mer du jeu).
+// Hauteur de l'eau (plan du miroir) : 6 m tant qu'aucun sommet d'eau n'est lisible.
 static float g_waterLevel = 6.0f;
-static void UpdateWaterLevel()
+static void UpdateWaterLevel(const Vec3 &cam)
 {
-    // Hauteur la plus frequente (cases de 25 cm) : les pentes sous-marines dessinees avec l'eau faussaient la moyenne.
-    static int bins[1000];
+    // Hauteur la plus frequente (cases de 25 cm), en coordonnees du monde (matrice du dessin appliquee : les sommets
+    // bruts de la mer au loin sont locaux, le plan tombait 6 m trop bas et les reflets flottaient a cote des objets),
+    // l'eau proche de la camera comptant davantage (c'est elle qu'on voit refleter).
+    static float bins[1000], sumZ[1000];
     memset(bins, 0, sizeof(bins));
+    memset(sumZ, 0, sizeof(sumZ));
     int n = 0;
     for (const Rec &r : g_recs) {
         if (!r.water || !r.replayVb || r.stride < 12) continue;
+        const float *m = r.world;
         UINT first = r.d.indexed ? r.d.baseVertex + r.d.minIndex : r.d.start;
         UINT cnt = r.d.indexed ? r.d.numVerts : VertexCount(r.d.type, r.d.count);
-        for (UINT k = 0; k < cnt && n < 4000 && (first + k + 1) * r.stride <= g_cpuVb.size(); k += 3) {
-            float z = ((const float *)(g_cpuVb.data() + (first + k) * r.stride))[2];
-            if (z > -50 && z < 200) { bins[(int)((z + 50.0f) * 4.0f)]++; n++; }
+        for (UINT k = 0; k < cnt && n < 6000 && (first + k + 1) * r.stride <= g_cpuVb.size(); k += 3) {
+            const float *v = (const float *)(g_cpuVb.data() + (first + k) * r.stride);
+            float x = v[0] * m[0] + v[1] * m[4] + v[2] * m[8] + m[12];
+            float y = v[0] * m[1] + v[1] * m[5] + v[2] * m[9] + m[13];
+            float z = v[0] * m[2] + v[1] * m[6] + v[2] * m[10] + m[14];
+            if (z <= -50 || z >= 200) continue;
+            float dx = x - cam.x, dy = y - cam.y;
+            float wgt = 1.0f / (1.0f + sqrtf(dx * dx + dy * dy) / 40.0f);
+            int b = (int)((z + 50.0f) * 4.0f);
+            bins[b] += wgt;
+            sumZ[b] += z * wgt;
+            n++;
         }
     }
     if (n <= 8) return;
     int best = 0;
     for (int i = 1; i < 1000; i++) if (bins[i] > bins[best]) best = i;
-    g_waterLevel = best / 4.0f - 50.0f + 0.125f;
+    // Les sommets de l'eau du jeu montent et descendent avec ses vagues : moyenne sur +-1 m autour du pic, puis
+    // lissee dans le temps (sinon le plan sautait de 25 cm d'une image a l'autre et tout le reflet tremblait).
+    float w = 0, sz = 0;
+    for (int i = best - 4; i <= best + 4; i++) if (i >= 0 && i < 1000) { w += bins[i]; sz += sumZ[i]; }
+    float level = sz / w;
+    static uint32_t last;
+    uint32_t now = GetTickCount();
+    float dt = (now - last) / 1000.0f;
+    last = now;
+    if (fabsf(level - g_waterLevel) > 1.5f || dt > 1.0f) g_waterLevel = level;   // autre plan d'eau : tout de suite
+    else g_waterLevel += (level - g_waterLevel) * (dt < 0.5f ? dt * 2.0f : 1.0f);
 }
 
 // Reflet : la scene notee jusqu'ici redessinee vue en miroir sous la surface (z -> 2h - z), a demi-resolution ; alpha 0
 // la ou il n'y a rien (le ciel du cycle du jour y est mis par le shader de l'eau).
-static bool RenderReflection(const M4 &vp)
+static bool RenderReflection(const M4 &vp, const Vec3 &cam)
 {
     if (!g_cfg.waterReflections || !g_reflSurf || !g_psRefl) return false;
-    UpdateWaterLevel();
+    UpdateWaterLevel(cam);
     float h = g_waterLevel;
     M4 mirror = Identity4();
     mirror.m[10] = -1; mirror.m[14] = 2 * h;
@@ -1556,7 +1684,7 @@ static void DrawModernWater()
     SetCommonStates();
     RenderScreenDepth(vp, false);                                   // le fond, sans l'eau
     g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_LINEAR);   // l'image sous l'eau
-    bool reflected = RenderReflection(vp);
+    bool reflected = RenderReflection(vp, cam);
 
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
@@ -1592,7 +1720,7 @@ static void DrawModernWater()
     pc[28] = 0.10f; pc[29] = 0.82f; pc[30] = 0.76f;   // eau peu profonde : turquoise clair
     pc[32] = 0.02f; pc[33] = 0.38f; pc[34] = 0.50f;   // au large : bleu-vert des Caraibes
     pc[36] = day;
-    float wr[4] = { reflected ? 1.0f : 0.0f, 0.85f, 0, 0 };
+    float wr[4] = { reflected ? 1.0f : 0.0f, 0.85f, g_waterLevel, 0 };
     g_dev->SetPixelShaderConstantF(0, pc, 10);
     g_dev->SetPixelShaderConstantF(10, wr, 1);
     g_dev->SetVertexShader(g_vsWater);
