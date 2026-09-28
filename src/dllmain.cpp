@@ -80,6 +80,24 @@ static void LoadConfig()
     g_cfg.borderless = GetPrivateProfileIntA("VCCoop", "Fenetre", 1, ini) == 2;
     g_cfg.widescreen = GetPrivateProfileIntA("VCCoop", "GrandEcran", 1, ini) != 0;
 
+    // Pseudo, adresse, port et tenue : dans vccoop-joueur.ini (absent du paquet, une mise a jour ne les efface pas).
+    // Premier lancement : repris de vccoop.ini.
+    const char *pj = PlayerIniPath();
+    if (GetFileAttributesA(pj) == INVALID_FILE_ATTRIBUTES) {
+        char port[16];
+        wsprintfA(port, "%d", g_cfg.port);
+        WritePrivateProfileStringA("VCCoop", "Pseudo", g_cfg.playerName, pj);
+        WritePrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, pj);
+        WritePrivateProfileStringA("VCCoop", "Port", port, pj);
+        WritePrivateProfileStringA("VCCoop", "Tenue", g_cfg.skin, pj);
+        Log("reglages : %s cree (pseudo, adresse, port et tenue repris de vccoop.ini)", pj);
+    } else {
+        GetPrivateProfileStringA("VCCoop", "Pseudo", g_cfg.playerName, g_cfg.playerName, sizeof(g_cfg.playerName), pj);
+        GetPrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, g_cfg.address, sizeof(g_cfg.address), pj);
+        g_cfg.port = GetPrivateProfileIntA("VCCoop", "Port", g_cfg.port, pj);
+        GetPrivateProfileStringA("VCCoop", "Tenue", g_cfg.skin, g_cfg.skin, sizeof(g_cfg.skin), pj);
+    }
+
     // Ligne de commande (raccourcis Heberger / Rejoindre) : -vccoop hote | -vccoop invite <adresse>
     const char *cmd = GetCommandLineA();
     g_cfg.testMenu = GetPrivateProfileIntA("VCCoop", "TestMenu", 0, ini);
@@ -93,7 +111,10 @@ static void LoadConfig()
         if (_stricmp(role, "hote") == 0) g_cfg.host = true;
         else if (_stricmp(role, "invite") == 0) {
             g_cfg.host = false;
-            if (addr[0] && addr[0] != '-') lstrcpynA(g_cfg.address, addr, sizeof(g_cfg.address));
+            if (addr[0] && addr[0] != '-') {
+                lstrcpynA(g_cfg.address, addr, sizeof(g_cfg.address));
+                WritePrivateProfileStringA("VCCoop", "Adresse", g_cfg.address, pj);   // retrouvee dans le menu la prochaine fois
+            }
         }
     }
 }

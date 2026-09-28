@@ -284,9 +284,7 @@ static void CloseMenu(bool keep)
     if (!keep && _stricmp(PedOutfit(FindPlayerPed()), g_menuOriginal) != 0) ApplySkin(g_menuOriginal);
     if (keep) {
         lstrcpynA(g_cfg.skin, PedOutfit(FindPlayerPed()), sizeof(g_cfg.skin));
-        char ini[MAX_PATH];
-        lstrcpynA(ini, IniPath(), MAX_PATH);
-        WritePrivateProfileStringA("VCCoop", "Tenue", g_cfg.skin, ini);
+        WritePrivateProfileStringA("VCCoop", "Tenue", g_cfg.skin, PlayerIniPath());   // a part : gardee aux mises a jour
         Log("tenues : %s choisie", g_cfg.skin);
     }
     int32_t on[2] = { 0, 1 };

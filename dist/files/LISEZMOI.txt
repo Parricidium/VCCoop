@@ -18,14 +18,17 @@ INSTALLATION
 ------------
 1. Copier tous les fichiers de ce zip dans le dossier du jeu (a cote de
    gta-vc.exe). Conseil : faire une copie du dossier du jeu pour la coop.
-2. Ouvrir vccoop.ini et mettre son pseudo.
+2. Mettre son pseudo : menu COOP > Pseudo (ou dans vccoop.ini).
+   Pseudo, adresse de l'hote, port et tenue sont gardes dans
+   vccoop-joueur.ini : une mise a jour du mod ne les efface plus.
 
 JOUER
 -----
 - Lancer le jeu normalement (gta-vc.exe). Dans le menu principal : COOP.
 - L'hote choisit "Creer une partie", puis confirme la nouvelle partie.
 - Les autres mettent leur "Pseudo", puis Rejoindre > "Adresse" (IP de
-  l'hote : Entree, taper l'adresse, Entree) > "Se connecter" : une fois
+  l'hote : Entree, taper ou coller l'adresse avec Ctrl+V, Entree) >
+  "Se connecter" : une fois
   connectes, ils suivent l'hote tout seuls.
 - Sans passer par COOP, le jeu reste en solo.
 - Raccourcis possibles : "VCCoop - Heberger.cmd" / "VCCoop - Rejoindre.cmd".

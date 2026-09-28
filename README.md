@@ -56,7 +56,8 @@ other players by themselves.
 2. Download `VCCoop-<version>.zip` from the [releases](https://github.com/Parricidium/VCCoop/releases).
 3. Unzip everything into the game's folder, next to `gta-vc.exe` (tip: make a copy of the game folder
    for co-op). The mod is a `dinput8.dll` proxy: nothing else in the game is modified.
-4. Open `vccoop.ini` and set your nickname.
+4. Set your nickname: COOP menu > **Nickname** (or in `vccoop.ini`). Nickname, host address, port and outfit
+   are kept in `vccoop-joueur.ini` (not in the package): updating the mod no longer resets them.
 
 **Updating**: unzip the new version over the old one. Everybody must run the same version (the
 network protocol is checked when joining).
@@ -71,7 +72,7 @@ Start `gta-vc.exe` normally. Main menu > **COOP**:
 | | |
 |---|---|
 | **Host a game** | Opens the lobby with the list of connected players. **New game** or **Load a game**: the guests follow you by themselves (your save is sent to them). |
-| **Join** | **Address** (the host's IP: Enter, type, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
+| **Join** | **Address** (the host's IP: Enter, type or paste with **Ctrl+V**, Enter), then **Connect**. You wait in the lobby and enter the game when the host does. |
 | **Nickname** | Your name, set before hosting or joining. |
 | **Options** | **Coop options**: friendly fire, shared money, nicknames, keep weapons after death. **Video options**: draw distance (100 to 400 %), anti-aliasing (2x to 8x, taken at the next launch), anisotropic filtering, sun shadows and their quality, modern water, dynamic lights, light shadows, moon shadows, modern renderer (next launch). Video options are set here or in game with **Esc > COOP**; the host also has *Coop options* in the lobby and in game. |
 
@@ -277,11 +278,12 @@ dossier sont chargés par le jeu et envoyés tout seuls aux autres joueurs.
 2. Télécharger `VCCoop-<version>.zip` dans les [releases](https://github.com/Parricidium/VCCoop/releases).
 3. Tout décompresser dans le dossier du jeu, à côté de `gta-vc.exe` (conseil : faire une copie du
    dossier du jeu pour la coop). Le mod est un `dinput8.dll` : rien d'autre n'est modifié.
-4. Ouvrir `vccoop.ini` et mettre son pseudo.
+4. Mettre son pseudo : menu COOP > **Pseudo** (ou dans `vccoop.ini`).
 
 **Mise à jour** : décompresser la nouvelle version par-dessus. Tout le monde doit avoir la même
 version (vérifiée à la connexion). Les sauvegardes et réglages de la copie coop restent dans le
-dossier du jeu (`SauvegardesLocales=1`), à part du solo.
+dossier du jeu (`SauvegardesLocales=1`), à part du solo. Le pseudo, l'adresse de l'hôte, le port et la tenue
+sont gardés dans `vccoop-joueur.ini` (absent du paquet) : une mise à jour ne les efface pas.
 
 ## Jouer
 
@@ -290,7 +292,7 @@ Lancer `gta-vc.exe` normalement. Menu principal > **COOP** :
 | | |
 |---|---|
 | **Créer une partie** | Ouvre le salon avec la liste des joueurs connectés. **Nouvelle partie** ou **Charger une partie** : les invités suivent tout seuls (la sauvegarde leur est envoyée). |
-| **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
+| **Rejoindre** | **Adresse** (IP de l'hôte : Entrée, taper ou coller avec **Ctrl+V**, Entrée), puis **Se connecter**. On attend dans le salon et on entre en jeu avec l'hôte. |
 | **Pseudo** | Votre nom, à régler avant de créer ou rejoindre. |
 | **Options** | **Options coop** : tir ami, argent partagé, pseudos, garder ses armes après la mort. **Options vidéo** : distance d'affichage (100 à 400 %), anticrénelage (2x à 8x, pris au prochain lancement), filtrage anisotrope, ombres du soleil et leur qualité, eau moderne, lumières dynamiques, ombres des lumières, ombres de la lune, rendu moderne (au prochain lancement). Les options vidéo se règlent ici ou en jeu par **Échap > COOP** ; l'hôte a aussi *Options coop* dans le salon et en jeu. |
 

@@ -48,6 +48,18 @@ const char *IniPath()
     return g_iniPath;
 }
 
+// vccoop-joueur.ini : pseudo, adresse de l'hote, port et tenue, a cote de vccoop.ini. Il n'est pas dans le paquet :
+// installer une nouvelle version (qui remplace vccoop.ini) ne les efface plus.
+const char *PlayerIniPath()
+{
+    static char path[MAX_PATH];
+    if (path[0]) return path;
+    lstrcpynA(path, IniPath(), MAX_PATH);
+    char *slash = strrchr(path, '\\');
+    lstrcpyA(slash ? slash + 1 : path, "vccoop-joueur.ini");
+    return path;
+}
+
 // Chaque partie a aussi son journal dans le dossier logs (vccoop-AAAA-MM-JJ_HH-MM-SS.log), garde : apres un
 // plantage, on relance souvent le jeu avant de penser a envoyer le journal. Les 50 plus recents sont conserves.
 static FILE *g_logKept;
