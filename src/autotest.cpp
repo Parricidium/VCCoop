@@ -292,6 +292,48 @@ void AutotestFrame()
         }
         return;
     }
+    // Autotest=phares : de nuit (TestHeure, 23 h), Tommy au volant d'une voiture a l'arret, une seconde voiture
+    // posee dans le faisceau (ombres des phares).
+    if (_stricmp(g_cfg.autotest, "phares") == 0) {
+        static void *car, *other;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        if (t == 31) {
+            char ini[MAX_PATH], pos[64];
+            lstrcpynA(ini, IniPath(), MAX_PATH);
+            int32_t hm[2] = { (int32_t)GetPrivateProfileIntA("VCCoop", "TestHeure", 23, ini), 30 };
+            MirrorLocal(0x00C0, 2, hm);
+            float xyz[3] = { 250.0f, -1250.0f, 11.0f };
+            GetPrivateProfileStringA("VCCoop", "TestPos", "", pos, sizeof(pos), ini);
+            if (pos[0]) sscanf(pos, "%f,%f,%f", &xyz[0], &xyz[1], &xyz[2]);
+            int32_t p[4] = { 0 };
+            memcpy(p + 1, xyz, 12);
+            MirrorLocal(0x0055, 4, p);
+            Log("autotest : phares, %d h 30", hm[0]);
+        }
+        int MI_CAR = g_cfg.testModel ? g_cfg.testModel : 130;
+        if (!other && t > 90 && t < 140) {
+            if (!HasModelLoaded(MI_CAR)) { RequestModel(MI_CAR, 1); return; }
+            float h = Heading(me), fx = -sinf(h), fy = cosf(h);
+            void *v = VehicleAlloc();
+            AutomobileCtor(v, MI_CAR, 1);
+            Pos(v) = { Pos(me).x + fx * 2.5f, Pos(me).y + fy * 2.5f, Pos(me).z + 0.3f };
+            SetHeadingMatrix(v, h);
+            SetEntityStatus(v, STATUS_ABANDONED);
+            WorldAdd(v);
+            car = v; RegisterReference(v, &car);
+            void *w = VehicleAlloc();
+            AutomobileCtor(w, MI_CAR, 1);
+            Pos(w) = { Pos(me).x + fx * 11.0f + fy * 1.5f, Pos(me).y + fy * 11.0f - fx * 1.5f, Pos(me).z + 0.3f };
+            SetHeadingMatrix(w, h + 1.5708f);
+            SetEntityStatus(w, STATUS_ABANDONED);
+            WorldAdd(w);
+            other = w; RegisterReference(w, &other);
+            Log("autotest : voitures creees");
+        }
+        if (car && t == 170) { WarpIntoSeat(me, car, 0); Log("autotest : au volant (conducteur %d)", VehDriver(car) == me); }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "porte") == 0) {
         static void *car;
         static int lastState = -1;

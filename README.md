@@ -153,7 +153,8 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Dynamic lights** (`LumieresDynamiques`, modern renderer): every light the game registers (street lamps,
   neons, headlights, explosions, fire, muzzle flashes) now lights the scenery per pixel up to 150 m, not only
   the characters and vehicles within 22 m. The 4 most important lights near the camera (`OmbresLumieres`)
-  cast shadows: street lamps down around them, headlights forward (pedestrians, cars, objects).
+  cast shadows: street lamps down around them, headlights forward (pedestrians, cars, objects). Every car and
+  bike with its lights on gets a real headlight beam (the game only painted a light patch on the ground).
 - **Moon shadows** (`OmbresLune`): at night the game's moon (visible from 0:00 to 6:00, veiled by clouds,
   rain and fog) casts soft bluish shadows, weaker than the sun's.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
@@ -369,7 +370,8 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   néons, phares, explosions, feux, tirs) éclairent maintenant le décor par pixel jusqu'à 150 m, et plus
   seulement les personnages et véhicules à moins de 22 m. Les 4 lumières les plus importantes près de la caméra
   (`OmbresLumieres`) projettent des ombres : les lampadaires tout autour vers le bas, les phares vers l'avant
-  (passants, voitures, objets).
+  (passants, voitures, objets). Chaque voiture et moto phares allumés a un vrai faisceau (le jeu ne peignait
+  qu'une tache lumineuse au sol).
 - **Ombres de la lune** (`OmbresLune`) : la nuit, la lune du jeu (visible de 0 h à 6 h, voilée par les nuages,
   la pluie et le brouillard) projette des ombres douces et bleutées, plus faibles que celles du soleil.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
