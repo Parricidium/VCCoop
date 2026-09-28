@@ -687,6 +687,37 @@ static void GuestTrackTimer(uint16_t op, uint16_t offset)
     if (!clear && g_guestTimerCount < 8) g_guestTimers[g_guestTimerCount++] = { offset, op == 0x014E || op == 0x03C3 };
 }
 
+// Animation de cinematique cherchable sans risque : le groupe du jeu (CCutsceneMgr::ms_cutsceneAssociations, 0x97867C)
+// peut garder des entrees vides (modele introuvable au chargement) que sa recherche (0x401190) lit sans verifier.
+static bool CutsceneAnimSafe(const uint8_t *label)
+{
+    char name[9];
+    memcpy(name, label, 8); name[8] = 0;
+    uint8_t *g = (uint8_t *)0x97867C;
+    uint8_t *list = *(uint8_t **)(g + 4);
+    int n = *(int *)(g + 8);
+    if (!*(uint8_t *)0xA10B51 || !list || n <= 0 || n > 512) return false;   // CCutsceneMgr::ms_loaded
+    for (int i = 0; i < n; i++) {
+        const char *h = *(const char **)(list + i * 0x3C + 0x14);
+        if (!h) return false;
+        if (!_stricmp(h, name)) return true;
+    }
+    return false;
+}
+
+// Premier texte (etiquette de 8 octets) d'une commande recue.
+static const uint8_t *FirstLabel(const uint8_t *d, int len)
+{
+    int n = d[3], at = 4;
+    for (int i = 0; i < n && at < len; i++) {
+        char k = (char)d[at++];
+        if (k == 'l') return at + 8 <= len ? d + at : NULL;
+        if (k == 'e') continue;
+        at += (k == 'x' || k == 'y' || k == 'z') ? 6 : 4;
+    }
+    return NULL;
+}
+
 static bool Execute(const uint8_t *d, int len, bool force)
 {
     uint16_t op;
@@ -742,6 +773,16 @@ static bool Execute(const uint8_t *d, int len, bool force)
         bool ready = mi && HasModelLoaded(model) && (!clumpSlot || *(void **)((uint8_t *)mi + 0x28));
         if (!ready) { if (!force) return false; Log("miroir : modele %d de la cinematique pas charge, objet non cree", model); return true; }
     }
+    // Animation d'un objet de cinematique : seulement si le groupe la contient sans entree vide avant elle (sinon
+    // plantage 0x401212 : l'objet reste simplement immobile).
+    if ((op == 0x02E6 || op == 0x02F5 || op == 0x04BC) && d[0] == RL_SCRIPT_CMD) {
+        const uint8_t *label = FirstLabel(d, len);
+        if (!label || !CutsceneAnimSafe(label)) {
+            Log("miroir : animation de cinematique %.8s introuvable (%04X, cinematique %s chargee %d), ignoree", label ? (const char *)label : "?", op, (const char *)0x7EFE08, *(uint8_t *)0xA10B51);
+            return true;
+        }
+    }
+    if (op == 0x02E4 && d[0] == RL_SCRIPT_CMD) { const uint8_t *label = FirstLabel(d, len); Log("miroir : cinematique %.8s de l'hote", label ? (const char *)label : "?"); }
     // Fils du script principal : seulement ceux que rien d'autre ne lance chez l'invite, et une seule fois.
     if (op == 0x004F && d[0] == RL_SCRIPT_CMD && n >= 1 && d[4] == 'v') {
         static const struct { int32_t label; const char *name; } allowed[] = {

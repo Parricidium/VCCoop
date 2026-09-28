@@ -322,6 +322,15 @@ void PlayersFrame(bool inGame)
         for (int i = 0; i < g_skinCount; i++) known |= _stricmp(g_skins[i], g_cfg.skin) == 0;
         if (known && _stricmp(PedOutfit(FindPlayerPed()), g_cfg.skin) != 0) { ApplySkin(g_cfg.skin); Log("tenues : %s remise", g_cfg.skin); }
     }
+    // Test (TestTenueA=N) : la tenue de l'ini remise N s apres l'arrivee (les cinematiques de l'intro la retirent).
+    static uint32_t inGameSince;
+    if (!inGameSince) inGameSince = GetTickCount();
+    static int again = -1;
+    if (again < 0) again = GetPrivateProfileIntA("VCCoop", "TestTenueA", 0, IniPath());
+    if (again > 0 && GetTickCount() - inGameSince > (uint32_t)again * 1000 && g_cfg.skin[0] && !InVehicle(FindPlayerPed())) {
+        again = 0;
+        if (_stricmp(PedOutfit(FindPlayerPed()), g_cfg.skin) != 0) { ApplySkin(g_cfg.skin); Log("tenues : %s remise (test)", g_cfg.skin); }
+    }
     // Autotest=tenue : ouvre le choix 5 s apres l'arrivee, avance d'une tenue toutes les 2 s, garde la 4e.
     if (_stricmp(g_cfg.autotest, "tenue") == 0) {
         static uint32_t start, step;

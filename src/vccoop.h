@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.28z"
+#define VCCOOP_VERSION "2026.09.28za"
 struct Config {
     bool windowed;
     bool borderless;
@@ -74,6 +74,7 @@ void WatchdogFrame();
 
 // script.cpp
 void InstallScriptHooks();
+bool GuestMayStartMission();   // script.cpp : invite au volant d'un vehicule de mission secondaire, ou achat d'immeuble
 bool GuestSideMission();   // invite : il joue une mission secondaire (taxi, ambulance...) chez lui
 bool IsPropertyPickup(uint32_t handle);   // script.cpp : icone d'immeuble creee par le script principal
 void RegisterPropertyPickup(uint32_t handle);   // mirror.cpp : icone "a vendre" recreee par une mission de l'hote
