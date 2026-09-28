@@ -107,6 +107,7 @@ static Vec3 Cross(Vec3 a, Vec3 b) { return { a.y * b.z - a.z * b.y, a.z * b.x - 
 static Vec3 Norm(Vec3 a) { float l = sqrtf(Dot(a, a)); return l > 0 ? Vec3{ a.x / l, a.y / l, a.z / l } : a; }
 static Vec3 Sub(Vec3 a, Vec3 b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
 static Vec3 NormV(Vec3 a) { return Norm(a); }
+static M4 Identity4() { M4 r = {}; r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1; return r; }
 // Vue d'une lumiere (main gauche, comme Direct3D) et projection en perspective.
 static M4 LookDir(Vec3 eye, Vec3 dir)
 {
@@ -367,6 +368,7 @@ float4 PsLights(float2 vpos : VPOS) : COLOR {
   return float4(scene + albedo * light, 1);
 }
 
+)HLSL" R"HLSL(
 // ---- eau moderne
 row_major float4x4 gWorld : register(c4);
 struct WIn { float4 pos : POSITION; };
@@ -410,6 +412,51 @@ float2 WaveSlope(float2 p, float t, float detail) {
   return s;
 }
 
+// ---- reflet : la scene redessinee en miroir sous la surface de l'eau (demi-resolution)
+row_major float4x4 gRWorld : register(c4);
+float4 gRSun : register(c8);      // vers le soleil, w = part ambiante
+struct RIn { float4 pos : POSITION;
+#ifdef HASNORMAL
+  float3 nrm : NORMAL;
+#endif
+#ifdef HASCOLOR
+  float4 col : COLOR0;
+#endif
+#ifdef HASUV
+  float2 uv : TEXCOORD0;
+#endif
+};
+struct ROut { float4 pos : POSITION; float2 uv : TEXCOORD0; float4 col : COLOR0; float wz : TEXCOORD1; };
+ROut VsRefl(RIn i) {
+  ROut o; o.pos = mul(float4(i.pos.xyz, 1), gMat);
+  o.wz = mul(float4(i.pos.xyz, 1), gRWorld).z;
+#ifdef HASUV
+  o.uv = i.uv;
+#else
+  o.uv = 0;
+#endif
+  float4 c = 1;
+#ifdef HASCOLOR
+  c = i.col;
+#endif
+#ifdef HASNORMAL
+  float3 n = normalize(mul(i.nrm, (float3x3)gRWorld));
+  c.rgb *= gRSun.w + (1 - gRSun.w) * saturate(dot(n, gRSun.xyz));
+#endif
+  o.col = c; return o;
+}
+float4 gRAlpha : register(c0);    // seuil, test alpha, texture presente
+float4 gRPlane : register(c1);    // hauteur de l'eau
+float4 PsRefl(ROut i) : COLOR {
+  clip(i.wz - gRPlane.x + 0.1);   // rien de ce qui est sous l'eau
+  float4 t = gRAlpha.z > 0.5 ? tex2D(sTex, i.uv) : 1;
+  if (gRAlpha.y > 0) clip(t.a - gRAlpha.x);
+  return float4((t * i.col).rgb, 1);
+}
+
+sampler2D sRefl : register(s2);
+float4 gWRefl : register(c10);    // x = reflet disponible, y = force
+
 float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
   float3 V = gWCam.xyz - i.world;
@@ -436,7 +483,15 @@ float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
   float3 R = reflect(-V, N);
   float3 sky = lerp(gSkyBottom.rgb, gSkyTop.rgb, saturate(R.z * 1.6));
   float fres = 0.02 + 0.98 * pow(1 - saturate(dot(N, V)), 5);
-  col = lerp(col, sky, saturate(fres * 0.6));
+  float3 refl = sky;
+  float reflK = 0.6;
+  if (gWRefl.x > 0.5) {
+    // Reflet de la scene (batiments, palmiers, bateaux, voitures), deforme par les vagues ; le ciel la ou il n'y a rien.
+    float4 rs = tex2Dlod(sRefl, float4(uv + N.xy * 0.035 * (0.4 + 0.6 * detail), 0, 0));
+    refl = lerp(sky, rs.rgb, rs.a * saturate(thick2 / 1.2));   // pas sur le liseré du rivage (plage reflétée en escalier)
+    reflK = gWRefl.y;
+  }
+  col = lerp(col, refl, saturate(fres * reflK));
   float spec = pow(saturate(dot(R, gWSun.xyz)), 280) * 3 + pow(saturate(dot(R, gWSun.xyz)), 40) * 0.12;
   col += spec * gWSun.w * float3(1, 0.95, 0.85);
   // Ecume le long des rives et autour des objets dans l'eau.
@@ -453,6 +508,26 @@ float4 PsWater(WOut i, float2 vpos : VPOS) : COLOR {
 
 typedef HRESULT(WINAPI *D3DCompile_t)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO *, ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
 static D3DCompile_t g_compile;
+
+static IUnknown *CompileShader(const char *entry, const char *target, bool noUv);
+// Vertex shader du reflet pour un format de sommets : normale (1), couleur (2), uv (4).
+static IUnknown *CompileReflShader(int flags)
+{
+    if (!g_compile) return NULL;
+    D3D_SHADER_MACRO defs[4] = {};
+    int n = 0;
+    if (flags & 1) defs[n++] = { "HASNORMAL", "1" };
+    if (flags & 2) defs[n++] = { "HASCOLOR", "1" };
+    if (flags & 4) defs[n++] = { "HASUV", "1" };
+    ID3DBlob *code = NULL, *err = NULL;
+    HRESULT hr = g_compile(kShaders, sizeof(kShaders) - 1, "vccoop", defs, NULL, "VsRefl", "vs_3_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &err);
+    if (err) { if (FAILED(hr)) Log("rendu : shader VsRefl(%d) refuse : %s", flags, (const char *)err->GetBufferPointer()); err->Release(); }
+    if (FAILED(hr)) return NULL;
+    IDirect3DVertexShader9 *vs = NULL;
+    g_dev->CreateVertexShader((const DWORD *)code->GetBufferPointer(), &vs);
+    code->Release();
+    return vs;
+}
 
 static IUnknown *CompileShader(const char *entry, const char *target, bool noUv)
 {
@@ -481,6 +556,10 @@ static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater;
 static IDirect3DVertexShader9 *g_vsWater, *g_vsSpot[2];
 static IDirect3DTexture9 *g_lightAtlas;
 static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
+static IDirect3DVertexShader9 *g_vsRefl[8];   // selon le format : normale (1), couleur (2), uv (4)
+static IDirect3DPixelShader9 *g_psRefl;
+static IDirect3DTexture9 *g_refl;
+static IDirect3DSurface9 *g_reflSurf, *g_reflDs;
 enum { LIGHT_TILE = 1024 };
 static IDirect3DTexture9 *g_atlas, *g_screenDepth, *g_refract;
 static IDirect3DSurface9 *g_atlasSurf, *g_atlasDs, *g_screenSurf, *g_screenDs, *g_refractSurf;
@@ -510,6 +589,8 @@ static bool CreateShaders()
     g_psMask = (IDirect3DPixelShader9 *)CompileShader("PsMask", "ps_3_0", false);
     g_psLights = (IDirect3DPixelShader9 *)CompileShader("PsLights", "ps_3_0", false);
     for (int v = 0; v < 2; v++) g_vsSpot[v] = (IDirect3DVertexShader9 *)CompileShader("VsSpot", "vs_3_0", v == 1);
+    for (int v = 0; v < 8; v++) g_vsRefl[v] = (IDirect3DVertexShader9 *)CompileReflShader(v);
+    g_psRefl = (IDirect3DPixelShader9 *)CompileShader("PsRefl", "ps_3_0", false);
     g_vsWater = (IDirect3DVertexShader9 *)CompileShader("VsWater", "vs_3_0", false);
     g_psWater = (IDirect3DPixelShader9 *)CompileShader("PsWater", "ps_3_0", false);
     g_shadersOk = g_vsLight[0] && g_vsLight[1] && g_vsView[0] && g_vsView[1] && g_psDepth[0] && g_psDepth[1] && g_vsQuad && g_psMask;
@@ -523,6 +604,7 @@ static void ReleaseResources()
     SafeRelease(g_screenSurf); SafeRelease(g_screenDepth); SafeRelease(g_screenDs);
     SafeRelease(g_refractSurf); SafeRelease(g_refract);
     SafeRelease(g_lightAtlasSurf); SafeRelease(g_lightAtlas); SafeRelease(g_lightAtlasDs);
+    SafeRelease(g_reflSurf); SafeRelease(g_refl); SafeRelease(g_reflDs);
     SafeRelease(g_replayVb); SafeRelease(g_replayIb);
     SafeRelease(g_state);
     g_replayVbSize = g_replayIbSize = 0;
@@ -558,6 +640,10 @@ static bool CreateResources()
         SUCCEEDED(g_dev->CreateDepthStencilSurface(LIGHT_TILE * 2, LIGHT_TILE * 2, D3DFMT_D24X8, D3DMULTISAMPLE_NONE, 0, TRUE, &g_lightAtlasDs, NULL)))
         g_lightAtlas->GetSurfaceLevel(0, &g_lightAtlasSurf);
     else { SafeRelease(g_lightAtlas); SafeRelease(g_lightAtlasDs); Log("rendu : atlas des ombres des lumieres impossible"); }
+    if (SUCCEEDED(g_dev->CreateTexture(g_width / 2, g_height / 2, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &g_refl, NULL)) &&
+        SUCCEEDED(g_dev->CreateDepthStencilSurface(g_width / 2, g_height / 2, D3DFMT_D24X8, D3DMULTISAMPLE_NONE, 0, TRUE, &g_reflDs, NULL)))
+        g_refl->GetSurfaceLevel(0, &g_reflSurf);
+    else { SafeRelease(g_refl); SafeRelease(g_reflDs); Log("rendu : cible des reflets impossible"); }
     if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_state))) { Log("rendu : bloc d'etats impossible"); ReleaseResources(); return false; }
     g_resourcesFailed = false;
     g_resourcesOk = true;
@@ -573,6 +659,8 @@ struct Rec {
     IDirect3DBaseTexture9 *tex;
     UINT stride;
     bool replayVb, replayIb, receiver, mainView;
+    bool recvCand;        // recevrait ombres et lumieres s'il est vu par la camera principale
+    uint8_t viewIdx;      // sa camera (g_views)
     bool caster, water;   // projette une ombre ; surface de l'eau (dessinee par nous)
     GfxDraw d;
     DWORD fvf;
@@ -585,6 +673,23 @@ static std::vector<BYTE> g_cpuVb;
 static std::vector<WORD> g_cpuIb;
 static float g_mainView[16], g_mainProj[16];
 static bool g_haveMain, g_applied;
+// Cameras des dessins de l'image (vue + projection). La principale est celle du plus grand nombre de dessins : avant,
+// c'etait celle du PREMIER dessin, et selon la direction regardee le premier etait l'horizon (projection a part) :
+// presque rien ne "recevait", les ombres sautaient.
+struct ViewEntry { float view[16], proj[16]; int count; };
+static ViewEntry g_views[8];
+static int g_viewCount, g_mainIdx = -1;
+static int ViewIndex(const float *view, const float *proj)
+{
+    for (int i = 0; i < g_viewCount; i++)
+        if (!memcmp(g_views[i].view, view, 64) && !memcmp(g_views[i].proj, proj, 64)) return i;
+    if (g_viewCount >= 8) return 7;
+    ViewEntry &v = g_views[g_viewCount];
+    memcpy(v.view, view, 64); memcpy(v.proj, proj, 64); v.count = 0;
+    return g_viewCount++;
+}
+struct Rec;
+static void ChooseMainView();
 static IDirect3DSurface9 *g_backBuffer;   // tampon arriere de l'image (pour ne noter que les dessins vers lui)
 static int g_after3d;                     // diagnostic : dessins 3D apres la pose du masque
 static int g_why[8];                      // diagnostic : dessins 3D refuses (primitive, z, ecriture z, cible, tampon, dynamique)
@@ -596,6 +701,8 @@ static void ReleaseRecs()
     g_cpuVb.clear();
     g_cpuIb.clear();
     g_haveMain = false;
+    g_viewCount = 0;
+    g_mainIdx = -1;
 }
 
 static UINT VertexCount(UINT type, UINT count)
@@ -650,6 +757,18 @@ static void UpdateSun()
             g_moon = true;
         }
     }
+}
+
+static void ChooseMainView()
+{
+    int best = -1;
+    for (int i = 0; i < g_viewCount; i++) if (best < 0 || g_views[i].count > g_views[best].count) best = i;
+    g_mainIdx = best;
+    g_haveMain = best >= 0;
+    if (best < 0) return;
+    memcpy(g_mainView, g_views[best].view, 64);
+    memcpy(g_mainProj, g_views[best].proj, 64);
+    for (Rec &r : g_recs) { r.mainView = r.viewIdx == best; r.receiver = r.recvCand && r.mainView; }
 }
 
 // ======================================================================= Projeteurs hors champ
@@ -712,6 +831,7 @@ static bool CasterOf(uint8_t *e, const M4 &vp, Vec3 cam, float reach)
 static void ExtraCasters()
 {
     g_extraCasters = 0;
+    ChooseMainView();
     if (!g_dev || g_applied || !g_haveMain || !g_cfg.sunShadows || !ShadowsWanted()) return;
     UpdateSun();
     if (g_sunK <= 0.01f) return;
@@ -731,6 +851,16 @@ static void ExtraCasters()
     g_bridgeCasterOnly = false;
     static int loggedFaults;
     if (g_extraFaults != loggedFaults) { loggedFaults = g_extraFaults; Log("rendu : %d batiments illisibles ignores (projeteurs hors champ)", g_extraFaults); }
+}
+
+static bool g_sceneHooked;
+static void Apply();
+// Fin de RenderScene (appel en 0x4A604A dans Idle) : monde, eau et bateaux dessines ; les effets (particules, halos,
+// interface) viennent apres et ne recoivent pas d'ombre.
+static void __cdecl h_RenderScene()
+{
+    ((void(__cdecl *)())0x4A6570)();
+    if (!g_applied && g_recs.size() >= 20) Apply();
 }
 
 static void __cdecl h_RenderEverythingBarRoads()
@@ -809,7 +939,8 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     r.alphaTest = at || blend;
     r.alphaRef = blend ? 0.5f : (at ? (aref & 255) / 255.0f : 0.0f);
     if (r.alphaTest && r.alphaRef < 0.02f) r.alphaRef = 0.02f;
-    r.receiver = !blend && zw && r.mainView && !g_bridgeCasterOnly;
+    r.recvCand = !blend && zw && !g_bridgeCasterOnly;
+    r.receiver = false;   // fixe par ChooseMainView
     r.caster = true;
     g_recs.push_back(r);
 }
@@ -826,8 +957,9 @@ static bool BuildRec(DWORD fvf, const GfxDraw &d, Rec &r)
     float view[16], proj[16];
     g_dev->GetTransform(D3DTS_VIEW, (D3DMATRIX *)view);
     g_dev->GetTransform(D3DTS_PROJECTION, (D3DMATRIX *)proj);
-    if (!g_haveMain && !g_bridgeCasterOnly) { memcpy(g_mainView, view, 64); memcpy(g_mainProj, proj, 64); g_haveMain = true; }
-    r.mainView = memcmp(view, g_mainView, 64) == 0 && memcmp(proj, g_mainProj, 64) == 0;
+    r.viewIdx = (uint8_t)ViewIndex(view, proj);
+    if (!g_bridgeCasterOnly) { g_views[r.viewIdx].count++; g_haveMain = true; }
+    r.mainView = false;
     if (fvf & D3DFVF_TEXCOUNT_MASK) g_dev->GetTexture(0, &r.tex);
     // Tampons dynamiques (le jeu les reecrit dans l'image) : on garde tout de suite la partie dessinee.
     const BYTE *vm = BridgeVertexMirror(r.vb);
@@ -1108,6 +1240,7 @@ static void Apply()
     FpuGuard fpu;
     g_applied = true;
     UpdateSun();
+    ChooseMainView();
     bool shadows = ShadowsWanted() && g_sunK > 0.01f;
     bool lights = LightsWanted() && g_lightCount > 0;
     if (g_recs.empty() || !g_haveMain || (!shadows && !lights) || !CreateResources()) return;
@@ -1279,8 +1412,8 @@ static void Apply()
         lastLog = GetTickCount();
         int dyn = 0;
         for (const Rec &r : g_recs) dyn += r.replayVb;
-        Log("rendu : %d lumieres (%d avec ombre) ; %s ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
-            lights ? g_lightCount : 0, g_shadowLights, g_moon ? "lune" : "soleil", g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
+        Log("rendu : %d cameras (principale %d dessins) ; %d lumieres (%d avec ombre) ; %s ; ombres : %d projeteurs hors champ ; %d dessins (%d recepteurs, %d dynamiques), %d dans les cascades, soleil %.2f %.2f %.2f force %.2f, brouillard %.0f-%.0f ; %d dessins 3D apres le masque ; refus %d/%d/%d/%d/%d/%d/%d, UP 3D %d",
+            g_viewCount, g_mainIdx >= 0 ? g_views[g_mainIdx].count : 0, lights ? g_lightCount : 0, g_shadowLights, g_moon ? "lune" : "soleil", g_extraCasters, (int)g_recs.size(), receivers, dyn, casters, g_sun.x, g_sun.y, g_sun.z, g_sunK, fogStart, farClip, g_after3d,
             g_why[0], g_why[1], g_why[2], g_why[3], g_why[4], g_why[5], g_why[6], g_why[7]);
     }
 }
@@ -1312,7 +1445,7 @@ bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
     Rec r = {};
     if (BuildRec(fvf, d, r)) {
         r.water = true;
-        r.receiver = r.mainView;
+        r.recvCand = true;
         g_recs.push_back(r);
         g_waterDraws++;
     }
@@ -1321,11 +1454,90 @@ bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
 
 static float SkyChan(uintptr_t a) { int v = *(int *)a; return (v < 0 ? 0 : v > 255 ? 255 : v) / 255.0f; }
 
+// Hauteur de l'eau : moyenne des sommets d'eau notes (tampons dynamiques) ; 6 m sinon (niveau de la mer du jeu).
+static float g_waterLevel = 6.0f;
+static void UpdateWaterLevel()
+{
+    // Hauteur la plus frequente (cases de 25 cm) : les pentes sous-marines dessinees avec l'eau faussaient la moyenne.
+    static int bins[1000];
+    memset(bins, 0, sizeof(bins));
+    int n = 0;
+    for (const Rec &r : g_recs) {
+        if (!r.water || !r.replayVb || r.stride < 12) continue;
+        UINT first = r.d.indexed ? r.d.baseVertex + r.d.minIndex : r.d.start;
+        UINT cnt = r.d.indexed ? r.d.numVerts : VertexCount(r.d.type, r.d.count);
+        for (UINT k = 0; k < cnt && n < 4000 && (first + k + 1) * r.stride <= g_cpuVb.size(); k += 3) {
+            float z = ((const float *)(g_cpuVb.data() + (first + k) * r.stride))[2];
+            if (z > -50 && z < 200) { bins[(int)((z + 50.0f) * 4.0f)]++; n++; }
+        }
+    }
+    if (n <= 8) return;
+    int best = 0;
+    for (int i = 1; i < 1000; i++) if (bins[i] > bins[best]) best = i;
+    g_waterLevel = best / 4.0f - 50.0f + 0.125f;
+}
+
+// Reflet : la scene notee jusqu'ici redessinee vue en miroir sous la surface (z -> 2h - z), a demi-resolution ; alpha 0
+// la ou il n'y a rien (le ciel du cycle du jour y est mis par le shader de l'eau).
+static bool RenderReflection(const M4 &vp)
+{
+    if (!g_cfg.waterReflections || !g_reflSurf || !g_psRefl) return false;
+    UpdateWaterLevel();
+    float h = g_waterLevel;
+    M4 mirror = Identity4();
+    mirror.m[10] = -1; mirror.m[14] = 2 * h;
+    M4 rvp = Mul(mirror, vp);
+    g_dev->SetRenderTarget(0, g_reflSurf);
+    g_dev->SetDepthStencilSurface(g_reflDs);
+    D3DVIEWPORT9 half = { 0, 0, g_width / 2, g_height / 2, 0, 1 };
+    g_dev->SetViewport(&half);
+    g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0x00000000, 1.0f, 0);
+    g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+    g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+    g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+    g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+    g_dev->SetSamplerState(0, D3DSAMP_MIPFILTER, D3DTEXF_LINEAR);
+    g_dev->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+    g_dev->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+    float sun[4] = { g_sun.x, g_sun.y, g_sun.z, 0.55f };
+    float plane[4] = { h, 0, 0, 0 };
+    g_dev->SetVertexShaderConstantF(8, sun, 1);
+    g_dev->SetPixelShaderConstantF(1, plane, 1);
+    g_dev->SetPixelShader(g_psRefl);
+    int drawn = 0;
+    for (const Rec &r : g_recs) {
+        if (r.water || !r.mainView) continue;
+        int v = ((r.fvf & D3DFVF_NORMAL) ? 1 : 0) | ((r.fvf & D3DFVF_DIFFUSE) ? 2 : 0) | ((r.fvf & D3DFVF_TEXCOUNT_MASK) ? 4 : 0);
+        if (!g_vsRefl[v]) continue;
+        M4 w; memcpy(w.m, r.world, 64);
+        M4 wm = Mul(w, rvp);
+        g_dev->SetVertexShader(g_vsRefl[v]);
+        g_dev->SetFVF(r.fvf);
+        g_dev->SetVertexShaderConstantF(0, wm.m, 4);
+        g_dev->SetVertexShaderConstantF(4, w.m, 4);
+        float alpha[4] = { r.alphaTest ? r.alphaRef : 0.0f, r.alphaTest && r.tex ? 1.0f : 0.0f, r.tex ? 1.0f : 0.0f, 0 };
+        g_dev->SetPixelShaderConstantF(0, alpha, 1);
+        g_dev->SetTexture(0, r.tex);
+        g_dev->SetStreamSource(0, r.replayVb ? g_replayVb : r.vb, 0, r.stride);
+        if (r.d.indexed) {
+            g_dev->SetIndices(r.replayIb ? g_replayIb : r.ib);
+            g_dev->DrawIndexedPrimitive((D3DPRIMITIVETYPE)r.d.type, (INT)r.d.baseVertex, r.d.minIndex, r.d.numVerts, r.d.start, r.d.count);
+        } else g_dev->DrawPrimitive((D3DPRIMITIVETYPE)r.d.type, r.d.start, r.d.count);
+        drawn++;
+    }
+    g_dev->SetTexture(0, NULL);
+    return drawn > 0;
+}
+
 static void DrawModernWater()
 {
     FpuGuard fpu;
     int n = 0;
     for (const Rec &r : g_recs) n += r.water;
+    ChooseMainView();
     if (!n || !g_haveMain || !CreateResources() || !g_refractSurf || !g_psWater) return;
     UpdateSun();
     M4 view, proj, vp, invView;
@@ -1344,6 +1556,7 @@ static void DrawModernWater()
     SetCommonStates();
     RenderScreenDepth(vp, false);                                   // le fond, sans l'eau
     g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_LINEAR);   // l'image sous l'eau
+    bool reflected = RenderReflection(vp);
 
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
@@ -1352,7 +1565,8 @@ static void DrawModernWater()
     g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0x7);
     g_dev->SetTexture(0, g_screenDepth);
     g_dev->SetTexture(1, g_refract);
-    for (int s = 0; s < 2; s++) {
+    g_dev->SetTexture(2, reflected ? g_refl : NULL);
+    for (int s = 0; s < 3; s++) {
         g_dev->SetSamplerState(s, D3DSAMP_MINFILTER, s ? D3DTEXF_LINEAR : D3DTEXF_POINT);
         g_dev->SetSamplerState(s, D3DSAMP_MAGFILTER, s ? D3DTEXF_LINEAR : D3DTEXF_POINT);
         g_dev->SetSamplerState(s, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
@@ -1378,7 +1592,9 @@ static void DrawModernWater()
     pc[28] = 0.10f; pc[29] = 0.82f; pc[30] = 0.76f;   // eau peu profonde : turquoise clair
     pc[32] = 0.02f; pc[33] = 0.38f; pc[34] = 0.50f;   // au large : bleu-vert des Caraibes
     pc[36] = day;
+    float wr[4] = { reflected ? 1.0f : 0.0f, 0.85f, 0, 0 };
     g_dev->SetPixelShaderConstantF(0, pc, 10);
+    g_dev->SetPixelShaderConstantF(10, wr, 1);
     g_dev->SetVertexShader(g_vsWater);
     g_dev->SetPixelShader(g_psWater);
     for (const Rec &r : g_recs) {
@@ -1396,6 +1612,7 @@ static void DrawModernWater()
     }
     g_dev->SetTexture(0, NULL);
     g_dev->SetTexture(1, NULL);
+    g_dev->SetTexture(2, NULL);
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
     g_state->Apply();
@@ -1404,6 +1621,7 @@ static void DrawModernWater()
     static uint32_t lastLog;
     if (GetTickCount() - lastLog > 10000) {
         lastLog = GetTickCount();
+        Log("rendu : reflets %s, eau a %.2f m", reflected ? "oui" : "non", g_waterLevel);
         // Point d'eau le plus proche de la camera (tests : ou regarder).
         float best = 1e12f; Vec3 at = { 0, 0, 0 };
         for (const Rec &r : g_recs) {
@@ -1442,8 +1660,10 @@ void Gfx9BeforeDraw(DWORD fvf, bool up)
         if ((fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZ) g_after3d++;
         return;
     }
-    // Premier dessin 2D apres la scene 3D (interface, halos) : les ombres se posent maintenant.
-    if ((fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW && g_recs.size() >= 20) Apply();
+    // Secours (appel de RenderScene introuvable) : premier dessin 2D apres la scene 3D. Normalement les ombres se
+    // posent a la fin de RenderScene (h_RenderScene) : sous la pluie, le jeu dessine des effets 2D en pleine scene
+    // (reflets des halos sur la route mouillee) et, selon ce qui etait dans le champ, le masque se posait trop tot.
+    if (!g_sceneHooked && (fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZRHW && g_recs.size() >= 20) Apply();
 }
 
 void Gfx9EndScene() { if (!g_applied && g_recs.size() >= 20) Apply(); }
@@ -1534,6 +1754,8 @@ void InstallGfx9Hooks()
         PatchCall(0x4A6594, (void *)h_RenderWater);
         PatchCall(0x4A65AE, (void *)h_RenderTransparentWater);
     } else Log("rendu : appels de l'eau introuvables (eau moderne coupee)");
+    if (*(uint8_t *)0x4A604A == 0xE8 && *(int32_t *)0x4A604B == 0x4A6570 - 0x4A604F) { PatchCall(0x4A604A, (void *)h_RenderScene); g_sceneHooked = true; }
+    else Log("rendu : appel de RenderScene introuvable (ombres posees au premier dessin 2D)");
     static const uint8_t carLightPro[] = { 0xBA, 0xB8, 0x46, 0x7E, 0x00 };   // mov edx, 7E46B8h (TheCamera)
     o_StoreCarLight = (StoreCarLight_t)MakeDetour(0x56DCD0, carLightPro, sizeof(carLightPro), (void *)h_StoreCarLight);
     if (!o_StoreCarLight) Log("rendu : CShadows::StoreCarLightShadow introuvable (phares : tache du jeu gardee)");

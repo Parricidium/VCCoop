@@ -31,7 +31,7 @@ enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
        ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
-       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT };
+       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
 enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
@@ -88,6 +88,7 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "OmbresSoleil", g_cfg.sunShadows ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "Rendu", g_cfg.renderer == 9 ? "9" : "8", ini);
     WritePrivateProfileStringA("VCCoop", "EauModerne", g_cfg.modernWater ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "RefletsEau", g_cfg.waterReflections ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "LumieresDynamiques", g_cfg.dynLights ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OmbresLumieres", g_cfg.lightShadows ? "4" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OmbresLune", g_cfg.moonShadows ? "1" : "0", ini);
@@ -176,6 +177,10 @@ static const wchar_t *CoopText(const char *key)
     if (!strcmp(key, "VCC_WA")) {
         wsprintfA(buf, "%s : %s", fr ? "Eau moderne" : "Modern water", g_cfg.modernWater ? yes : no);
         return Put(12, buf);
+    }
+    if (!strcmp(key, "VCC_RF")) {
+        wsprintfA(buf, "%s : %s", fr ? "Reflets sur l'eau" : "Water reflections", g_cfg.waterReflections ? yes : no);
+        return Put(30, buf);
     }
     if (!strcmp(key, "VCC_LI")) {
         wsprintfA(buf, "%s : %s", fr ? "Lumieres dynamiques" : "Dynamic lights", g_cfg.dynLights ? yes : no);
@@ -314,6 +319,7 @@ static void OnCoopAction(int action)
     case ACT_SHADOWS: g_cfg.sunShadows = !g_cfg.sunShadows; SaveIni(); break;
     case ACT_RENDERER: g_cfg.renderer = g_cfg.renderer == 9 ? 8 : 9; SaveIni(); break;
     case ACT_WATER: g_cfg.modernWater = !g_cfg.modernWater; SaveIni(); break;
+    case ACT_REFLECT: g_cfg.waterReflections = !g_cfg.waterReflections; SaveIni(); break;
     case ACT_LIGHTS: g_cfg.dynLights = !g_cfg.dynLights; SaveIni(); break;
     case ACT_LIGHTSHADOWS: g_cfg.lightShadows = g_cfg.lightShadows ? 0 : 4; SaveIni(); break;
     case ACT_MOON: g_cfg.moonShadows = !g_cfg.moonShadows; SaveIni(); break;
@@ -405,6 +411,7 @@ static void BuildCoopPage()
         if (g_cfg.renderer == 9) {
             items[n++] = { ACT_SHADOWQ, "VCC_SQ" };
             items[n++] = { ACT_WATER, "VCC_WA" };
+            if (g_cfg.modernWater) items[n++] = { ACT_REFLECT, "VCC_RF" };
             items[n++] = { ACT_LIGHTS, "VCC_LI" };
             items[n++] = { ACT_LIGHTSHADOWS, "VCC_LS" };
             items[n++] = { ACT_MOON, "VCC_MO" };
