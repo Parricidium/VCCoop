@@ -32,6 +32,7 @@ static bool Mirrored(const AnimMirror &m, int id)
 static bool FullBodyAction(int id)
 {
     return (id >= 13 && id <= 16) ||      // ANIM_STD_KO_FRONT..RIGHT
+           (id >= 25 && id <= 28) ||      // HIGHIMPACT_* (renverse par une voiture)
            id == 37 || id == 43 ||        // HIT_FLOOR, HIT_FLOOR_FRONT
            id == 65 ||                    // KICKGROUND
            id == 125 || id == 126 ||      // BIKE_FALLOFF / FALLBACK

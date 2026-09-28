@@ -17,7 +17,9 @@
 using namespace game;
 
 enum { RL_DAMAGE_PED = 10, RL_DAMAGE_PLAYER = 11, RL_DAMAGE_PVP = 12, RL_FIGHT_REACT = 13, RL_FIGHT_REACT_PED = 14,
-       RL_PROJECTILE = 15, RL_VEH_DAMAGE = 16, RL_DAMAGE_BY_NPC = 17 };
+       RL_PROJECTILE = 15, RL_VEH_DAMAGE = 16, RL_DAMAGE_BY_NPC = 17, RL_WANTED = 18 };
+// Etoiles pour un crime commis chez un autre joueur (un invite frappe un passant de l'hote) : a l'auteur.
+struct RlWanted { uint8_t type, level; };
 // Un joueur abime la copie d'un vehicule (balles, batte, feu) : l'ecart de sante part au proprietaire.
 struct RlVehDamage { uint8_t type, owner; uint32_t id; float damage; };
 // Un personnage LOCAL d'un invite (sa police, un passant a lui) touche le Tommy d'un autre joueur : le coup part
@@ -469,6 +471,16 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         return;
     }
     if (data[0] >= 20) { SaveShareOnReliable(from, data, len); return; }   // saveshare.cpp
+    if (data[0] == RL_WANTED && len >= (int)sizeof(RlWanted)) {
+        void *me = FindPlayerPed();
+        int level = ((const RlWanted *)data)->level;
+        if (me && WantedLevel(me) < level) {
+            int32_t a[2] = { 0, level };
+            MirrorLocal(0x010E, 2, a);   // ALTER_WANTED_LEVEL_NO_DROP
+            Log("police : recherche %d (mon crime chez l'hote)", level);
+        }
+        return;
+    }
     if (data[0] == RL_DAMAGE_PED && len >= (int)sizeof(RlDamagePed)) {
         const RlDamagePed &d = *(const RlDamagePed *)data;
         if (d.owner != g_localId) {   // hote : un invite frappe la police d'un autre invite, on fait suivre
@@ -518,7 +530,12 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
                 want = recent >= 3 ? 2 : 1;
             }
             void *me = FindPlayerPed();
-            if (want && me && WantedLevel(me) < want) {
+            if (want && !g_cfg.shareWanted && d.attacker != g_localId && d.attacker < MAX_PLAYERS) {
+                // Etoiles non partagees : c'est l'auteur qui est recherche (avant, l'hote les prenait pour lui).
+                RlWanted w = { RL_WANTED, (uint8_t)want };
+                NetSendReliableTo(d.attacker, &w, sizeof(w));
+                Log("police : recherche %d envoyee au joueur %d (crime sur un personnage de l'hote)", want, d.attacker);
+            } else if (want && me && WantedLevel(me) < want) {
                 int32_t a[2] = { 0, want };
                 MirrorLocal(0x010E, 2, a);   // ALTER_WANTED_LEVEL_NO_DROP
                 Log("police : recherche %d (crime du joueur %d sur un personnage de l'hote)", want, from);

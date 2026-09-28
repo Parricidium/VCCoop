@@ -614,7 +614,7 @@ static void SendWorld()
     last = now;
     MsgWorld w = { MSG_WORLD, ClockHours(), ClockMinutes(), (uint8_t)(ClockSeconds() & 0xFF),
                    OldWeather(), NewWeather(), ForcedWeather(), PedHandle(FindPlayerPed()),
-                   CamFade(), (uint8_t)CamFading(), (uint8_t)CamWidescreen(), (uint8_t)g_cfg.friendlyFire, (uint8_t)g_cfg.zonePop };
+                   CamFade(), (uint8_t)CamFading(), (uint8_t)CamWidescreen(), (uint8_t)g_cfg.friendlyFire, (uint8_t)g_cfg.zonePop, (uint16_t)g_cfg.popDensity };
     NetSendToGuests(&w, sizeof(w));
 }
 
@@ -624,6 +624,7 @@ static void OnWorld(const MsgWorld &w)
     g_hostPlayerHandle = w.playerHandle;
     g_cfg.friendlyFire = w.friendlyFire != 0;   // c'est le reglage de l'hote qui compte
     if (w.zonePop >= 100 && w.zonePop <= 200) g_cfg.zonePop = w.zonePop;   // idem pour la zone de population
+    if (w.popDensity >= 50 && w.popDensity <= 300) g_cfg.popDensity = w.popDensity;   // et pour la densite
     // L'heure n'est recalee que si elle derive de plus d'une minute (sinon les deux horloges avancent seules).
     int local = ClockHours() * 60 + ClockMinutes(), remote = w.hours * 60 + w.minutes;
     int diff = remote - local;

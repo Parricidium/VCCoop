@@ -130,6 +130,52 @@ void AutotestFrame()
         }
         return;
     }
+    // Autotest=renverse : l'hote au volant sur une route degagee ; l'invite, a pied, se place 8 m devant sa voiture ;
+    // l'hote le percute a ~60 km/h (vehicles.cpp RunOverByPlayers, chez l'invite).
+    if (_stricmp(g_cfg.autotest, "renverse") == 0) {
+        static void *car;
+        static uint32_t seatedAt, placedAt;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        if (g_cfg.host && t == 31) {
+            int32_t p[4] = { 0 };
+            float xyz[3] = { 250.0f, -1250.0f, 11.0f };
+            memcpy(p + 1, xyz, 12);
+            MirrorLocal(0x0055, 4, p);
+        }
+        if (!HasModelLoaded(130)) { RequestModel(130, 1); return; }
+        if (g_cfg.host) {
+            if (!car && t > 150) {
+                float h = Heading(me);
+                void *v = VehicleAlloc();
+                AutomobileCtor(v, 130, 1);
+                Pos(v) = { Pos(me).x - sinf(h) * 3.0f, Pos(me).y + cosf(h) * 3.0f, Pos(me).z + 0.3f };
+                SetHeadingMatrix(v, h);
+                SetEntityStatus(v, STATUS_ABANDONED);
+                WorldAdd(v);
+                car = v; RegisterReference(v, &car);
+                WarpIntoSeat(me, v, 0);
+                seatedAt = frame;
+                Log("autotest : renverse, voiture prete");
+            }
+            void *victim = PuppetPed(1);
+            if (car && victim && frame - seatedAt == 240) {
+                float dx = Pos(victim).x - Pos(car).x, dy = Pos(victim).y - Pos(car).y, l = sqrtf(dx * dx + dy * dy);
+                if (l > 0.1f) MoveSpeed(car) = { dx / l * 0.33f, dy / l * 0.33f, 0 };
+                Log("autotest : renverse, lance vers l'invite a %.1f m", l);
+            }
+        } else if (!placedAt && PuppetPed(0) && InVehicle(PuppetPed(0))) {
+            void *target = PedVehicle(PuppetPed(0));
+            Vec3 f = Field<Vec3>(target, 0x14);
+            Pos(me) = { Pos(target).x + f.x * 8.0f, Pos(target).y + f.y * 8.0f, Pos(target).z + 0.5f };
+            MoveSpeed(me) = { 0, 0, 0 };
+            placedAt = frame;
+            Log("autotest : renverse, a pied devant la voiture de l'hote");
+        }
+        if (!g_cfg.host && placedAt && (frame - placedAt) % 30 == 0 && frame - placedAt < 600)
+            Log("autotest : renverse, moi en %.1f %.1f sante %.0f etat %d", Pos(me).x, Pos(me).y, Health(me), PedState(me));
+        return;
+    }
     // Autotest=percute : l'hote attend au volant ; l'invite arrive 14 m derriere et lui fonce dessus (chocs entre
     // vehicules de joueurs, vehicles.cpp CopyCollisions).
     if (_stricmp(g_cfg.autotest, "percute") == 0) {

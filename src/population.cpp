@@ -125,6 +125,9 @@ static void EnlargePools()
     }
     uint32_t peds = PED_POOL;
     Patch(0x4C02C8, &peds, 4);
+    // Noeuds qui rangent chaque entite dans la grille du monde (EntryInfoNode, 3200) : doubles aussi, sinon ils
+    // pourraient manquer avec deux fois plus de personnages et de vehicules.
+    if (*(const uint8_t *)0x4C02A5 == 0x68 && *(const uint32_t *)0x4C02A6 == 0xC80) { uint32_t nodes = 0x1900; Patch(0x4C02A6, &nodes, 4); }
     g_poolCtor = (void *)(0x4C02EB + 5 + *(const int32_t *)(v + 3));
     PatchCall(0x4C02E9, (void *)VehiclePoolSize, 7);
     Log("population : reserves agrandies (%d personnages, %d vehicules)", PED_POOL, VEH_POOL);

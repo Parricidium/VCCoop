@@ -641,9 +641,49 @@ static void CopyCollisions()
     }
 }
 
+// --- Renverse par la voiture d'un autre joueur ---
+// Pour notre Tommy a pied, le jeu decide la chute d'apres la vitesse de la voiture qui le touche (CPed::ProcessControl,
+// reVC Ped.cpp) : la copie de la voiture d'un joueur a une vitesse nulle (sa position vient du reseau), on restait
+// debout "comme un poteau". Au contact de sa boite, avec la vitesse recue d'avant le choc, on fait ce que fait le jeu :
+// chute "gros impact" dans le bon sens (ANIM_STD_HIGHIMPACT_FRONT 25 + direction, CPed::SetFall 0x4FD9F0), degats
+// (CPed::InflictDamage 0x525B20, arme 39 = percute par un vehicule, comptes si le tir ami est permis), projete.
+static void RunOverByPlayers()
+{
+    void *me = FindPlayerPed();
+    if (!me || InVehicle(me) || Health(me) <= 0.0f) return;
+    static uint32_t lastHit;
+    uint32_t now = GetTickCount();
+    if (now - lastHit < 1500) return;
+    Vec3 mp = Pos(me);
+    for (auto &e : g_vehs) {
+        if (!e.used || !e.veh || e.owner == g_localId || !e.haveState || Stale(e)) continue;
+        float vx = e.peak[0], vy = e.peak[1], sp2 = vx * vx + vy * vy;
+        if (sp2 < 0.1f * 0.1f) continue;   // moins de ~18 km/h : elle pousse seulement
+        Box2 b;
+        if (!BoxOf(e.veh, b) || fabsf(mp.z - Pos(e.veh).z) > 2.0f) continue;
+        float dx = mp.x - b.cx, dy = mp.y - b.cy;
+        float lx = dx * b.ax + dy * b.ay, ly = dx * b.bx + dy * b.by;
+        if (fabsf(lx) > b.hx + 0.35f || fabsf(ly) > b.hy + 0.35f) continue;
+        if (vx * dx + vy * dy <= 0.0f) continue;   // elle s'eloigne
+        float kmh = sqrtf(sp2) * 50.0f * 3.6f;
+        // Direction du coup par rapport a nous (CPed::GetLocalDirection du vecteur oppose a sa vitesse) : 0 avant,
+        // 1 gauche, 2 arriere, 3 droite.
+        float ang = atan2f(vx, -vy) - Heading(me) + 0.785398f;
+        while (ang < 0.0f) ang += 6.283185f;
+        int dir = (int)(ang / 1.570796f) & 3;
+        ((void(__thiscall *)(void *, int, int, int))0x4FD9F0)(me, 1000, 25 + dir, 0);
+        float dmg = kmh < 40.0f ? 10.0f : kmh < 80.0f ? 25.0f : 50.0f;
+        ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(me, e.veh, 39, dmg, 3, (uint8_t)dir);
+        MoveSpeed(me) = { vx * 0.7f, vy * 0.7f, 0.12f };
+        lastHit = now;
+        Log("vehicules : renverse par la voiture %08X du joueur %d a %.0f km/h (direction %d, sante %.0f)", e.id, e.owner, kmh, dir, Health(me));
+        return;
+    }
+}
+
 void VehiclesFrame(bool inGame)
 {
-    if (inGame) CopyCollisions();
+    if (inGame) { CopyCollisions(); RunOverByPlayers(); }
     static bool wasConnected[MAX_PLAYERS];
     for (int i = 0; i < MAX_PLAYERS; i++) {
         bool c = i != g_localId && g_players[i].connected;
