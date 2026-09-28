@@ -87,10 +87,35 @@ static bool __fastcall h_Fire(void *weapon, void *edx, void *shooter, void *sour
     return r;
 }
 
+// CWeapon::FireFromCar (0x5D44E0) : drive-by du conducteur (et notre tir passager, qui l'appelle aussi). Ne passait
+// pas par CWeapon::Fire : jamais compte, jamais rejoue chez les autres, et ses degats sur une copie de vehicule
+// ne partaient pas chez son proprietaire.
+typedef bool(__fastcall *FireFromCar_t)(void *weapon, void *edx, void *veh, bool left, bool right);
+static FireFromCar_t o_FireFromCar;
+static bool __fastcall h_FireFromCar(void *weapon, void *edx, void *veh, bool left, bool right)
+{
+    bool r = o_FireFromCar(weapon, edx, veh, left, right);
+    void *me = FindPlayerPed();
+    if (r && !g_cosmetic && me && InVehicle(me) && veh == PedVehicle(me)) { g_localShots++; g_lastBulletAt = GetTickCount(); }
+    return r;
+}
+
 uint8_t LocalShotCount() { return g_localShots; }
 // Le joueur local vient de tirer a balles (pas une explosion, pas le lance-flammes) : une copie de vehicule qui perd
 // de la sante juste apres, c'est lui (vehicles.cpp) ; le reste (feu local, explosion rejouee) ne compte pas.
 bool LocalBulletRecently() { return g_lastBulletAt && GetTickCount() - g_lastBulletAt < 1500; }
+
+// Le pantin (ou la copie) va etre detruit : les projectiles qu'il a lances gardaient un pointeur vers lui (le jeu ne le
+// reference pas) et CProjectileInfo::Update le dereferencait ensuite sans test (charge telecommandee, roquette).
+// Ils passent au joueur local, pointeur toujours valide.
+void ForgetProjectileSource(void *ped)
+{
+    void *me = FindPlayerPed();
+    for (int i = 0; i < 32; i++) {
+        uint8_t *pi = (uint8_t *)0x7DB888 + i * 0x1C;
+        if (pi[0xC] && *(void **)(pi + 4) == ped) *(void **)(pi + 4) = me;
+    }
+}
 
 // Armes a balles seulement (colt 17 .. fusil laser 29, M60 32, minigun 33) : grenades, roquettes, lance-flammes
 // exploseraient localement et divergeraient d'une machine a l'autre.
@@ -127,11 +152,23 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
     // nous blesse ici si le tir ami est permis, blesse nos personnages, et rien ne part par le reseau (sinon double).
     bool explosion = weapon == 41;
     bool byPuppet = damager && (IsPuppet(damager) || (!IsPedEntity(damager) && IsPuppetVehicle(damager)));
-    if (byPuppet && explosion) {
+    // Explosions et feu (31 lance-flammes, 15 cocktail : le feu brule 10 s avec le pantin pour source, ce que
+    // l'invite ne voit pas chez lui, sa copie etant ignifugee) : subis ici, chez chacun.
+    bool local = explosion || weapon == 31 || weapon == 15;
+    if (byPuppet && local) {
         if (ped == me) return g_cfg.friendlyFire ? o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir) : false;
-        if (PuppetPlayer(ped) < 0 && !IsGhostPed(ped)) return o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir);
+        if (PuppetPlayer(ped) < 0 && !IsGhostPed(ped)) {
+            uint8_t &fl = Field<uint8_t>(ped, 0x53), saved = fl;   // "seulement blesse par le joueur" : le pantin n'est pas le joueur
+            fl &= ~0x20;
+            bool r = o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir);
+            fl = saved;
+            return r;
+        }
         return false;
     }
+    // Ecrase / percute par la voiture d'un autre joueur : la collision est calculee ici (sa copie), c'est ici qu'on la subit.
+    if (byPuppet && ped == me && (weapon == 39 || weapon == 40))
+        return g_cfg.friendlyFire ? o_InflictDamage(ped, edx, damager, weapon, damage, piece, dir) : false;
     // Les coups portes par le Tommy d'un autre joueur sont decides sur sa machine et arrivent par le reseau :
     // ici ils ne font rien (evite les doubles degats et le tir ami involontaire).
     if (byPuppet) return false;
@@ -141,7 +178,8 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
     if (damager && IsPedEntity(damager) && IsGhostPed(damager)) return false;
     // Nous touchons le Tommy d'un autre joueur (coup, balle, voiture) : rien ici, le coup part chez lui.
     int victim = PuppetPlayer(ped);
-    if (victim >= 0 && damager && (damager == me || damager == PedVehicle(me))) {
+    void *myVeh = me && InVehicle(me) ? PedVehicle(me) : NULL;
+    if (victim >= 0 && damager && (damager == me || (myVeh && damager == myVeh))) {
         // Pas les chocs de vehicule (39 percute, 40 ecrase) : le jeu donne 1000 points pour un passant ecrase et la
         // victime en mourait sur le coup ; elle subit deja la collision avec la copie de la voiture chez elle.
         if (g_cfg.friendlyFire && !explosion && weapon != 39 && weapon != 40) {
@@ -157,7 +195,7 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
         uint8_t owner;
         uint32_t handle;
         if (GhostOwner(ped, owner, handle)) {
-            if (!explosion && (damager == me || (damager && damager == PedVehicle(me)))) {
+            if (!explosion && (damager == me || (damager && myVeh && damager == myVeh))) {
                 RlDamagePed d = { RL_DAMAGE_PED, (uint8_t)g_localId, dir, handle, weapon, piece, damage, owner };
                 SendToOwner(owner, &d, sizeof(d));
             }
@@ -179,7 +217,7 @@ static bool __fastcall h_InflictDamage(void *ped, void *edx, void *damager, int 
     } else {
         int pid = PuppetPlayer(ped);
         if (pid > 0) {
-            bool friendly = damager && (damager == me || IsPuppet(damager) || damager == PedVehicle(me));
+            bool friendly = damager && (damager == me || IsPuppet(damager) || (myVeh && damager == myVeh));
             // Seuls les coups d'un personnage (balles, poings, explosions de l'IA) partent chez lui. Chutes, noyade,
             // chocs de vehicules : son propre jeu les calcule ; renvoyer ceux de son Tommy chez nous le tuait a son
             // arrivee (chute de 565 points en le deplacant pres de l'hote).
@@ -378,10 +416,9 @@ void PassengerShooting()
     if (!fire || *(uint32_t *)(slot + 0x10) >= now || *(int *)(slot + 0xC) <= 0) return;
     void *driver = VehDriver(veh);
     VehDriver(veh) = me;
-    ((bool(__thiscall *)(void *, void *, bool, bool))0x5D44E0)(slot, veh, left, right);
+    ((bool(__thiscall *)(void *, void *, bool, bool))0x5D44E0)(slot, veh, left, right);   // compte par h_FireFromCar
     VehDriver(veh) = driver;
     *(uint32_t *)(slot + 0x10) = now + 70;
-    g_localShots++;
 }
 
 // Autotest : ce que fait CPed::FightHitPed quand le joueur local frappe victim (parade puis degats).
@@ -534,6 +571,8 @@ void InstallCombatHooks()
     o_SetFall = (SetFall_t)MakeDetour(0x4FD9F0, fallPro, sizeof(fallPro), (void *)h_SetFall);
     static const uint8_t projPro[] = { 0x53, 0x56, 0x57, 0x55, 0xD9, 0x05, 0xCC, 0xD1, 0x69, 0x00 };
     o_AddProjectile = (AddProjectile_t)MakeDetour(0x5C7250, projPro, sizeof(projPro), (void *)h_AddProjectile);
+    static const uint8_t fromCarPro[] = { 0x53, 0x56, 0x89, 0xCE, 0x8B, 0x5C, 0x24, 0x0C };
+    o_FireFromCar = (FireFromCar_t)MakeDetour(0x5D44E0, fromCarPro, sizeof(fromCarPro), (void *)h_FireFromCar);
 
     static const uint8_t firePro[] = { 0x53, 0x56, 0x57, 0x55, 0x83, 0xEC, 0x28 };
     if (memcmp((void *)0x5D45E0, firePro, sizeof(firePro)) == 0) {

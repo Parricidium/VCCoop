@@ -129,6 +129,9 @@ static void ApplyDrawDistance()
 
 static void __cdecl h_GameProcess()
 {
+    // Copies de vehicules placees AVANT la physique aussi : CWorld::Process y assoit leurs occupants et la camera
+    // du passager suit ; placees seulement apres, conducteur et passagers avaient une image de retard sur la voiture.
+    if (GameState() == GS_PLAYING && FindPlayerPed()) VehiclesAfterProcess();
     ((void(__cdecl *)())0x4A4410)();
     ApplyDrawDistance();
     if (GameState() != GS_PLAYING || !FindPlayerPed()) return;

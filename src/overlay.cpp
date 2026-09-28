@@ -6,6 +6,7 @@
 #include "net.h"
 #include "game.h"
 #include "overlay.h"
+#include "mirror.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,6 +87,8 @@ static void Restore()
     if (money >= 0) Money() = money;
     GetPrivateProfileStringA("Joueur", "Armes", "", buf, sizeof(buf), OverlayPath());
     int given = 0;
+    // Les armes de la sauvegarde de l'hote d'abord retirees (GiveWeapon ajoutait les munitions a chaque chargement).
+    if (buf[0]) { int32_t z[1] = { 0 }; MirrorLocal(0x03B8, 1, z); }   // REMOVE_ALL_PLAYER_WEAPONS
     for (char *t = strtok(buf, ","); t; t = strtok(NULL, ",")) {
         int w = 0, ammo = 0;
         if (sscanf(t, "%d:%d", &w, &ammo) != 2 || w <= 0 || w >= 40) continue;

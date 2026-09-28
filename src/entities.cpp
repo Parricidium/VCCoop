@@ -156,6 +156,7 @@ static void DestroyGhost(Ghost &g)
 {
     if (g.ped) {
         void *ped = g.ped;
+        ForgetProjectileSource(ped);
         CleanUpOldReference(ped, &g.ped);
         if (InVehicle(ped)) WarpOutOfVehicle(ped, NULL);
         WorldRemove(ped);

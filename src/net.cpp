@@ -50,7 +50,16 @@ void (*g_onJoin)(int peer);
 bool g_peerRejoin[MAX_PLAYERS];
 void (*g_onNotice)(const char *fr, const char *en, int player);
 static bool g_everAccepted;   // invite : deja accepte par l'hote pendant cette session
-static uint32_t NewSession() { return (GetTickCount() * 2654435761u) ^ (GetCurrentProcessId() << 7) ^ (uint32_t)rand(); }
+static uint32_t NewSession()
+{
+    // L'octet bas sert de generation au flux fiable : jamais le meme que la session precedente.
+    static uint32_t prev;
+    uint32_t s;
+    do s = (GetTickCount() * 2654435761u) ^ (GetCurrentProcessId() << 7) ^ ((uint32_t)rand() << 3) ^ (uint32_t)rand();
+    while ((uint8_t)s == (uint8_t)prev);
+    prev = s;
+    return s;
+}
 uint32_t g_netMuteUntil, g_netMuteSendUntil;   // autotests : coupure totale / envoi seulement
 uint16_t g_myPing;
 void (*g_onRdv)(const MsgRdv &r);      // autotest : simule une coupure (rien n'entre ni ne sort)
@@ -90,7 +99,7 @@ bool NearAnyGuest(const float *p, uint8_t area, float r)
 {
     for (int i = 1; i < MAX_PLAYERS; i++) {
         const NetPlayer &g = g_players[i];
-        if (!g.connected || !g.state.inGame || !g.state.shared || g.state.area != area) continue;
+        if (!g.connected || !g.state.inGame || !g.state.shared || g.state.area != area || GetTickCount() - g.lastStateAt > 3000) continue;
         float dx = g.state.pos[0] - p[0], dy = g.state.pos[1] - p[1], dz = g.state.pos[2] - p[2];
         if (dx * dx + dy * dy + dz * dz < r * r) return true;
     }
@@ -310,8 +319,8 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
                 if (!g_players[i].connected) {
                     id = i;
                     memset(&g_players[i], 0, sizeof(g_players[i]));
-                    g_players[i].connected = true;
                     g_peerAddr[i] = from;
+                    g_players[i].connected = true;
                     g_peerSession[i] = h->session;
                     RlReset(g_rl[i]);
                     lstrcpynA(g_players[i].state.name, h->name, sizeof(g_players[i].state.name));
@@ -339,6 +348,7 @@ static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         s.id = (uint8_t)id;
         if (StaleState(g_players[id], s)) return;
         g_players[id].state = s;
+        g_players[id].lastStateAt = GetTickCount();
         if (g_onState) g_onState(s);
         for (int i = 1; i < MAX_PLAYERS; i++)   // relais aux autres invites
             if (i != id && g_players[i].connected) SendTo(g_peerAddr[i], &s, sizeof(s));
@@ -422,7 +432,7 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
                 if (StaleState(p, *s)) break;
                 p.connected = true;
                 p.state = *s;
-                p.lastSeen = GetTickCount();
+                p.lastSeen = p.lastStateAt = GetTickCount();
                 if (g_onState) g_onState(*s);
             }
         }
