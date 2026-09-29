@@ -9,6 +9,9 @@
 #include "mirror.h"
 #include "conditions.h"
 #include "overlay.h"
+#include "net.h"
+#include "vehicles.h"
+#include <math.h>
 #include <string.h>
 
 using namespace game;
@@ -132,6 +135,34 @@ static int LastGlobalParam(int ip, int n)
     return -1;
 }
 
+// --- Conditions "en voiture" remplies par un invite (conditions.cpp) ---
+// "Monte dans une voiture" (IS_PLAYER_IN_ANY_CAR 00E0) peut etre rempli par un invite alors que l'hote est a pied. Le
+// script prend ensuite "la voiture du joueur" (STORE_CAR_PLAYER_IS_IN 00DA / 03C1, STORE_CAR_CHAR_IS_IN 00D9 / 03C0
+// sur $PLAYER_ACTOR) : sans voiture, le jeu y ecrivait une reference fausse, et la commande suivante qui la lisait
+// plantait (LOCATE_PLAYER_*_CAR 01FC-0201 : 0x46352F, lawyer1, JD le 29/09, ejecte de la moto de l'invite). On lui
+// donne la voiture de l'invite (sa copie chez l'hote) le temps de la commande.
+static void *GuestCarForHost()
+{
+    void *me = FindPlayerPed(), *best = NULL;
+    float bestD = 1e12f;
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        const NetPlayer &n = g_players[i];
+        if (!n.connected || !n.state.inGame || !n.state.inVehicle) continue;
+        void *v = NetVehicleById(n.state.vehicleId);
+        if (!v) continue;
+        float dx = Pos(v).x - Pos(me).x, dy = Pos(v).y - Pos(me).y, d = dx * dx + dy * dy;
+        if (d < bestD) { bestD = d; best = v; }
+    }
+    return best;
+}
+
+static bool VehicleRefValid(uint32_t h)
+{
+    Pool *vp = VehiclePool();
+    int i = (int)(h >> 8);
+    return i >= 0 && i < vp->size && vp->flags[i] == (uint8_t)(h & 0xFF) && !(vp->flags[i] & 0x80);
+}
+
 static char __fastcall h_ProcessOneCommand(void *script)
 {
     int ip = Field<int>(script, 0x10);
@@ -231,6 +262,45 @@ static char __fastcall h_ProcessOneCommand(void *script)
         }
     }
     ConditionsBeginCommand(script, op);
+    // Voiture du joueur demandee alors que l'hote est a pied (condition remplie par un invite) : celle de l'invite.
+    if (g_cfg.host && (op == 0x00DA || op == 0x03C1 || op == 0x00D9 || op == 0x03C0)) {
+        void *me = FindPlayerPed();
+        bool aboutHost = false;
+        if (me && !InVehicle(me)) {
+            uint8_t *ss = ScriptSpace();
+            int at = ip + 2;
+            int32_t first = ss[at] == 4 ? (int8_t)ss[at + 1] : ss[at] == 5 ? *(int16_t *)(ss + at + 1) : ss[at] == 1 ? *(int32_t *)(ss + at + 1)
+                          : ss[at] == 2 ? *(int32_t *)(ss + *(uint16_t *)(ss + at + 1)) : ss[at] == 3 ? Field<int32_t>(script, 0x30 + *(uint16_t *)(ss + at + 1) * 4) : -1;
+            aboutHost = (op == 0x00DA || op == 0x03C1) ? first == 0 : (uint32_t)first == PedHandle(me);
+        }
+        void *car = aboutHost ? GuestCarForHost() : NULL;
+        if (aboutHost && !car && !PedVehicle(me)) {
+            // Ni voiture a nous ni a un invite : on ecrit une voiture "aucune" ; LOCATE_*_CAR est garde plus bas.
+            Log("script : %04X sans voiture (%.8s), commande laissee", op, (char *)script + 8);
+        }
+        if (car) {
+            void *saved = PedVehicle(me);
+            PedVehicle(me) = car;
+            char r = RunOriginal(script, op);
+            PedVehicle(me) = saved;
+            Log("script : %04X (%.8s) : l'hote est a pied, voiture de l'invite (%08X) prise a sa place", op, (char *)script + 8, NetVehicleId(car));
+            return r;
+        }
+    }
+    // LOCATE_PLAYER_*_CAR_2D / 3D (01FC-0201 : joueur, voiture, rayons, [z], cylindre) : le jeu ne verifie pas la
+    // voiture ; une reference morte plantait (0x46352F). Voiture absente : condition fausse, commande sautee.
+    if (op >= 0x01FC && op <= 0x0201) {
+        Field<int>(script, 0x10) = ip + 2;
+        CollectParameters(script, op >= 0x01FF ? 6 : 5);
+        uint32_t car = ((uint32_t *)0x7D7438)[1];
+        if (!VehicleRefValid(car)) {
+            ((void(__thiscall *)(void *, uint8_t))0x463F00)(script, 0);   // CRunningScript::UpdateCompareFlag
+            static uint32_t lastLog;
+            if (GetTickCount() - lastLog > 5000) { lastLog = GetTickCount(); Log("script : %04X avec une voiture inexistante (%08X, %.8s) : condition fausse", op, car, (char *)script + 8); }
+            return 0;
+        }
+        Field<int>(script, 0x10) = ip;
+    }
     if (g_cfg.host) {
         if (op == OP_TERMINATE_THIS_SCRIPT && Field<bool>(script, 0x85)) MirrorMissionEnd();
         if (op == OP_START_MISSION) {

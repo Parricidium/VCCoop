@@ -1181,6 +1181,35 @@ static void BoardingFrame()
             g_boarding = NULL;
         }
     }
+    // Montee au volant du vehicule d'un autre joueur (copie ici) : suivie. JD, le 29/09 (lawyer1), ressortait a la fin
+    // de l'animation, deux fois de suite, sans rien dans le journal : on le note, et si l'animation est allee au bout
+    // sans nous laisser assis, on pose au volant.
+    {
+        static void *drv;
+        static uint32_t drvSince;
+        static bool seatedAnim;   // animation d'entree dans l'habitacle vue : il n'a pas renonce
+        void *v = me ? PedVehicle(me) : NULL;
+        bool entering = me && !g_boarding && !InVehicle(me) && v && EnteringState(PedState(me)) && Field<int>(me, 0x164) == 0x12;
+        if (entering && NetVehicleIsCopy(v)) {
+            if (drv != v) { drv = v; drvSince = now; seatedAnim = false; Log("coop : je monte au volant de %08X (vehicule d'un autre joueur)", NetVehicleId(v)); }
+            // Dans le 1.0 : CAR_GET_IN_LHS / LO_LHS 80-81, _RHS 96-97, CAR_SIT / SIT_LO 102-103 (vu : 74, 81, 103 au volant)
+            static const int getIn[] = { 80, 81, 96, 97, 102, 103 };
+            for (int id : getIn)
+                if (!seatedAnim) seatedAnim = ((void *(__cdecl *)(void *, int))0x407780)(Field<void *>(me, 0x4C), id) != NULL;   // RpAnimBlendClumpGetAssociation
+        } else if (drv && me) {
+            void *t = drv;
+            drv = NULL;
+            if (!(InVehicle(me) && PedVehicle(me) == t)) {
+                float dx = Pos(t).x - Pos(me).x, dy = Pos(t).y - Pos(me).y;
+                Log("coop : montee au volant de %08X ratee apres %u ms (entree vue %d, etat %d, objectif %d, verrou %d, conducteur %p, a %.1f m)",
+                    NetVehicleId(t), now - drvSince, seatedAnim, PedState(me), Field<int>(me, 0x164), Field<int>(t, 0x230), VehDriver(t), sqrtf(dx * dx + dy * dy));
+                LogEnterProgress(me, "moi");
+                if (seatedAnim && now - drvSince > 1200 && !VehDriver(t) && !InVehicle(me) && Health(me) > 0.0f && dx * dx + dy * dy < 25.0f && PedState(me) != 60 &&
+                    WarpIntoSeat(me, t, 0))
+                    Log("coop : pose au volant de %08X", NetVehicleId(t));
+            }
+        }
+    }
     if (g_leaving && me) {
         static uint32_t lastAsk;
         if (!InVehicle(me)) { Log("coop : descendu (animation, %u ms)", now - g_leavingSince); g_leaving = NULL; }
