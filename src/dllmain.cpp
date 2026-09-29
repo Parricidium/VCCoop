@@ -83,6 +83,13 @@ static void LoadConfig()
     if (g_cfg.sharpen > 100) g_cfg.sharpen = 100;
     g_cfg.softParticles = GetPrivateProfileIntA("VCCoop", "ParticulesDouces", 1, ini) != 0;
     g_cfg.lampLights = GetPrivateProfileIntA("VCCoop", "LampadairesEclairent", 1, ini) != 0;
+    g_cfg.wetRoads = GetPrivateProfileIntA("VCCoop", "RoutesMouillees", 1, ini) != 0;
+    g_cfg.sunRays = GetPrivateProfileIntA("VCCoop", "RayonsSoleil", 1, ini) != 0;
+    g_cfg.windPlants = GetPrivateProfileIntA("VCCoop", "VegetationVent", 1, ini) != 0;
+    g_cfg.beams = GetPrivateProfileIntA("VCCoop", "FaisceauxPhares", 1, ini) != 0;
+    g_cfg.haze = GetPrivateProfileIntA("VCCoop", "Brume", 1, ini) != 0;
+    g_cfg.carReflections = GetPrivateProfileIntA("VCCoop", "RefletsVoitures", 1, ini) != 0;
+    g_cfg.indirectLight = GetPrivateProfileIntA("VCCoop", "LumiereIndirecte", 1, ini) != 0;
     g_cfg.captureSecs = GetPrivateProfileIntA("VCCoop", "CaptureRendu", 0, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.fpsView = GetPrivateProfileIntA("VCCoop", "VuePremierePersonne", 1, ini) != 0;

@@ -68,6 +68,12 @@ void AutotestFrame()
         controlSince = frame;
         Log("autotest : le joueur a la main (image %u)", frame);
     }
+    // TestMeteo=N (ini) : meteo forcee au debut (0 soleil, 1 nuages, 2 pluie, 3 brouillard) : FORCE_WEATHER_NOW.
+    {
+        static bool weatherSet;
+        int w = GetPrivateProfileIntA("VCCoop", "TestMeteo", -1, IniPath());
+        if (!weatherSet && w >= 0 && frame - controlSince > 20) { weatherSet = true; int32_t a[1] = { w }; MirrorLocal(0x01B6, 1, a); Log("autotest : meteo %d", w); }
+    }
     bool farJoin = _stricmp(g_cfg.autotest, "loin") == 0;   // comme rejoindre, mais 160 m devant l'hote (hors de sa zone)
     if (farJoin || _stricmp(g_cfg.autotest, "rejoindre") == 0) {
         static bool done;

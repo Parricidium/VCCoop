@@ -181,6 +181,9 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Street lamps, neons and signs cast real light** at night (`LampadairesEclairent`), with shadows for the
   closest ones; their painted ground patch is removed. **Soft particles** (`ParticulesDouces`): smoke and
   explosions no longer cut sharply against the ground and walls.
+- **Atmosphere** (Video options > Atmosphere): wet roads in the rain (neon and headlight reflections, puddles,
+  ripples) and shiny interior floors, sun rays, palms and trees swaying in the wind, headlight beams in rain
+  and fog, distance haze that follows the time of day, reflections on car bodies, indirect light.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -424,6 +427,10 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Réverbères, néons et enseignes éclairent vraiment** la nuit (`LampadairesEclairent`), avec ombres pour les
   plus proches ; leur tache peinte au sol est retirée. **Particules douces** (`ParticulesDouces`) : fumée et
   explosions ne coupent plus net contre le sol et les murs.
+- **Ambiance** (Options vidéo > Ambiance) : routes mouillées sous la pluie (reflets des néons et des phares,
+  flaques, ondes) et sols brillants des intérieurs, rayons de soleil, palmiers et arbres au vent, faisceaux des
+  phares dans la pluie et le brouillard, brume au loin qui suit l'heure, reflets sur les carrosseries, lumière
+  indirecte.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont
