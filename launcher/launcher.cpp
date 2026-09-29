@@ -33,6 +33,8 @@ using std::max;
 #include <atomic>
 #include <stdio.h>
 #include <math.h>
+#include "model3d.h"
+#include <map>
 
 using namespace Gdiplus;
 
@@ -83,6 +85,7 @@ static std::vector<LobbyPeer> g_peers;
 static int g_myId, g_lobbyChoice;                  // choix de l'hote : 0 = nouvelle partie, sinon index dans g_saves + 1
 static std::string g_lobbyChoiceLabel;              // invite : sauvegarde choisie par l'hote ("" = nouvelle partie)
 static std::atomic<int> g_myMods(-1);
+static bool g_imgOk;                                // tenues : catalogue du jeu lu (onglet TENUE)
 
 static std::wstring g_testLog;          // /testfenetre : fenetre hors ecran, sans activation, journal puis sortie
 static int g_ulwOk = -1, g_frames;
@@ -658,9 +661,12 @@ static void DrawBar(Graphics &g, RectF r, float p)
 // ---------------------------------------------------------------- options (vccoop.ini du jeu)
 // Les memes cles que le menu COOP du jeu (menu.cpp SaveIni) et que dllmain.cpp LoadConfig, memes valeurs par defaut ;
 // ecrites tout de suite, prises au prochain lancement. Onglets RENDU et EFFETS : seulement avec Rendu=9 (Direct3D 9).
-enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_COUNT };
+enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_COUNT };
 static void DrawLobby(Graphics &g);
 static bool LobbyClick(float x, float y);
+static void DrawSkin(Graphics &g);
+static void SkinsInit();
+static float SkinMaxScroll();
 enum { O_TOGGLE, O_CHOICE };
 enum { W_ALL, W_HOST, W_GUEST };
 struct Opt {
@@ -778,27 +784,28 @@ static bool Modern() { return g_gameDir.empty() || GetPrivateProfileIntA("VCCoop
 static bool TabVisible(int t)
 {
     if (t == TAB_LOBBY) return g_lobby != LB_NONE;
+    if (t == TAB_SKIN) return g_imgOk;
     return (t != TAB_RENDER && t != TAB_FX) || Modern();
 }
 static const wchar_t *TabName(int t)
 {
-    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY" };
+    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT" };
     return g_fr ? fr[t] : en[t];
 }
 static void LayoutTabs()
 {
     float x = 440;
-    static const int order[] = { TAB_LOBBY, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP };
+    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP };
     for (int t : order) {
         if (!TabVisible(t)) { g_tabR[t] = RectF(0, 0, 0, 0); continue; }
-        float w = 22 + 8.2f * (float)wcslen(TabName(t));
+        float w = 18 + 7.6f * (float)wcslen(TabName(t));
         g_tabR[t] = RectF(x, 78, w, 26);
         x += w + 6;
     }
     if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = -1;
 }
 static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t) r.push_back(i); return r; }
-static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
+static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : t == TAB_SKIN ? SkinMaxScroll() : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
 
 static int ValueIndex(const Opt &o, int v)
 {
@@ -855,6 +862,7 @@ static void DrawOptions(Graphics &g)
 {
     if (g_tab < 0 || g_gameDir.empty()) return;
     if (g_tab == TAB_LOBBY) { DrawLobby(g); return; }
+    if (g_tab == TAB_SKIN) { DrawSkin(g); return; }
     GraphicsPath pp;
     RoundRect(pp, kOptPanel, 18);
     SolidBrush bg(Color(250, 252, 249, 251));
@@ -927,7 +935,7 @@ static void DrawOptions(Graphics &g)
 static void HitOption(float x, float y, int *row, int *part)
 {
     *row = -1; *part = 0;
-    if (g_tab < 0 || g_tab == TAB_LOBBY || !kOptList.Contains(x, y)) return;
+    if (g_tab < 0 || g_tab == TAB_LOBBY || g_tab == TAB_SKIN || !kOptList.Contains(x, y)) return;
     std::vector<int> rows = TabRows(g_tab);
     int k = (int)((y - kOptList.Y + g_scroll[g_tab]) / kRowH);
     if (k < 0 || k >= (int)rows.size()) return;
@@ -1084,7 +1092,7 @@ static void ChooseExe()
     ExeKind k = CheckExe(file);
     if (k != EXE_OK) { BadExeMessage(k); return; }
     SetExe(file);
-    LayoutTabs();
+    SkinsInit();
     WritePrivateProfileStringW(L"Lanceur", L"Exe", file, g_iniLauncher.c_str());
     StartUpdate();
 }
@@ -1155,7 +1163,7 @@ static void Launch(int mode, const std::wstring &extra = L"")
 //    puis "GET " par fichier. L'invite telecharge dans son VCCoop\mods avant le lancement ; son % part a l'hote, qui le
 //    montre a tous.
 // Le lanceur ferme le port juste avant de lancer le jeu (qui ouvre les memes).
-enum { LB_PROTO = 1, M_HELLO = 1, M_WELCOME, M_REJECT, M_STATE, M_READY, M_PROGRESS, M_GO, M_PING, M_PONG, M_CHOICE_UNUSED };
+enum { LB_PROTO = 1, M_HELLO = 1, M_WELCOME, M_REJECT, M_STATE, M_READY, M_PROGRESS, M_GO, M_PING, M_PONG, M_SKIN };
 struct SaveInfo { int slot; std::string label; };
 static std::vector<SaveInfo> g_saves;
 static SOCKET g_listen = INVALID_SOCKET, g_guestSock = INVALID_SOCKET;
@@ -1412,8 +1420,9 @@ static void LobbySession(SOCKET s)
         if (p && t == M_READY) { p->ready = q.u8() != 0; TestLog("salon : joueur %d pret=%d", id, (int)p->ready); }
         else if (p && t == M_PROGRESS) { int v = q.u8(); p->mods = v == 255 ? -2 : v; }
         else if (p && t == M_PONG) { uint32_t sent = q.u32(); p->ping = (int)(GetTickCount() - sent); }
+        else if (p && t == M_SKIN) p->skin = q.str();
         LeaveCriticalSection(&g_lcs);
-        if (t == M_READY || t == M_PROGRESS) BroadcastState();
+        if (t == M_READY || t == M_PROGRESS || t == M_SKIN) BroadcastState();
     }
     DropConn(s);   // (ferme la socket)
     BroadcastState();
@@ -1815,11 +1824,10 @@ static void DrawLobby(Graphics &g)
         g.FillPath(&rb, &rp);
         Pen rpen(me ? Color(255, 255, 170, 200) : Color(255, 240, 226, 232), 1.2f);
         g.DrawPath(&rpen, &rp);
-        // pastille (portrait du skin a l'etape 3) : couleur du joueur en jeu et initiale
-        SolidBrush av(kPlayerCol[p.id & 3]);
-        g.FillEllipse(&av, r.X + 10, r.Y + 8, 40.0f, 40.0f);
+        // portrait de sa tenue (sinon initiale), dans un cercle a la couleur du joueur en jeu
         std::wstring nm = Widen(p.name, CP_UTF8);
-        Text(g, nm.empty() ? L"?" : nm.substr(0, 1), RectF(r.X + 10, r.Y + 8, 40, 40), 18, FontStyleBold, Color(255, 255, 255, 255));
+        extern void DrawAvatar(Graphics &g, RectF r, const std::string &skin, const std::wstring &name, Color col);
+        DrawAvatar(g, RectF(r.X + 8, r.Y + 6, 44, 44), p.skin, nm, kPlayerCol[p.id & 3]);
         Text(g, nm, RectF(r.X + 60, r.Y + 7, 220, 22), 15, FontStyleBold, kInk, StringAlignmentNear);
         std::wstring line;
         if (p.id == 0) line = T(L"H\u00F4te", L"Host");
@@ -1895,6 +1903,294 @@ static bool LobbyClick(float x, float y)
     return true;
 }
 
+// ---------------------------------------------------------------- tenues : apercu 3D et portraits
+// Les modeles viennent du jeu du joueur (model3d.cpp). Deux fils : l'apercu (le modele choisi, qui tourne, rendu a la
+// taille de l'ecran) et les portraits (toutes les tenues, une fois, du plus demande au reste).
+static std::vector<std::string> g_skinList;
+static std::atomic<int> g_skinSel(0);
+static CRITICAL_SECTION g_scs;
+struct Portrait { int size; std::vector<uint32_t> px; };
+static std::map<std::string, Portrait> g_portraits;
+static std::vector<std::string> g_portraitWanted;    // demandes du salon (tenues d'autres joueurs)
+static std::atomic<int> g_skinGen(0);
+static std::atomic<float> g_prevYaw(0.0f);
+static std::atomic<int> g_prevW(0), g_prevH(0);
+static std::vector<uint32_t> g_prevFrame;
+static int g_prevFrameW, g_prevFrameH;
+static bool g_skinDrag;
+static float g_skinDragX;
+static const RectF kPrevR(452, 150, 250, 376), kGridR(712, 150, 228, 376);
+static const float kTile = 68, kTileStepX = 80, kTileStepY = 78;
+static const int kPortraitPx = 104;
+
+static std::string LowerA(std::string v) { for (auto &c : v) c = (char)tolower((unsigned char)c); return v; }
+static std::string SkinOrDefault(const std::string &skin) { return skin.empty() ? std::string("player") : LowerA(skin); }
+
+static std::wstring SkinDisplayName(const std::string &n)
+{
+    static const struct { const char *k; const wchar_t *v; } known[] = {
+        { "player", L"Tommy Vercetti" }, { "igken", L"Ken Rosenberg" }, { "igsonny", L"Sonny Forelli" }, { "igdiaz", L"Ricardo Diaz" },
+        { "igmerc", L"Mercedes" }, { "igphil", L"Phil Cassidy" }, { "igcandy", L"Candy Suxxx" }, { "igcolon", L"Colonel Cortez" },
+        { "igpercy", L"Percy" }, { "ighlary", L"Hilary King" }, { "igbuddy", L"Lance Vance" }, { "iggonz", L"Gonzalez" }, { "igjezz", L"Jezz Torrent" } };
+    for (auto &k : known) if (n == k.k) return k.v;
+    for (auto &k : known) {   // variantes numerotees (igmerc2, igphil3...)
+        size_t l = strlen(k.k);
+        if (n.size() > l && !n.compare(0, l, k.k) && isdigit((unsigned char)n[l])) return std::wstring(k.v) + L" " + Widen(n.substr(l));
+    }
+    if (!n.compare(0, 4, "play") && n.size() > 4 && isdigit((unsigned char)n[4])) return std::wstring(T(L"Tommy \u00B7 tenue ", L"Tommy \u00B7 outfit ")) + Widen(n.substr(4));
+    std::wstring w = Widen(n);
+    for (auto &c : w) c = towupper(c);
+    return w;
+}
+
+static DWORD WINAPI PreviewThread(void *)
+{
+    std::string loaded;
+    Model3D *model = NULL;
+    int gen = -1;
+    std::vector<uint32_t> buf;
+    for (;;) {
+        if (g_tab != TAB_SKIN || !g_imgOk || g_state != ST_IDLE) { Sleep(60); continue; }
+        std::string want;
+        EnterCriticalSection(&g_scs);
+        int sel = g_skinSel;
+        if (sel >= 0 && sel < (int)g_skinList.size()) want = g_skinList[sel];
+        LeaveCriticalSection(&g_scs);
+        if (want != loaded || gen != g_skinGen) { ModelFree(model); model = ModelLoad(want); loaded = want; gen = g_skinGen; }
+        int w = g_prevW, h = g_prevH;
+        if (w <= 0 || h <= 0) { Sleep(30); continue; }
+        buf.resize((size_t)w * h);
+        DWORD t0 = GetTickCount();
+        ModelRender(model, buf.data(), w, h, g_prevYaw, false);
+        DWORD spent = GetTickCount() - t0;
+        EnterCriticalSection(&g_scs);
+        g_prevFrame.swap(buf);
+        g_prevFrameW = w; g_prevFrameH = h;
+        LeaveCriticalSection(&g_scs);
+        Sleep(spent < 25 ? 33 - spent : 8);   // ~30 images/s au plus
+    }
+}
+
+static DWORD WINAPI PortraitThread(void *)
+{
+    for (;;) {
+        int gen = g_skinGen;
+        std::string next;
+        EnterCriticalSection(&g_scs);
+        for (auto &n : g_portraitWanted) if (!g_portraits.count(n)) { next = n; break; }
+        if (next.empty()) for (auto &n : g_skinList) if (!g_portraits.count(n)) { next = n; break; }
+        LeaveCriticalSection(&g_scs);
+        if (next.empty() || !g_imgOk) { Sleep(200); continue; }
+        Portrait pr;
+        pr.size = kPortraitPx;
+        pr.px.assign((size_t)kPortraitPx * kPortraitPx, 0);
+        Model3D *m = ModelLoad(next);
+        if (m) ModelRender(m, pr.px.data(), kPortraitPx, kPortraitPx, 0.3f, true);
+        ModelFree(m);
+        EnterCriticalSection(&g_scs);
+        if (gen == g_skinGen) g_portraits[next] = std::move(pr);
+        LeaveCriticalSection(&g_scs);
+    }
+}
+
+// Catalogue du jeu choisi : liste des tenues, selection = Tenue de vccoop-joueur.ini.
+static void SkinsInit()
+{
+    static bool threads;
+    bool ok = !g_gameDir.empty() && ImgOpen(g_gameDir);
+    std::vector<std::string> list = ok ? SkinList() : std::vector<std::string>();
+    EnterCriticalSection(&g_scs);
+    g_skinList = list;
+    g_portraits.clear();
+    g_portraitWanted.clear();
+    int sel = 0;
+    std::string mine = SkinOrDefault(g_gameDir.empty() ? "" : MySkin());
+    for (int i = 0; i < (int)list.size(); i++) if (list[i] == mine) sel = i;
+    g_skinSel = sel;
+    g_skinGen++;
+    LeaveCriticalSection(&g_scs);
+    g_imgOk = ok && !list.empty();
+    if (g_imgOk && !threads) {
+        threads = true;
+        HANDLE a = CreateThread(NULL, 0, PreviewThread, NULL, 0, NULL), b = CreateThread(NULL, 0, PortraitThread, NULL, 0, NULL);
+        if (a) { SetThreadPriority(a, THREAD_PRIORITY_BELOW_NORMAL); CloseHandle(a); }
+        if (b) { SetThreadPriority(b, THREAD_PRIORITY_LOWEST); CloseHandle(b); }
+    }
+    LayoutTabs();
+}
+
+static void SkinSelect(int i)
+{
+    std::string name;
+    EnterCriticalSection(&g_scs);
+    if (i < 0 || i >= (int)g_skinList.size()) { LeaveCriticalSection(&g_scs); return; }
+    g_skinSel = i;
+    name = g_skinList[i];
+    LeaveCriticalSection(&g_scs);
+    WritePrivateProfileStringA("VCCoop", "Tenue", name.c_str(), Narrow(PlayerIni()).c_str());   // celle du jeu (F7)
+    if (g_lobby == LB_GUEST) { Wr w; w.u8(M_SKIN); w.str(name); GuestSend(w); }
+    else if (g_lobby == LB_HOST) {
+        EnterCriticalSection(&g_lcs);
+        if (LobbyPeer *p = PeerById(0)) p->skin = name;
+        LeaveCriticalSection(&g_lcs);
+        BroadcastState();
+    }
+}
+
+static float SkinMaxScroll()
+{
+    EnterCriticalSection(&g_scs);
+    int n = (int)g_skinList.size();
+    LeaveCriticalSection(&g_scs);
+    int rows = (n + 2) / 3;
+    return max(0.0f, rows * kTileStepY - 10 - kGridR.Height);
+}
+
+// Portrait d'une tenue dans un cercle (salon) ; initiale si le portrait n'est pas (encore) la.
+void DrawAvatar(Graphics &g, RectF r, const std::string &skin, const std::wstring &name, Color col)
+{
+    std::string k = SkinOrDefault(skin);
+    EnterCriticalSection(&g_scs);
+    auto it = g_portraits.find(k);
+    bool have = it != g_portraits.end();
+    if (!have) { bool asked = false; for (auto &w : g_portraitWanted) asked |= w == k; if (!asked && g_portraitWanted.size() < 16) g_portraitWanted.push_back(k); }
+    SolidBrush bg(have ? Color(255, 250, 238, 244) : col);
+    g.FillEllipse(&bg, r);
+    if (have) {
+        GraphicsPath clip;
+        clip.AddEllipse(r);
+        g.SetClip(&clip);
+        Bitmap b(it->second.size, it->second.size, it->second.size * 4, PixelFormat32bppPARGB, (BYTE *)it->second.px.data());
+        g.DrawImage(&b, RectF(r.X - r.Width * 0.08f, r.Y - r.Height * 0.02f, r.Width * 1.16f, r.Height * 1.16f));
+        g.ResetClip();
+    }
+    LeaveCriticalSection(&g_scs);
+    if (have) { Pen ring(col, 2.4f); g.DrawEllipse(&ring, r); }
+    else Text(g, name.empty() ? L"?" : name.substr(0, 1), r, 18, FontStyleBold, Color(255, 255, 255, 255));
+}
+
+static int g_tileHot = -1, g_arrowHot = 0;
+
+static void DrawSkin(Graphics &g)
+{
+    GraphicsPath pp;
+    RoundRect(pp, kOptPanel, 18);
+    SolidBrush bg(Color(250, 252, 249, 251));
+    g.FillPath(&bg, &pp);
+    Pen border(Color(150, 255, 255, 255), 1.5f);
+    g.DrawPath(&border, &pp);
+
+    std::vector<std::string> list;
+    EnterCriticalSection(&g_scs);
+    list = g_skinList;
+    LeaveCriticalSection(&g_scs);
+    int sel = g_skinSel;
+    std::string cur = sel >= 0 && sel < (int)list.size() ? list[sel] : "";
+    Text(g, T(L"TENUE", L"OUTFIT"), RectF(460, 122, 200, 26), 17, FontStyleBold, kInk, StringAlignmentNear);
+    wchar_t cnt[32];
+    swprintf_s(cnt, L"%d / %d", sel + 1, (int)list.size());
+    Text(g, cnt, RectF(700, 122, 236, 26), 13, FontStyleBold, kGrey, StringAlignmentFar);
+
+    // apercu : fond doux, ombre au sol, modele rendu a la taille de l'ecran (fil PreviewThread)
+    GraphicsPath vp;
+    RoundRect(vp, kPrevR, 14);
+    LinearGradientBrush vb(kPrevR, Color(255, 255, 244, 248), Color(255, 255, 222, 214), LinearGradientModeVertical);
+    g.FillPath(&vb, &vp);
+    SolidBrush shadow(Color(40, 120, 40, 80));
+    g.FillEllipse(&shadow, kPrevR.X + kPrevR.Width / 2 - 52, kPrevR.Y + kPrevR.Height - 34, 104.0f, 16.0f);
+    g_prevW = (int)(kPrevR.Width * g_scale);
+    g_prevH = (int)((kPrevR.Height - 34) * g_scale);
+    EnterCriticalSection(&g_scs);
+    if (!g_prevFrame.empty() && g_prevFrameW > 0) {
+        Bitmap b(g_prevFrameW, g_prevFrameH, g_prevFrameW * 4, PixelFormat32bppPARGB, (BYTE *)g_prevFrame.data());
+        g.DrawImage(&b, RectF(kPrevR.X, kPrevR.Y + 8, kPrevR.Width, kPrevR.Height - 34));
+    }
+    LeaveCriticalSection(&g_scs);
+    Text(g, SkinDisplayName(cur), RectF(kPrevR.X + 30, kPrevR.Y + kPrevR.Height - 30, kPrevR.Width - 60, 24), 14, FontStyleBold, kInk);
+    for (int side = -1; side <= 1; side += 2) {   // tenue precedente / suivante
+        RectF a(side < 0 ? kPrevR.X + 6 : kPrevR.X + kPrevR.Width - 34, kPrevR.Y + kPrevR.Height - 34, 28, 28);
+        SolidBrush ab(g_arrowHot == side ? kPink : Color(255, 255, 255, 255));
+        g.FillEllipse(&ab, a);
+        Text(g, side < 0 ? L"\u2039" : L"\u203A", RectF(a.X, a.Y - 2, a.Width, a.Height), 20, FontStyleBold, g_arrowHot == side ? Color(255, 255, 255, 255) : kPink);
+    }
+
+    // grille des portraits
+    float sc = g_scroll[TAB_SKIN];
+    g.SetClip(kGridR);
+    for (int i = 0; i < (int)list.size(); i++) {
+        RectF t(kGridR.X + (i % 3) * kTileStepX, kGridR.Y + (i / 3) * kTileStepY - sc, kTile, kTile);
+        if (t.Y + t.Height < kGridR.Y || t.Y > kGridR.Y + kGridR.Height) continue;
+        GraphicsPath tp;
+        RoundRect(tp, t, 12);
+        SolidBrush tb(i == sel ? Color(255, 255, 236, 244) : Color(255, 255, 255, 255));
+        g.FillPath(&tb, &tp);
+        EnterCriticalSection(&g_scs);
+        auto it = g_portraits.find(list[i]);
+        if (it != g_portraits.end()) {
+            Region old;
+            g.GetClip(&old);
+            g.SetClip(&tp, CombineModeIntersect);
+            Bitmap b(it->second.size, it->second.size, it->second.size * 4, PixelFormat32bppPARGB, (BYTE *)it->second.px.data());
+            g.DrawImage(&b, t);
+            g.SetClip(&old);
+        }
+        LeaveCriticalSection(&g_scs);
+        Pen tpen(i == sel ? kPink : i == g_tileHot ? Color(255, 255, 170, 200) : Color(255, 240, 226, 232), i == sel ? 2.4f : 1.2f);
+        g.DrawPath(&tpen, &tp);
+    }
+    g.ResetClip();
+    float ms = SkinMaxScroll();
+    if (ms > 0) {
+        float h = kGridR.Height * kGridR.Height / (kGridR.Height + ms), y = kGridR.Y + (kGridR.Height - h) * sc / ms;
+        GraphicsPath sp; RoundRect(sp, RectF(kGridR.X + kGridR.Width + 4, y, 4, h), 2);
+        SolidBrush sb(Color(120, 255, 79, 139)); g.FillPath(&sb, &sp);
+    }
+    Pen sep(Color(255, 240, 214, 226), 1);
+    g.DrawLine(&sep, kOptPanel.X + 18, 536.0f, kOptPanel.X + kOptPanel.Width - 18, 536.0f);
+    FontFamily fam(L"Segoe UI");
+    Font font(&fam, 12, FontStyleRegular, UnitPixel);
+    StringFormat sf;
+    sf.SetLineAlignment(StringAlignmentCenter);
+    SolidBrush db(kGrey);
+    g.DrawString(T(L"Ta tenue en jeu (la m\u00EAme que F7). Clique sur un portrait ; fais tourner le mod\u00E8le \u00E0 la souris.",
+                   L"Your in-game outfit (same as F7). Click a portrait; drag the model to turn it."), -1, &font, RectF(kOptPanel.X + 20, 540, kOptPanel.Width - 40, 42), &sf, &db);
+}
+
+static int SkinTileAt(float x, float y)
+{
+    if (!kGridR.Contains(x, y)) return -1;
+    float gx = x - kGridR.X, gy = y - kGridR.Y + g_scroll[TAB_SKIN];
+    int col = (int)(gx / kTileStepX), row = (int)(gy / kTileStepY);
+    if (col > 2 || gx - col * kTileStepX > kTile || gy - row * kTileStepY > kTile) return -1;
+    int i = row * 3 + col;
+    EnterCriticalSection(&g_scs);
+    int n = (int)g_skinList.size();
+    LeaveCriticalSection(&g_scs);
+    return i < n ? i : -1;
+}
+static int SkinArrowAt(float x, float y)
+{
+    RectF l(kPrevR.X + 6, kPrevR.Y + kPrevR.Height - 34, 28, 28), r(kPrevR.X + kPrevR.Width - 34, kPrevR.Y + kPrevR.Height - 34, 28, 28);
+    return l.Contains(x, y) ? -1 : r.Contains(x, y) ? 1 : 0;
+}
+// Clic dans l'onglet TENUE : vrai si traite ; *drag : commence a tourner le modele.
+static bool SkinMouseDown(float x, float y, bool *drag)
+{
+    *drag = false;
+    int a = SkinArrowAt(x, y);
+    if (a) {
+        EnterCriticalSection(&g_scs);
+        int n = (int)g_skinList.size();
+        LeaveCriticalSection(&g_scs);
+        if (n) SkinSelect((g_skinSel + a + n) % n);
+        return true;
+    }
+    int t = SkinTileAt(x, y);
+    if (t >= 0) { SkinSelect(t); return true; }
+    if (kPrevR.Contains(x, y)) { *drag = true; g_skinDrag = true; g_skinDragX = x; return true; }
+    return kOptPanel.Contains(x, y);
+}
+
 static void OnButton(int id)
 {
     switch (id) {
@@ -1923,6 +2219,7 @@ static void Tick()
     DWORD now = GetTickCount();
     float dt = min((now - last) / 1000.0f, 0.1f);
     last = now;
+    if (g_tab == TAB_SKIN && !g_skinDrag) g_prevYaw = g_prevYaw + dt * 0.55f;
     g_time += dt;
     for (int i = 0; i < B_COUNT; i++) {
         float want = (g_hot == i && g_btn[i].enabled) ? 1.0f : 0.0f;
@@ -2020,12 +2317,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         g_hot = HitButton(x, y);
         g_tabHot = HitTab(x, y);
         HitOption(x, y, &g_optHot, &g_optPart);
+        if (g_skinDrag) { g_prevYaw = g_prevYaw + (x - g_skinDragX) * 0.018f; g_skinDragX = x; }
+        g_tileHot = g_tab == TAB_SKIN ? SkinTileAt(x, y) : -1;
+        g_arrowHot = g_tab == TAB_SKIN ? SkinArrowAt(x, y) : 0;
         TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
         TrackMouseEvent(&tme);
-        SetCursor(LoadCursor(NULL, ((g_hot >= 0 && g_btn[g_hot].enabled) || g_tabHot >= 0 || g_optHot >= 0) ? IDC_HAND : HitField(x, y) >= 0 ? IDC_IBEAM : IDC_ARROW));
+        SetCursor(LoadCursor(NULL, (g_skinDrag || (g_tab == TAB_SKIN && kPrevR.Contains(x, y))) ? IDC_SIZEWE
+                                   : ((g_hot >= 0 && g_btn[g_hot].enabled) || g_tabHot >= 0 || g_optHot >= 0 || g_tileHot >= 0 || g_arrowHot) ? IDC_HAND
+                                   : HitField(x, y) >= 0 ? IDC_IBEAM : IDC_ARROW));
         return 0;
     }
-    case WM_MOUSELEAVE: g_hot = -1; g_tabHot = -1; g_optHot = -1; return 0;
+    case WM_MOUSELEAVE: g_hot = -1; g_tabHot = -1; g_optHot = -1; g_tileHot = -1; g_arrowHot = 0; return 0;
     case WM_MOUSEWHEEL:
         if (g_tab >= 0) {
             float step = -(short)HIWORD(wp) / 120.0f * kRowH * 1.5f;
@@ -2048,12 +2350,14 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         HitOption(x, y, &row, &part);
         if (row >= 0) { OptStep(row, part < 0 ? -1 : 1); return 0; }
         if (g_tab == TAB_LOBBY && LobbyClick(x, y)) return 0;
+        if (g_tab == TAB_SKIN) { bool drag; if (SkinMouseDown(x, y, &drag)) { if (drag) SetCapture(h); return 0; } }
         if (g_tab >= 0 && kOptPanel.Contains(x, y)) return 0;
         ReleaseCapture();
         SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);   // glisser la fenetre
         return 0;
     }
     case WM_LBUTTONUP: {
+        if (g_skinDrag) { g_skinDrag = false; ReleaseCapture(); return 0; }
         int p = g_pressed;
         g_pressed = -1;
         ReleaseCapture();
@@ -2154,6 +2458,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
 {
     InitializeCriticalSection(&g_cs);
     InitializeCriticalSection(&g_lcs);
+    InitializeCriticalSection(&g_scs);
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
     g_fr = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_FRENCH;
@@ -2190,7 +2495,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     std::wstring start = (saved[0] && FileExists(saved)) ? saved : g_dir + L"gta-vc.exe";
     SetExe(start);
     LoadBackground();
-    LayoutTabs();
+    SkinsInit();
     if (g_exeKind == EXE_MISSING) SetStatus(K_ERR, T(L"Choisis ton gta-vc.exe (version 1.0)", L"Choose your gta-vc.exe (version 1.0)"));
     else if (g_exeKind != EXE_OK) SetStatus(K_ERR, T(L"Ce gta-vc.exe n'est pas la version 1.0", L"This gta-vc.exe is not version 1.0"));
     else SetStatus(K_NORMAL, L"VCCoop %s", g_localVer.empty() ? L"" : g_localVer.c_str());
@@ -2204,6 +2509,49 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         delete g_bg;
         GdiplusShutdown(gtok);
         return 0;
+    }
+
+    // /testmodele <dossier du jeu\> <sortie.png> : planche des tenues (6 de face, 6 de trois quarts, 6 portraits)
+    if (argc >= 4 && !_wcsicmp(argv[1], L"/testmodele")) {
+        int rc = 1;
+        if (ImgOpen(argv[2])) {
+            std::vector<std::string> skins = SkinList();
+            FILE *lf = _wfopen((std::wstring(argv[3]) + L".txt").c_str(), L"w");
+            if (lf) { fprintf(lf, "%d tenues :", (int)skins.size()); for (auto &k : skins) fprintf(lf, " %s", k.c_str()); fprintf(lf, "\n"); }
+            const int CW = 200, CH = 300;
+            Bitmap sheet(CW * 6, CH * 2 + 140, PixelFormat32bppARGB);
+            {
+                Graphics g(&sheet);
+                g.Clear(Color(255, 40, 70, 110));
+                std::vector<uint32_t> buf(CW * CH);
+                const char *pick[6] = { "player", "play3", "igken", "hfyst", "cop", "wmybe" };
+                for (int i = 0; i < 12; i++) {
+                    std::string name = i < 6 ? pick[i] : skins[min((size_t)(i * 11), skins.size() - 1)];
+                    DWORD t0 = GetTickCount();
+                    Model3D *m = ModelLoad(name);
+                    DWORD t1 = GetTickCount();
+                    ModelRender(m, buf.data(), CW, CH, i < 6 ? 0.0f : 0.7f, false);
+                    DWORD t2 = GetTickCount();
+                    { float lo[3], hi[3]; ModelBounds(m, lo, hi); if (lf) fprintf(lf, "%s : %s, chargement %lu ms, rendu %lu ms, boite %.2f %.2f %.2f / %.2f %.2f %.2f\n", name.c_str(), m ? "ok" : "ECHEC", t1 - t0, t2 - t1, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]); }
+                    Bitmap b(CW, CH, CW * 4, PixelFormat32bppPARGB, (BYTE *)buf.data());
+                    g.DrawImage(&b, (i % 6) * CW, (i / 6) * CH, CW, CH);
+                    Text(g, Widen(name), RectF((float)(i % 6) * CW, (float)(i / 6) * CH + CH - 22, (float)CW, 20), 13, FontStyleBold, Color(255, 255, 255, 255));
+                    if (i < 6) {
+                        std::vector<uint32_t> pb(128 * 128);
+                        ModelRender(m, pb.data(), 128, 128, 0.25f, true);
+                        Bitmap pbm(128, 128, 128 * 4, PixelFormat32bppPARGB, (BYTE *)pb.data());
+                        g.DrawImage(&pbm, i * CW + 36, CH * 2 + 6, 128, 128);
+                    }
+                    ModelFree(m);
+                }
+            }
+            CLSID png;
+            if (EncoderClsid(L"image/png", &png) && sheet.Save(argv[3], &png, NULL) == Ok) rc = 0;
+            if (lf) fclose(lf);
+        }
+        delete g_bg;
+        GdiplusShutdown(gtok);
+        return rc;
     }
 
     // /testoptions <journal> : fait avancer quelques options (test de l'ecriture dans vccoop.ini)
@@ -2242,7 +2590,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             g_saves = { { 1, "1 \xC2\xB7 AU DEBUT... \xC2\xB7 25/09 21:51" } };
             g_lobbyChoice = 1;
             g_lobbyChoiceLabel = "1 \xC2\xB7 AU DEBUT... \xC2\xB7 25/09 21:51";
-            g_peers = { { 0, "JD", "", true, -1, 0 }, { 1, "GG", "", true, 100, 34 }, { 2, "Sam", "", false, 42, 61 } };
+            g_peers = { { 0, "JD", "", true, -1, 0 }, { 1, "GG", "igken", true, 100, 34 }, { 2, "Sam", "hfyst", false, 42, 61 } };
             g_meReady = false;
             g_tab = TAB_LOBBY;
             LayoutTabs();
@@ -2250,9 +2598,25 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             if (host) SetStatus(K_OK, T(L"Salon ouvert \u00B7 port 7790", L"Lobby open \u00B7 port 7790"));
             g_localVer = L"2026.09.29m";
         }
+        else if (st == L"tenue") { g_tab = TAB_SKIN; g_skinSel = 0; g_prevYaw = 0.35f; g_tileHot = 4; }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }
         else { g_localVer = g_localVer.empty() ? L"2026.09.29h" : g_localVer; SetStatus(K_OK, T(L"VCCoop %s \u00B7 \u00E0 jour", L"VCCoop %s \u00B7 up to date"), g_localVer.c_str()); g_hot = B_HOST; g_btn[B_HOST].hover = 1; }
         int rc = 1;
+        // tenues : attendre l'apercu et les portraits (fils de fond)
+        if (g_imgOk && (st == L"tenue" || st == L"salon" || st == L"saloninvite")) {
+            g_prevW = (int)kPrevR.Width; g_prevH = (int)(kPrevR.Height - 34);
+            int st0 = g_state; g_state = ST_IDLE;
+            if (st == L"salon" || st == L"saloninvite") { EnterCriticalSection(&g_scs); g_portraitWanted = { "player", "igken", "hfyst" }; LeaveCriticalSection(&g_scs); }
+            for (int i = 0; i < 100; i++) {
+                EnterCriticalSection(&g_scs);
+                size_t np = g_portraits.size();
+                bool frame = !g_prevFrame.empty();
+                LeaveCriticalSection(&g_scs);
+                if (np >= 15 && (frame || st != L"tenue")) break;
+                Sleep(100);
+            }
+            g_state = st0;
+        }
         {
             Bitmap out((INT)kImgW, (INT)kImgH, PixelFormat32bppPARGB);
             RenderTo(out, 1.0f);

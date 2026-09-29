@@ -65,7 +65,8 @@ it starts** and installs it by itself (your `vccoop.ini` settings and `vccoop-jo
 **Host** opens a **lobby** (game port, 7790 by default) and **Join** enters it: player list (ready, ping), the
 host's shared mods downloaded beforehand with everyone's %, *New game* or *Load* one of the host's saves, and
 **Start** launches everyone's game straight into the session (**Join in game** if the host is already playing;
-**Play** = the game's COOP menu, no lobby).
+**Play** = the game's COOP menu, no lobby). The **Outfit** tab picks your in-game outfit (the F7 list) with a turning
+3D preview and portraits, also shown next to each name in the lobby; the models are read from your own game files.
 Its **Video / Rendering / Effects / Co-op** tabs change the `vccoop.ini` settings (the same as the
 game's COOP menu; Rendering and Effects only with Direct3D 9, host settings tagged HOST).
 It stays on screen until the game window shows up. English unless Windows is in French
@@ -321,7 +322,9 @@ GitHub **à chaque démarrage** et l'installe tout seul (réglages de `vccoop.in
 gardés). **Héberger** ouvre un **salon** (port du jeu, 7790 par défaut) et **Rejoindre** y entre : liste des
 joueurs (prêt, ping), mods partagés de l'hôte téléchargés avant la partie avec le % de chacun, *Nouvelle partie* ou
 *Charger* une sauvegarde de l'hôte, puis **Lancer** démarre le jeu de chacun, directement en partie (**Rejoindre en
-jeu** si l'hôte joue déjà ; **Jouer** = menu COOP du jeu, sans salon). Ses onglets **Vidéo / Rendu / Effets / Coop** modifient les réglages de `vccoop.ini` (les mêmes que le
+jeu** si l'hôte joue déjà ; **Jouer** = menu COOP du jeu, sans salon). L'onglet **Tenue** choisit ta tenue en jeu (la liste de F7) avec un aperçu
+3D qui tourne et des portraits, repris à côté de chaque pseudo dans le salon ; les modèles sont lus dans les fichiers de
+ton jeu. Ses onglets **Vidéo / Rendu / Effets / Coop** modifient les réglages de `vccoop.ini` (les mêmes que le
 menu COOP du jeu ; Rendu et Effets seulement en Direct3D 9, réglages d'hôte marqués HÔTE).
 Il reste affiché jusqu'à l'apparition de la fenêtre du jeu. En français si Windows est en
 français, sinon en anglais (`Langue=fr|en` dans `[Lanceur]` de `vccoop-launcher.ini` pour forcer). Son fond est
