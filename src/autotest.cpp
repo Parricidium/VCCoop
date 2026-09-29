@@ -249,6 +249,34 @@ void AutotestFrame()
                 Log("autotest : ragdoll, voiture lancee sur %08X", PedHandle(victim));
             }
         }
+        // 3e phase : un passant tue sur le toit d'une voiture arretee, puis la voiture demarre (il doit tomber).
+        static void *roofCar, *roofVictim;
+        static uint32_t roofAt;
+        if (t >= 1000 && !roofCar) {
+            roofVictim = nearestCiv(first);
+            if (roofVictim && roofVictim != victim && HasModelLoaded(130)) {
+                RegisterReference(roofVictim, &roofVictim);
+                void *v = VehicleAlloc();
+                AutomobileCtor(v, 130, 1);
+                Pos(v) = { base.x + hx * 9.0f - hy * 1.5f, base.y + hy * 9.0f + hx * 1.5f, base.z + 0.3f };
+                SetHeadingMatrix(v, hh + 1.5708f);
+                SetEntityStatus(v, STATUS_ABANDONED);
+                WorldAdd(v);
+                roofCar = v; RegisterReference(v, &roofCar);
+                Pos(roofVictim) = { Pos(v).x, Pos(v).y, Pos(v).z + 2.2f };
+                MoveSpeed(roofVictim) = { 0, 0, 0 };
+                ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(roofVictim, me, 0, 1000.0f, 3, 0);
+                roofAt = frame;
+                Log("autotest : ragdoll, passant %08X tue sur le toit d'une voiture", PedHandle(roofVictim));
+            }
+        }
+        if (roofCar && frame - roofAt >= 150 && frame - roofAt < 200) {   // 5 s plus tard, elle part
+            Vec3 f = Field<Vec3>(roofCar, 0x14);
+            MoveSpeed(roofCar) = { f.x * 0.2f, f.y * 0.2f, MoveSpeed(roofCar).z };
+            if (frame - roofAt == 150) Log("autotest : ragdoll, la voiture du toit demarre");
+        }
+        if (roofVictim && roofAt && (frame - roofAt) % 30 == 0 && frame - roofAt <= 300)
+            Log("autotest : ragdoll, corps du toit en z %.2f (voiture z %.2f)", Pos(roofVictim).z, roofCar ? Pos(roofCar).z : 0.0f);
         if (car && victim && frame - launchAt >= 20 && frame - launchAt < 120) {
             float dx = Pos(victim).x - Pos(car).x, dy = Pos(victim).y - Pos(car).y, l = sqrtf(dx * dx + dy * dy);
             if (l > 0.5f && (frame - launchAt) % 10 == 0) Log("autotest : ragdoll, voiture a %.1f m de la victime (etat %d, sante %.0f)", l, PedState(victim), Health(victim));
