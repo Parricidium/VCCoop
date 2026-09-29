@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 19 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 20 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -101,6 +101,7 @@ struct MsgVehicle {
     uint8_t vflags;          // 1 phares, 2 moteur, 4 sirene/gyrophare, 8 klaxon, 16 lumiere de taxi
     int8_t doorLock;         // m_nDoorLock (+0x230) : une copie verrouillee comme l'original
     float lean, pedLean;     // moto : inclinaison (CBike +0x46C) et penchement du pilote (+0x478)
+    int8_t extras[2];        // pieces en option tirees au hasard par le jeu (capote, galerie... : m_aExtras +0x1A2)
 };
 struct MsgVehRemove { uint8_t type; uint32_t id; };
 
