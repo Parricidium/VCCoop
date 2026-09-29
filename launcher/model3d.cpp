@@ -22,6 +22,7 @@ std::map<std::string, Entry> g_img;              // nom du fichier en minuscules
 std::vector<std::string> g_dffOrder;             // modeles dans l'ordre de gta3.dir
 std::map<std::string, std::wstring> g_mods;      // VCCoop\mods : nom en minuscules -> chemin
 std::vector<std::string> g_pedNames;             // default.ide, section peds : index = numero du modele
+std::map<std::string, float> g_wheelScale;       // default.ide, section cars : taille des roues de chaque vehicule
 
 std::string Lower(std::string s) { for (auto &c : s) c = (char)tolower((unsigned char)c); return s; }
 std::string Narrow(const std::wstring &w)
@@ -408,7 +409,7 @@ struct Model3D {
 bool ImgOpen(const std::wstring &gameDir)
 {
     g_dir = gameDir;
-    g_img.clear(); g_dffOrder.clear(); g_mods.clear(); g_pedNames.clear();
+    g_img.clear(); g_dffOrder.clear(); g_mods.clear(); g_pedNames.clear(); g_wheelScale.clear();
     std::vector<uint8_t> d;
     if (!ReadRange(gameDir + L"models\\gta3.dir", 0, 0xFFFFFFFF, d)) return false;
     for (size_t i = 0; i + 32 <= d.size(); i += 32) {
@@ -428,6 +429,26 @@ bool ImgOpen(const std::wstring &gameDir)
     std::vector<uint8_t> ide;
     if (ReadRange(gameDir + L"data\\default.ide", 0, 0xFFFFFFFF, ide)) {
         std::string text(ide.begin(), ide.end());
+        // cars : "... , roue, echelle des roues" (deux derniers champs)
+        {
+            bool inCars = false;
+            size_t q = 0;
+            while (q < text.size()) {
+                size_t e = text.find('\n', q);
+                if (e == std::string::npos) e = text.size();
+                std::string line = text.substr(q, e - q);
+                q = e + 1;
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+                std::string low = Lower(line);
+                if (!inCars) { if (low == "cars") inCars = true; continue; }
+                if (low == "end") break;
+                if (line.empty() || line[0] == '#') continue;
+                std::vector<std::string> f;
+                size_t a = 0;
+                while (a <= line.size()) { size_t c = line.find(',', a); if (c == std::string::npos) c = line.size(); std::string v = line.substr(a, c - a); v.erase(0, v.find_first_not_of(" \t")); v.erase(v.find_last_not_of(" \t") + 1); f.push_back(v); a = c + 1; }
+                if (f.size() >= 13) { float sc = (float)atof(f.back().c_str()); if (sc > 0.1f && sc < 3.0f) g_wheelScale[Lower(f[1])] = sc; }
+            }
+        }
         bool in = false;
         size_t p = 0;
         while (p < text.size()) {
@@ -469,8 +490,10 @@ std::vector<std::string> SkinList()
     return out;
 }
 
-static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector<uint8_t> &txd)
+static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector<uint8_t> &txd, const std::string &modelName)
 {
+    auto ws = g_wheelScale.find(Lower(modelName));
+    float wheelScale = ws != g_wheelScale.end() ? ws->second : 0.7f;
     Rd r(dff.data(), dff.data() + dff.size());
     Chunk clump;
     if (!r.chunk(clump) || clump.type != 0x10) return NULL;
@@ -598,6 +621,16 @@ static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector
         // Espace des personnages de GTA : verticale Y, visage vers -Z ; remis a la verticale Z, visage vers +Y (camera).
         static const float kUpright[12] = { -1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0 };
         if (g.skinned && skin.empty()) memcpy(M, kUpright, sizeof(M));   // secours : sans squelette lisible
+        // Roues du modele (wheel_lf...) : comme le jeu, a l'echelle des roues du vehicule (default.ide) ; celles de gauche
+        // tournees d'un demi-tour (le modele de roue est fait pour la droite).
+        if (!g.skinned && at.first >= 0 && at.first < (int)frames.size()) {
+            const std::string &fn = frames[at.first].name;
+            if (!fn.compare(0, 6, "wheel_") && fn.find("dummy") == std::string::npos) {
+                float k = wheelScale, flip = (fn.size() > 6 && fn[6] == 'l') ? -1.0f : 1.0f;
+                float W[12] = { k * flip, 0, 0, 0, k * flip, 0, 0, 0, k, 0, 0, 0 };
+                memcpy(M, W, sizeof(M));
+            }
+        }
         if (!g.skinned) {
             for (int f = at.first, guard = 0; f >= 0 && f < (int)frames.size() && guard < 64; f = frames[f].parent, guard++) {
                 const float *L = frames[f].m;
@@ -670,7 +703,7 @@ static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector
             float M[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
             for (int k = (int)f, guard = 0; k >= 0 && k < (int)frames.size() && guard < 64; k = frames[k].parent, guard++) Mul(M, frames[k].m, M);
             float cx = M[9], cy = M[10], cz = M[11];
-            const float R = 0.34f, Wd = 0.12f;
+            const float R = 0.5f * wheelScale, Wd = 0.12f;
             int matTyre = (int)m->mats.size(), matHub = matTyre + 1;
             Mat tyre; tyre.r = 34; tyre.g = 34; tyre.b = 38;
             Mat hub; hub.r = 175; hub.g = 178; hub.b = 188;
@@ -716,22 +749,22 @@ Model3D *ModelLoad(const std::string &name)
 {
     std::vector<uint8_t> dff, txd;
     if (!GetFile(name + ".dff", dff) || !GetFile(name + ".txd", txd)) return NULL;
-    return ModelFromData(dff, txd);
+    return ModelFromData(dff, txd, name);
 }
 
 Model3D *ModelLoadPath(const std::wstring &dffPath, const std::wstring &txdPath)
 {
     std::vector<uint8_t> dff, txd;
     if (!ReadRange(dffPath, 0, 0xFFFFFFFF, dff)) return NULL;
+    std::string base = Lower(Narrow(dffPath));
+    size_t sl = base.find_last_of("\\/"), dot = base.rfind('.');
+    base = base.substr(sl == std::string::npos ? 0 : sl + 1, dot == std::string::npos ? std::string::npos : dot - (sl == std::string::npos ? 0 : sl + 1));
     if (txdPath.empty() || !ReadRange(txdPath, 0, 0xFFFFFFFF, txd)) {
         // textures du jeu du meme nom (mod qui ne remplace que le modele)
-        std::string base = Lower(Narrow(dffPath));
-        size_t sl = base.find_last_of("\\/"), dot = base.rfind('.');
-        base = base.substr(sl == std::string::npos ? 0 : sl + 1, dot == std::string::npos ? std::string::npos : dot - (sl == std::string::npos ? 0 : sl + 1));
         auto e = g_img.find(base + ".txd");
         if (e != g_img.end()) ReadRange(g_dir + L"models\\gta3.img", (uint64_t)e->second.off * 2048, e->second.size * 2048, txd);
     }
-    return ModelFromData(dff, txd);
+    return ModelFromData(dff, txd, base);
 }
 
 void ModelFree(Model3D *m) { delete m; }

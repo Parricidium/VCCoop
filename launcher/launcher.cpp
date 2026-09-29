@@ -2896,7 +2896,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         float lo[3], hi[3];
         ModelBounds(m, lo, hi);
         std::vector<uint32_t> px(400 * 300);
-        ModelRender(m, px.data(), 400, 300, 0.6f, 2);
+        ModelRender(m, px.data(), 400, 300, argc >= 7 ? (float)_wtof(argv[6]) : 0.6f, 2);
         DWORD t2 = GetTickCount();
         int painted = 0;
         for (uint32_t c : px) painted += c != 0;
