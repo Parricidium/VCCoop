@@ -18,6 +18,7 @@ Model3D *ModelLoad(const std::string &name);
 // Modele d'un fichier .dff (mod), textures du .txd donne ou, a defaut, celles du jeu du meme nom.
 Model3D *ModelLoadPath(const std::wstring &dffPath, const std::wstring &txdPath);
 void ModelFree(Model3D *m);
+std::string ModelInfo(const Model3D *m);   // diagnostic : textures (taille, couleur moyenne), materiaux
 void ModelBounds(const Model3D *m, float *lo, float *hi);
 // Rendu dans out (w x h, ARGB premultiplie, fond transparent). yaw : rotation autour de la verticale (0 = de face).
 // style : 0 = personnage en pied, 1 = portrait (visage), 2 = objet ou vehicule (toute la boite, vue du dessus).

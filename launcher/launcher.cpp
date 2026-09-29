@@ -2887,6 +2887,32 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         return rc;
     }
 
+    // /testmod <jeu\> <dff> <txd|-> <png> : rendu d'un modele de mod (objet) et sa boite
+    if (argc >= 6 && !_wcsicmp(argv[1], L"/testmod")) {
+        ImgOpen(argv[2]);
+        DWORD t0 = GetTickCount();
+        Model3D *m = ModelLoadPath(argv[3], wcscmp(argv[4], L"-") ? argv[4] : L"");
+        DWORD t1 = GetTickCount();
+        float lo[3], hi[3];
+        ModelBounds(m, lo, hi);
+        std::vector<uint32_t> px(400 * 300);
+        ModelRender(m, px.data(), 400, 300, 0.6f, 2);
+        DWORD t2 = GetTickCount();
+        int painted = 0;
+        for (uint32_t c : px) painted += c != 0;
+        FILE *f = _wfopen((std::wstring(argv[5]) + L".txt").c_str(), L"w");
+        if (f) { fprintf(f, "modele %s, chargement %lu ms, rendu %lu ms, boite %.2f %.2f %.2f / %.2f %.2f %.2f, pixels %d\n%s", m ? "ok" : "ECHEC", t1 - t0, t2 - t1, lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], painted, ModelInfo(m).c_str()); fclose(f); }
+        {
+            Bitmap out(400, 300, 400 * 4, PixelFormat32bppPARGB, (BYTE *)px.data());
+            CLSID png;
+            if (EncoderClsid(L"image/png", &png)) out.Save(argv[5], &png, NULL);
+        }
+        ModelFree(m);
+        delete g_bg;
+        GdiplusShutdown(gtok);
+        return 0;
+    }
+
     // /testoptions <journal> : fait avancer quelques options (test de l'ecriture dans vccoop.ini)
     if (argc >= 3 && !_wcsicmp(argv[1], L"/testoptions")) {
         FILE *f = _wfopen(argv[2], L"w, ccs=UTF-8");
