@@ -283,6 +283,41 @@ void AutotestFrame()
         }
         if (roofVictim && roofAt && (frame - roofAt) % 30 == 0 && frame - roofAt <= 300)
             Log("autotest : ragdoll, corps du toit en z %.2f (voiture z %.2f)", Pos(roofVictim).z, roofCar ? Pos(roofCar).z : 0.0f);
+        // 4e phase : un passant contre un mur, tue en etant pousse vers le mur ; son corps doit rester de ce cote.
+        static void *wallVictim;
+        static uint32_t wallAt;
+        static float wall[6];   // point du mur et normale (vers le cote ou est le passant)
+        if (t >= 1500 && !wallAt) {
+            wallAt = frame;
+            bool found = false;
+            float best = 1e9f;
+            for (int k = 0; k < 16; k++) {
+                float a = k * 0.3927f, s[3] = { Pos(me).x, Pos(me).y, Pos(me).z + 0.3f }, e[3] = { s[0] + cosf(a) * 20.0f, s[1] + sinf(a) * 20.0f, s[2] };
+                uint8_t col[64] = {};
+                void *ent = NULL;
+                if (!((bool(__cdecl *)(const float *, const float *, void *, void **, bool, bool, bool, bool, bool, bool, bool, bool))0x4D92D0)(s, e, col, &ent, true, false, false, true, false, false, false, false)) continue;
+                float *pt = (float *)col, *n = pt + 4;
+                float d = (pt[0] - s[0]) * (pt[0] - s[0]) + (pt[1] - s[1]) * (pt[1] - s[1]);
+                if (fabsf(n[2]) > 0.3f || d < 4.0f || d > best) continue;
+                best = d; found = true;
+                float nl = sqrtf(n[0] * n[0] + n[1] * n[1]);
+                wall[0] = pt[0]; wall[1] = pt[1]; wall[2] = pt[2]; wall[3] = n[0] / nl; wall[4] = n[1] / nl; wall[5] = 0;
+            }
+            wallVictim = found ? nearestCiv(first) : NULL;
+            if (wallVictim == victim || wallVictim == roofVictim) wallVictim = NULL;
+            if (wallVictim) {
+                RegisterReference(wallVictim, &wallVictim);
+                Pos(wallVictim) = { wall[0] + wall[3] * 0.45f, wall[1] + wall[4] * 0.45f, Pos(me).z };
+                MoveSpeed(wallVictim) = { -wall[3] * 0.12f, -wall[4] * 0.12f, 0 };   // pousse vers le mur (6 m/s)
+                ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(wallVictim, me, 0, 1000.0f, 3, 0);
+                MoveSpeed(wallVictim) = { -wall[3] * 0.12f, -wall[4] * 0.12f, 0 };
+                Log("autotest : ragdoll, passant %08X tue contre un mur a %.1f m (normale %.2f %.2f)", PedHandle(wallVictim), sqrtf(best), wall[3], wall[4]);
+            } else Log("autotest : ragdoll, pas de mur ou de passant pour la 4e phase");
+        }
+        if (wallVictim && wallAt && (frame - wallAt == 60 || frame - wallAt == 150 || frame - wallAt == 300)) {
+            float side = (Pos(wallVictim).x - wall[0]) * wall[3] + (Pos(wallVictim).y - wall[1]) * wall[4];
+            Log("autotest : ragdoll, corps contre le mur : %.2f m devant (%s)", side, side > 0 ? "bon cote" : "TRAVERSE");
+        }
         if (car && victim && frame - launchAt >= 20 && frame - launchAt < 120) {
             float dx = Pos(victim).x - Pos(car).x, dy = Pos(victim).y - Pos(car).y, l = sqrtf(dx * dx + dy * dy);
             if (l > 0.5f && (frame - launchAt) % 10 == 0) Log("autotest : ragdoll, voiture a %.1f m de la victime (etat %d, sante %.0f)", l, PedState(victim), Health(victim));

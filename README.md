@@ -12,7 +12,6 @@
 
 <p align="center">
   <a href="https://github.com/Parricidium/VCCoop/releases/latest"><img src="https://img.shields.io/github/v/release/Parricidium/VCCoop?label=Download&style=for-the-badge" alt="Download the latest release"></a>
-  <a href="https://ko-fi.com/parricidium"><img src="https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Support me on Ko-fi"></a>
 </p>
 
 # VCCoop — the Vice City story in co-op, 2 to 4 players
@@ -286,9 +285,7 @@ The game executable and any decompiled code are **not** in this repository.
   (DK22Pac).
 - Grand Theft Auto and Vice City are trademarks of Rockstar Games / Take-Two Interactive. This is an
   unofficial, non-commercial fan project, not affiliated with them; you need your own copy of the game.
-- License: not chosen yet (private repository).
-
-If you enjoy it, you can [support me on Ko-fi](https://ko-fi.com/parricidium). ❤️
+- License: not chosen yet.
 
 ---
 
@@ -554,6 +551,4 @@ L'exécutable du jeu et tout code décompilé ne sont **pas** dans ce dépôt.
   (DK22Pac).
 - Grand Theft Auto et Vice City sont des marques de Rockstar Games / Take-Two Interactive. Projet de
   fan, non officiel, non commercial, sans lien avec eux ; il faut posséder le jeu.
-- Licence : pas encore choisie (dépôt privé).
-
-Si le mod vous plaît, vous pouvez [me soutenir sur Ko-fi](https://ko-fi.com/parricidium). ❤️
+- Licence : pas encore choisie.

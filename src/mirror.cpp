@@ -931,8 +931,15 @@ static void Local(uint16_t op, int n, const int32_t *vals)
 
 void MirrorLocal(uint16_t op, int n, const int32_t *vals) { Local(op, n, vals); }
 
+// Invite : l'hote est en mission (debut recu, pas encore la fin). Pendant ce temps, pas de defi ni de mission
+// secondaire lancee chez nous (script.cpp) : la camionnette Top Fun reprise par un invite lui lancait sa propre
+// course RC pendant celle de l'hote, et son jeu passait en voiture telecommandee.
+static bool g_hostOnMission;
+bool HostOnMission() { return g_hostOnMission; }
+
 static void MissionEnd(bool gather, int mission)
 {
+    g_hostOnMission = false;
     // Remet l'ecran comme le laisse la fin d'une mission (le dernier fondu est souvent fait par le script
     // principal de l'hote, qui n'est pas reproduit) : fondu d'entree, plus de bandes, controles, camera.
     int32_t fade[2] = { 500, 1 }, off[1] = { 0 }, control[2] = { 0, 1 }, slot1[1] = { 1 }, slot2[1] = { 2 };
@@ -980,6 +987,7 @@ static void OnReliable(int from, const uint8_t *data, int len)
     if (g_cfg.host) return;
     if (data[0] == RL_NEW_GAME) {
         g_qHead = g_qTail = 0;   // ce qui restait de l'ancienne partie
+        g_hostOnMission = false;
         if (GameState() == GS_PLAYING) {
             MenuWantToLoad() = 0;
             MenuFirstTime() = 0;
@@ -1065,7 +1073,13 @@ void MirrorFrame(bool inGame)
             Log("miroir : %d variables globales recues de l'hote", (p.len - 1) / 6);
             done = true;
         }
-        else if (p.data[0] == RL_MISSION_START) { if (p.len < 2 || p.data[1]) RequestGather(); Log("miroir : debut de mission chez l'hote"); done = true; }
+        else if (p.data[0] == RL_MISSION_START) {
+            int mission = p.len >= 4 ? (int16_t)(p.data[2] | (p.data[3] << 8)) : -1;
+            g_hostOnMission = mission != 0;
+            if (p.len < 2 || p.data[1]) RequestGather();
+            Log("miroir : debut de mission chez l'hote (%d)", mission);
+            done = true;
+        }
         else if (p.data[0] == RL_SCRIPT_CMD) done = Execute(p.data, p.len, now - p.since > 3000);
         else done = true;
         if (!done) break;   // on garde l'ordre : la suite attend
