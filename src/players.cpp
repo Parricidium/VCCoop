@@ -320,6 +320,20 @@ void PlayersFrame(bool inGame)
         for (int i = 0; i < g_skinCount; i++) known |= _stricmp(g_skins[i], g_cfg.skin) == 0;
         if (known && _stricmp(PedOutfit(FindPlayerPed()), g_cfg.skin) != 0) { ApplySkin(g_cfg.skin); Log("tenues : %s remise", g_cfg.skin); }
     }
+    // Le jeu remet ensuite le Tommy d'origine (cinematique de l'intro reproduite chez l'invite, debut de partie de
+    // l'hote, fin de mission...) : la tenue choisie (F7 ou lanceur) revient des qu'il a la main, a pied, hors
+    // cinematique et hors mission. Les missions qui habillent Tommy gardent leur tenue ; une tenue prise dans une
+    // boutique (play1..12) n'est pas remplacee, seul le Tommy d'origine l'est.
+    static uint32_t lastCheck;
+    if (applied && g_cfg.skin[0] && _stricmp(g_cfg.skin, "player") != 0 && !g_menuOpen && GetTickCount() - lastCheck > 1500) {
+        lastCheck = GetTickCount();
+        void *me = FindPlayerPed();
+        if (me && !InVehicle(me) && PlayerFree() && !MissionUnderway() && _stricmp(PedOutfit(me), "player") == 0) {
+            bool known = false;
+            for (int i = 0; i < g_skinCount; i++) known |= _stricmp(g_skins[i], g_cfg.skin) == 0;
+            if (known) { ApplySkin(g_cfg.skin); Log("tenues : %s remise (le jeu avait remis Tommy)", g_cfg.skin); }
+        }
+    }
     // Test (TestTenueA=N) : la tenue de l'ini remise N s apres l'arrivee (les cinematiques de l'intro la retirent).
     static uint32_t inGameSince;
     if (!inGameSince) inGameSince = GetTickCount();

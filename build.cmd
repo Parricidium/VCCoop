@@ -10,5 +10,5 @@ echo OK build\dinput8.dll
 rem Lanceur (VCCoop.exe) : fenetre PNG, mises a jour depuis GitHub
 rc /nologo /fo build\launcher.res launcher\launcher.rc || exit /b 1
 cl /nologo /O2 /MT /W3 /EHsc /utf-8 /DUNICODE /D_UNICODE /D_CRT_SECURE_NO_WARNINGS /Fobuild\ launcher\launcher.cpp launcher\model3d.cpp build\launcher.res ^
-   /Febuild\VCCoop.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib winhttp.lib comdlg32.lib shell32.lib ole32.lib ws2_32.lib || exit /b 1
+   /Febuild\VCCoop.exe /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib gdiplus.lib winhttp.lib comdlg32.lib shell32.lib ole32.lib ws2_32.lib advapi32.lib || exit /b 1
 echo OK build\VCCoop.exe

@@ -936,6 +936,7 @@ void MirrorLocal(uint16_t op, int n, const int32_t *vals) { Local(op, n, vals); 
 // course RC pendant celle de l'hote, et son jeu passait en voiture telecommandee.
 static bool g_hostOnMission;
 bool HostOnMission() { return g_hostOnMission; }
+bool MissionUnderway() { return g_cfg.host ? (g_missionRunning && g_hostMission != 0) : (g_hostOnMission || GuestSideMission()); }
 
 static void MissionEnd(bool gather, int mission)
 {

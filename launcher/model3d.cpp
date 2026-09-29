@@ -441,10 +441,8 @@ std::vector<std::string> SkinList()
     return out;
 }
 
-Model3D *ModelLoad(const std::string &name)
+static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector<uint8_t> &txd)
 {
-    std::vector<uint8_t> dff, txd;
-    if (!GetFile(name + ".dff", dff) || !GetFile(name + ".txd", txd)) return NULL;
     Rd r(dff.data(), dff.data() + dff.size());
     Chunk clump;
     if (!r.chunk(clump) || clump.type != 0x10) return NULL;
@@ -541,10 +539,16 @@ Model3D *ModelLoad(const std::string &name)
 
     Model3D *m = new Model3D();
     ParseTxd(txd, m->texs);
+    bool haveWheel = false;
     for (auto &at : atomics) {
         if (at.second < 0 || at.second >= (int)geos.size()) continue;
         Geo &g = geos[at.second];
         if (g.pos.empty()) continue;
+        if (at.first >= 0 && at.first < (int)frames.size()) {   // vehicules : pas les pieces abimees ni la version lointaine
+            const std::string &fn = frames[at.first].name;
+            if (fn.find("_dam") != std::string::npos || fn.find("_vlo") != std::string::npos) continue;
+            if (!fn.compare(0, 5, "wheel") && fn.find("dummy") == std::string::npos) haveWheel = true;
+        }
         // matrice du cadre (et de ses parents), sauf pour un modele a squelette : sommets deja places
         float M[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
         // Squelette : chaque sommet suit ses os (poids x matrice inverse de la pose d'origine x matrice de l'os).
@@ -612,12 +616,59 @@ Model3D *ModelLoad(const std::string &name)
         for (auto &mt : g.mats) {
             Mat x = mt;
             for (int t = 0; t < (int)m->texs.size(); t++) if (m->texs[t].name == x.tex) x.ti = t;
+            // couleurs "a peindre" des vehicules (le jeu les remplace par celles de carcols.dat) : peinture neutre
+            if (x.r == 60 && x.g == 255 && x.b == 0) { x.r = 205; x.g = 208; x.b = 216; }
+            else if (x.r == 255 && x.g == 0 && x.b == 175) { x.r = 70; x.g = 72; x.b = 82; }
             m->mats.push_back(x);
         }
         for (size_t t = 0; t < g.tri.size(); t += 4) {
             m->tri.push_back(base + g.tri[t]); m->tri.push_back(base + g.tri[t + 1]); m->tri.push_back(base + g.tri[t + 2]);
             int mi = g.tri[t + 3];
             m->tri.push_back(mi >= 0 && mi < (int)g.mats.size() ? matBase + mi : -1);
+        }
+    }
+    // Roues : dans le jeu elles viennent d'un modele commun a tous les vehicules ; ici des roues simples aux emplacements
+    // wheel_*_dummy du modele.
+    if (!haveWheel && !m->tri.empty()) {
+        for (size_t f = 0; f < frames.size(); f++) {
+            const std::string &fn = frames[f].name;
+            if (fn.compare(0, 6, "wheel_") || fn.find("dummy") == std::string::npos) continue;
+            float M[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
+            for (int k = (int)f, guard = 0; k >= 0 && k < (int)frames.size() && guard < 64; k = frames[k].parent, guard++) Mul(M, frames[k].m, M);
+            float cx = M[9], cy = M[10], cz = M[11];
+            const float R = 0.34f, Wd = 0.12f;
+            int matTyre = (int)m->mats.size(), matHub = matTyre + 1;
+            Mat tyre; tyre.r = 34; tyre.g = 34; tyre.b = 38;
+            Mat hub; hub.r = 175; hub.g = 178; hub.b = 188;
+            m->mats.push_back(tyre); m->mats.push_back(hub);
+            const int S = 18;
+            int base = (int)m->pos.size() / 3;
+            for (int k = 0; k < S; k++) {   // bande de roulement : 2 anneaux ; flancs : 2 anneaux + centres
+                float a = k * 6.2831853f / S, c = cosf(a), sn = sinf(a);
+                for (int side = -1; side <= 1; side += 2) {
+                    m->pos.insert(m->pos.end(), { cx + side * Wd, cy + c * R, cz + sn * R });
+                    m->nrm.insert(m->nrm.end(), { 0, c, sn });
+                    m->uv.insert(m->uv.end(), { 0, 0 });
+                }
+            }
+            for (int k = 0; k < S; k++) {
+                int a0 = base + k * 2, a1 = base + ((k + 1) % S) * 2;
+                m->tri.insert(m->tri.end(), { a0, a0 + 1, a1 + 1, matTyre, a0, a1 + 1, a1, matTyre });
+            }
+            for (int side = -1; side <= 1; side += 2) {
+                int c0 = (int)m->pos.size() / 3;
+                m->pos.insert(m->pos.end(), { cx + side * Wd, cy, cz });
+                m->nrm.insert(m->nrm.end(), { (float)side, 0, 0 });
+                m->uv.insert(m->uv.end(), { 0, 0 });
+                int r0 = (int)m->pos.size() / 3;
+                for (int k = 0; k < S; k++) {
+                    float a = k * 6.2831853f / S;
+                    m->pos.insert(m->pos.end(), { cx + side * Wd, cy + cosf(a) * R, cz + sinf(a) * R });
+                    m->nrm.insert(m->nrm.end(), { (float)side, 0, 0 });
+                    m->uv.insert(m->uv.end(), { 0, 0 });
+                }
+                for (int k = 0; k < S; k++) m->tri.insert(m->tri.end(), { c0, r0 + k, r0 + (k + 1) % S, k % 3 == 0 ? matTyre : matHub });
+            }
         }
     }
     if (m->tri.empty()) { delete m; return NULL; }
@@ -627,11 +678,34 @@ Model3D *ModelLoad(const std::string &name)
     return m;
 }
 
+Model3D *ModelLoad(const std::string &name)
+{
+    std::vector<uint8_t> dff, txd;
+    if (!GetFile(name + ".dff", dff) || !GetFile(name + ".txd", txd)) return NULL;
+    return ModelFromData(dff, txd);
+}
+
+Model3D *ModelLoadPath(const std::wstring &dffPath, const std::wstring &txdPath)
+{
+    std::vector<uint8_t> dff, txd;
+    if (!ReadRange(dffPath, 0, 0xFFFFFFFF, dff)) return NULL;
+    if (txdPath.empty() || !ReadRange(txdPath, 0, 0xFFFFFFFF, txd)) {
+        // textures du jeu du meme nom (mod qui ne remplace que le modele)
+        std::string base = Lower(Narrow(dffPath));
+        size_t sl = base.find_last_of("\\/"), dot = base.rfind('.');
+        base = base.substr(sl == std::string::npos ? 0 : sl + 1, dot == std::string::npos ? std::string::npos : dot - (sl == std::string::npos ? 0 : sl + 1));
+        auto e = g_img.find(base + ".txd");
+        if (e != g_img.end()) ReadRange(g_dir + L"models\\gta3.img", (uint64_t)e->second.off * 2048, e->second.size * 2048, txd);
+    }
+    return ModelFromData(dff, txd);
+}
+
 void ModelFree(Model3D *m) { delete m; }
 void ModelBounds(const Model3D *m, float *lo, float *hi) { for (int j = 0; j < 3; j++) { lo[j] = m ? m->lo[j] : 0; hi[j] = m ? m->hi[j] : 0; } }
 
-void ModelRender(const Model3D *m, uint32_t *out, int w, int h, float yaw, bool portrait)
+void ModelRender(const Model3D *m, uint32_t *out, int w, int h, float yaw, int style)
 {
+    bool portrait = style == 1, object = style == 2;
     memset(out, 0, (size_t)w * h * 4);
     if (!m || w <= 0 || h <= 0) return;
     const int SS = 2, W = w * SS, H = h * SS;
@@ -644,6 +718,13 @@ void ModelRender(const Model3D *m, uint32_t *out, int w, int h, float yaw, bool 
     float frameH = portrait ? 0.21f * height : 1.08f * height;
     float pitch = portrait ? 0.06f : 0.10f, fov = 0.42f;
     float dist = frameH * 0.5f / tanf(fov * 0.5f);
+    if (object) {   // objet, vehicule : toute la boite, vue un peu du dessus
+        float dx = m->hi[0] - m->lo[0], dy = m->hi[1] - m->lo[1], radius = 0.5f * sqrtf(dx * dx + dy * dy + height * height);
+        pitch = 0.38f;
+        dist = radius / sinf(fov * 0.5f) * 0.86f;
+        float aspect = (float)w / h;
+        if (aspect < 1) dist /= aspect;
+    }
     // camera devant le personnage (il regarde vers +Y), tournee de yaw autour de lui
     float toCam[3] = { sinf(yaw) * cosf(pitch), cosf(yaw) * cosf(pitch), sinf(pitch) };
     float cam[3] = { cx + toCam[0] * dist, cy + toCam[1] * dist, tz + toCam[2] * dist };

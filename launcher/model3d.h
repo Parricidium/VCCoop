@@ -15,8 +15,10 @@ bool ImgOpen(const std::wstring &gameDir);
 std::vector<std::string> SkinList();
 // Modele et textures du meme nom. NULL si introuvable ou illisible.
 Model3D *ModelLoad(const std::string &name);
+// Modele d'un fichier .dff (mod), textures du .txd donne ou, a defaut, celles du jeu du meme nom.
+Model3D *ModelLoadPath(const std::wstring &dffPath, const std::wstring &txdPath);
 void ModelFree(Model3D *m);
 void ModelBounds(const Model3D *m, float *lo, float *hi);
 // Rendu dans out (w x h, ARGB premultiplie, fond transparent). yaw : rotation autour de la verticale (0 = de face).
-// portrait : cadre sur le visage.
-void ModelRender(const Model3D *m, uint32_t *out, int w, int h, float yaw, bool portrait);
+// style : 0 = personnage en pied, 1 = portrait (visage), 2 = objet ou vehicule (toute la boite, vue du dessus).
+void ModelRender(const Model3D *m, uint32_t *out, int w, int h, float yaw, int style);

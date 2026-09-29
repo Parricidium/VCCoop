@@ -55,7 +55,7 @@ static ExeKind g_exeKind = EXE_MISSING;
 static std::wstring g_localVer;
 static int g_state = ST_IDLE;
 static float g_scale = 1, g_alpha = 0, g_time = 0;
-static Bitmap *g_bg;
+static Bitmap *g_bg, *g_bgDark;
 static int g_winW, g_winH;
 static HDC g_memDC;
 static HBITMAP g_dib;
@@ -511,7 +511,7 @@ static void StartUpdate()
 }
 
 // ---------------------------------------------------------------- boutons
-enum { B_HOST, B_JOIN, B_PLAY, B_EXE, B_BUY, B_CLOSE, B_MIN, B_COUNT };
+enum { B_HOST, B_JOIN, B_PLAY, B_EXE, B_BUY, B_THEME, B_CLOSE, B_MIN, B_COUNT };
 struct Button { RectF r; float hover; bool visible, enabled; };
 static Button g_btn[B_COUNT];
 static int g_hot = -1, g_pressed = -1;
@@ -527,6 +527,7 @@ static void Layout()
     g_btn[B_BUY].r = RectF(236, 554, 144, 26);
     g_btn[B_CLOSE].r = RectF(938, 76, 28, 28);
     g_btn[B_MIN].r = RectF(904, 76, 28, 28);
+    g_btn[B_THEME].r = RectF(62, 100, 26, 26);   // coin du panneau, a gauche du logo
 }
 
 static void UpdateButtons()
@@ -543,7 +544,7 @@ static void UpdateButtons()
         g_btn[B_HOST].enabled = menu && (g_lobby == LB_HOST ? LobbyCanStart() : g_lobby == LB_GUEST);
     }
     g_btn[B_EXE].enabled = menu && !busy;
-    g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = true;
+    g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = g_btn[B_THEME].enabled = true;
 }
 
 // ---------------------------------------------------------------- dessin
@@ -557,7 +558,30 @@ static void RoundRect(GraphicsPath &p, RectF r, float rad)
     p.CloseFigure();
 }
 
-static const Color kInk(255, 52, 40, 62), kGrey(255, 128, 112, 130), kPink(255, 255, 79, 139), kOrange(255, 255, 138, 91);
+static const Color kPink(255, 255, 79, 139), kOrange(255, 255, 138, 91);
+// Themes clair et sombre (bouton lune / soleil ; Theme=clair|sombre dans vccoop-launcher.ini, sinon celui de Windows).
+struct Theme {
+    Color ink, grey, panel, panelBorder, sep, card, cardSel, cardBorder, choiceBorder, toggleOff, field, fieldBorder, placeholder,
+          tab, tabHot, pill, dash, dashText, thumbBg, prevA, prevB, btn2, btn2Hot, circle, circleHot, fallA, fallB;
+};
+static const Theme kLight = {
+    Color(255, 52, 40, 62), Color(255, 128, 112, 130), Color(255, 252, 249, 251), Color(150, 255, 255, 255), Color(255, 240, 214, 226),
+    Color(255, 255, 255, 255), Color(255, 255, 236, 244), Color(255, 240, 226, 232), Color(255, 240, 196, 214), Color(255, 222, 210, 218),
+    Color(235, 255, 255, 255), Color(255, 226, 206, 216), Color(255, 190, 176, 190), Color(185, 255, 255, 255), Color(240, 255, 255, 255),
+    Color(235, 52, 40, 62), Color(255, 236, 214, 224), Color(255, 200, 186, 196), Color(255, 248, 236, 242), Color(255, 255, 244, 248),
+    Color(255, 255, 222, 214), Color(215, 255, 255, 255), Color(240, 255, 236, 244), Color(150, 255, 255, 255), Color(235, 255, 255, 255),
+    Color(255, 255, 222, 236), Color(255, 255, 178, 158) };
+static const Theme kDark = {
+    Color(255, 240, 232, 248), Color(255, 172, 156, 188), Color(255, 30, 24, 42), Color(90, 255, 120, 190), Color(255, 66, 52, 82),
+    Color(255, 44, 36, 60), Color(255, 76, 40, 72), Color(255, 72, 60, 92), Color(255, 118, 66, 104), Color(255, 84, 72, 102),
+    Color(235, 40, 32, 56), Color(255, 88, 72, 108), Color(255, 124, 108, 140), Color(200, 44, 36, 60), Color(240, 66, 50, 88),
+    Color(235, 96, 70, 128), Color(255, 82, 68, 102), Color(255, 124, 108, 140), Color(255, 56, 44, 74), Color(255, 50, 36, 66),
+    Color(255, 76, 36, 62), Color(215, 44, 36, 60), Color(240, 76, 42, 72), Color(170, 44, 36, 60), Color(235, 70, 52, 92),
+    Color(255, 40, 26, 62), Color(255, 70, 30, 62) };
+static bool g_dark;
+#define TH(x) ((g_dark ? kDark : kLight).x)
+#define kInk TH(ink)
+#define kGrey TH(grey)
 
 static Color Mix(Color a, Color b, float t)
 {
@@ -600,7 +624,7 @@ static void DrawButton(Graphics &g, int id, const wchar_t *label, bool primary)
         g.FillPath(&hi, &p);
         Text(g, label, r, 15, FontStyleBold, Color((BYTE)(255 * a), 255, 255, 255));
     } else {
-        SolidBrush fill(Mix(Color((BYTE)(215 * a), 255, 255, 255), Color((BYTE)(240 * a), 255, 236, 244), b.hover));
+        SolidBrush fill(Mix(WithA(TH(btn2), a), WithA(TH(btn2Hot), a), b.hover));
         g.FillPath(&fill, &p);
         Pen pen(WithA(kPink, a), 1.6f);
         g.DrawPath(&pen, &p);
@@ -614,15 +638,15 @@ static void DrawField(Graphics &g, int i, const wchar_t *label)
     Text(g, label, RectF(f.r.X + 2, f.r.Y - 18, f.r.Width, 16), 10.5f, FontStyleBold, kGrey, StringAlignmentNear);
     GraphicsPath p;
     RoundRect(p, f.r, 9);
-    SolidBrush fill(Color(235, 255, 255, 255));
+    SolidBrush fill(TH(field));
     g.FillPath(&fill, &p);
-    Pen pen(g_focus == i ? kPink : Color(255, 226, 206, 216), g_focus == i ? 2.0f : 1.2f);
+    Pen pen(g_focus == i ? kPink : TH(fieldBorder), g_focus == i ? 2.0f : 1.2f);
     g.DrawPath(&pen, &p);
     RectF tr(f.r.X + 12, f.r.Y, f.r.Width - 24, f.r.Height);
     std::wstring shown = f.text;
     bool placeholder = shown.empty() && g_focus != i;
     if (placeholder) shown = f.address ? L"ex. 26.12.34.56" : L"Tommy";
-    Text(g, shown, tr, 15, FontStyleRegular, placeholder ? Color(255, 190, 176, 190) : kInk, StringAlignmentNear);
+    Text(g, shown, tr, 15, FontStyleRegular, placeholder ? TH(placeholder) : kInk, StringAlignmentNear);
     if (g_focus == i && fmodf(g_time, 1.0f) < 0.55f) {
         FontFamily fam(L"Segoe UI");
         Font font(&fam, 15, FontStyleRegular, UnitPixel);
@@ -661,7 +685,10 @@ static void DrawBar(Graphics &g, RectF r, float p)
 // ---------------------------------------------------------------- options (vccoop.ini du jeu)
 // Les memes cles que le menu COOP du jeu (menu.cpp SaveIni) et que dllmain.cpp LoadConfig, memes valeurs par defaut ;
 // ecrites tout de suite, prises au prochain lancement. Onglets RENDU et EFFETS : seulement avec Rendu=9 (Direct3D 9).
-enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_COUNT };
+enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_COUNT };
+static void DrawMods(Graphics &g);
+static float ModsMaxScroll();
+static void ModsScan();
 static void DrawLobby(Graphics &g);
 static bool LobbyClick(float x, float y);
 static void DrawSkin(Graphics &g);
@@ -785,27 +812,28 @@ static bool TabVisible(int t)
 {
     if (t == TAB_LOBBY) return g_lobby != LB_NONE;
     if (t == TAB_SKIN) return g_imgOk;
+    if (t == TAB_MODS) return !g_gameDir.empty() && g_lobby != LB_GUEST && g_lobby != LB_CONNECTING;   // (l'invite prend ceux de l'hote)
     return (t != TAB_RENDER && t != TAB_FX) || Modern();
 }
 static const wchar_t *TabName(int t)
 {
-    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT" };
+    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE", L"MODS" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT", L"MODS" };
     return g_fr ? fr[t] : en[t];
 }
 static void LayoutTabs()
 {
     float x = 440;
-    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP };
+    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP };
     for (int t : order) {
         if (!TabVisible(t)) { g_tabR[t] = RectF(0, 0, 0, 0); continue; }
-        float w = 18 + 7.6f * (float)wcslen(TabName(t));
+        float w = 16 + 7.2f * (float)wcslen(TabName(t));
         g_tabR[t] = RectF(x, 78, w, 26);
         x += w + 6;
     }
     if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = -1;
 }
 static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t) r.push_back(i); return r; }
-static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : t == TAB_SKIN ? SkinMaxScroll() : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
+static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : t == TAB_SKIN ? SkinMaxScroll() : t == TAB_MODS ? ModsMaxScroll() : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
 
 static int ValueIndex(const Opt &o, int v)
 {
@@ -853,7 +881,7 @@ static void DrawTabs(Graphics &g)
         RoundRect(p, r, r.Height / 2);
         bool on = g_tab == t, hot = g_tabHot == t;
         if (on) { LinearGradientBrush lg(r, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &p); }
-        else { SolidBrush b(hot ? Color(240, 255, 255, 255) : Color(185, 255, 255, 255)); g.FillPath(&b, &p); }
+        else { SolidBrush b(hot ? TH(tabHot) : TH(tab)); g.FillPath(&b, &p); }
         Text(g, TabName(t), r, 11.5f, FontStyleBold, on ? Color(255, 255, 255, 255) : Mix(kInk, kPink, hot ? 1.0f : 0.0f));
     }
 }
@@ -863,11 +891,12 @@ static void DrawOptions(Graphics &g)
     if (g_tab < 0 || g_gameDir.empty()) return;
     if (g_tab == TAB_LOBBY) { DrawLobby(g); return; }
     if (g_tab == TAB_SKIN) { DrawSkin(g); return; }
+    if (g_tab == TAB_MODS) { DrawMods(g); return; }
     GraphicsPath pp;
     RoundRect(pp, kOptPanel, 18);
-    SolidBrush bg(Color(250, 252, 249, 251));
+    SolidBrush bg(TH(panel));
     g.FillPath(&bg, &pp);
-    Pen border(Color(150, 255, 255, 255), 1.5f);
+    Pen border(TH(panelBorder), 1.5f);
     g.DrawPath(&border, &pp);
 
     std::vector<int> rows = TabRows(g_tab);
@@ -878,7 +907,7 @@ static void DrawOptions(Graphics &g)
         RectF r(kOptList.X, kOptList.Y + k * kRowH - sc, kOptList.Width - 10, kRowH);
         if (r.Y + r.Height < kOptList.Y || r.Y > kOptList.Y + kOptList.Height) continue;
         bool hot = g_optHot == rows[k];
-        if (hot) { GraphicsPath hp; RoundRect(hp, RectF(r.X, r.Y + 2, r.Width, r.Height - 4), 9); SolidBrush hb(Color(255, 255, 236, 244)); g.FillPath(&hb, &hp); }
+        if (hot) { GraphicsPath hp; RoundRect(hp, RectF(r.X, r.Y + 2, r.Width, r.Height - 4), 9); SolidBrush hb(TH(cardSel)); g.FillPath(&hb, &hp); }
         std::wstring label = g_fr ? o.fr : o.en;
         Text(g, label, RectF(r.X + 12, r.Y, 280, r.Height), 13.5f, FontStyleRegular, kInk, StringAlignmentNear);
         if (o.who != W_ALL) {   // pastille HOTE / INVITE
@@ -895,14 +924,14 @@ static void DrawOptions(Graphics &g)
             RectF tr(r.X + r.Width - 54, r.Y + 7, 42, 20);
             GraphicsPath tp; RoundRect(tp, tr, 10);
             if (v) { LinearGradientBrush lg(tr, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &tp); }
-            else { SolidBrush ob(Color(255, 222, 210, 218)); g.FillPath(&ob, &tp); }
+            else { SolidBrush ob(TH(toggleOff)); g.FillPath(&ob, &tp); }
             SolidBrush knob(Color(255, 255, 255, 255));
             g.FillEllipse(&knob, v ? tr.X + 24 : tr.X + 2, tr.Y + 2, 16.0f, 16.0f);
         } else {
             RectF cr(r.X + r.Width - 190, r.Y + 5, 178, 24);
             GraphicsPath cp; RoundRect(cp, cr, 12);
-            SolidBrush cb(Color(255, 255, 255, 255)); g.FillPath(&cb, &cp);
-            Pen cpen(Color(255, 240, 196, 214), 1.2f); g.DrawPath(&cpen, &cp);
+            SolidBrush cb(TH(card)); g.FillPath(&cb, &cp);
+            Pen cpen(TH(choiceBorder), 1.2f); g.DrawPath(&cpen, &cp);
             Color al = (hot && g_optPart < 0) ? kPink : Color(200, 255, 79, 139), ar = (hot && g_optPart > 0) ? kPink : Color(200, 255, 79, 139);
             Text(g, L"\u2039", RectF(cr.X + 4, cr.Y - 2, 18, cr.Height), 18, FontStyleBold, al);
             Text(g, L"\u203A", RectF(cr.X + cr.Width - 22, cr.Y - 2, 18, cr.Height), 18, FontStyleBold, ar);
@@ -917,7 +946,7 @@ static void DrawOptions(Graphics &g)
         SolidBrush sb(Color(120, 255, 79, 139)); g.FillPath(&sb, &sp);
     }
     // description de la ligne survolee
-    Pen sep(Color(255, 240, 214, 226), 1);
+    Pen sep(TH(sep), 1);
     g.DrawLine(&sep, kOptPanel.X + 18, 532.0f, kOptPanel.X + kOptPanel.Width - 18, 532.0f);
     std::wstring d = g_optHot >= 0 ? (g_fr ? g_opts[g_optHot].dFr : g_opts[g_optHot].dEn)
                                    : T(L"Pris au prochain lancement du jeu. Le menu COOP du jeu modifie les m\u00EAmes r\u00E9glages.",
@@ -935,7 +964,7 @@ static void DrawOptions(Graphics &g)
 static void HitOption(float x, float y, int *row, int *part)
 {
     *row = -1; *part = 0;
-    if (g_tab < 0 || g_tab == TAB_LOBBY || g_tab == TAB_SKIN || !kOptList.Contains(x, y)) return;
+    if (g_tab < 0 || g_tab == TAB_LOBBY || g_tab == TAB_SKIN || g_tab == TAB_MODS || !kOptList.Contains(x, y)) return;
     std::vector<int> rows = TabRows(g_tab);
     int k = (int)((y - kOptList.Y + g_scroll[g_tab]) / kRowH);
     if (k < 0 || k >= (int)rows.size()) return;
@@ -963,9 +992,32 @@ static void DrawUI(Graphics &g)
     float prog = g_progress;
 
     // fermer / reduire (sur l'image, en haut a droite de la carte)
+    {   // theme : lune (passer en sombre) ou soleil (passer en clair)
+        Button &b = g_btn[B_THEME];
+        SolidBrush cb(Mix(TH(circle), TH(circleHot), b.hover));
+        g.FillEllipse(&cb, b.r);
+        Color ic = Mix(kInk, kPink, b.hover);
+        float cx = b.r.X + b.r.Width / 2, cy = b.r.Y + b.r.Height / 2;
+        if (!g_dark) {
+            SolidBrush moon(ic);
+            GraphicsPath mp;
+            mp.AddEllipse(cx - 6.5f, cy - 6.5f, 13.0f, 13.0f);
+            Region rg(&mp);
+            GraphicsPath cut;
+            cut.AddEllipse(cx - 2.5f, cy - 9.0f, 13.0f, 13.0f);
+            rg.Exclude(&cut);
+            g.FillRegion(&moon, &rg);
+        } else {
+            SolidBrush sun(ic);
+            g.FillEllipse(&sun, cx - 4.0f, cy - 4.0f, 8.0f, 8.0f);
+            Pen ray(ic, 1.6f);
+            ray.SetStartCap(LineCapRound); ray.SetEndCap(LineCapRound);
+            for (int k = 0; k < 8; k++) { float a = k * 0.7854f; g.DrawLine(&ray, cx + cosf(a) * 6.5f, cy + sinf(a) * 6.5f, cx + cosf(a) * 9.0f, cy + sinf(a) * 9.0f); }
+        }
+    }
     for (int id : { B_MIN, B_CLOSE }) {
         Button &b = g_btn[id];
-        SolidBrush cb(Mix(Color(150, 255, 255, 255), Color(235, 255, 255, 255), b.hover));
+        SolidBrush cb(Mix(TH(circle), TH(circleHot), b.hover));
         g.FillEllipse(&cb, b.r);
         Pen pen(Mix(kInk, kPink, b.hover), 1.8f);
         float cx = b.r.X + b.r.Width / 2, cy = b.r.Y + b.r.Height / 2;
@@ -1010,7 +1062,7 @@ static void DrawUI(Graphics &g)
         Color lc = Mix(g_exeKind == EXE_OK ? kGrey : kPink, kPink, eb.hover);
         Text(g, el, eb.r, 12, g_exeKind == EXE_OK ? FontStyleUnderline : FontStyleBold | FontStyleUnderline, WithA(lc, eb.enabled ? 1.0f : 0.4f), StringAlignmentFar);
     }
-    const Color lg(200, 128, 112, 130);
+    const Color lg = WithA(kGrey, 0.8f);
     Text(g, T(L"Mod non officiel et non commercial.", L"Unofficial, non-commercial mod."), RectF(56, 510, 344, 14), 10, FontStyleRegular, lg);
     Text(g, T(L"Non affili\u00E9 \u00E0 Rockstar Games ni \u00E0 Take-Two.", L"Not affiliated with Rockstar Games or Take-Two."), RectF(56, 523, 344, 14), 10, FontStyleRegular, lg);
     Text(g, T(L"N\u00E9cessite une copie l\u00E9gale de GTA: Vice City.", L"Requires a legal copy of GTA: Vice City."), RectF(56, 536, 344, 14), 10, FontStyleRegular, lg);
@@ -1020,7 +1072,7 @@ static void DrawUI(Graphics &g)
         Text(g, T(L"Achetez GTA: Vice City :", L"Buy GTA: Vice City:"), RectF(76, b.r.Y, b.r.X - 76 - 8, b.r.Height), 12, FontStyleBold, kInk, StringAlignmentFar);
         GraphicsPath p;
         RoundRect(p, b.r, b.r.Height / 2);
-        SolidBrush fill(Mix(Color(235, 52, 40, 62), kPink, b.hover));
+        SolidBrush fill(Mix(TH(pill), kPink, b.hover));
         g.FillPath(&fill, &p);
         Pen cart(Color(255, 255, 255, 255), 1.6f);
         cart.SetLineJoin(LineJoinRound);
@@ -1045,11 +1097,12 @@ static void RenderTo(Bitmap &target, float scale)
     g.SetInterpolationMode(InterpolationModeHighQualityBicubic);
     g.SetPixelOffsetMode(PixelOffsetModeHalf);
     g.ScaleTransform(scale, scale);
-    if (g_bg) g.DrawImage(g_bg, RectF(0, 0, kImgW, kImgH));
+    Bitmap *bgi = (g_dark && g_bgDark) ? g_bgDark : g_bg;
+    if (bgi) g.DrawImage(bgi, RectF(0, 0, kImgW, kImgH));
     else {   // pas d'image : carte simple
         GraphicsPath p;
         RoundRect(p, RectF(20, 60, 960, 540), 26);
-        LinearGradientBrush lg(RectF(20, 60, 960, 540), Color(255, 255, 222, 236), Color(255, 255, 178, 158), LinearGradientModeVertical);
+        LinearGradientBrush lg(RectF(20, 60, 960, 540), TH(fallA), TH(fallB), LinearGradientModeVertical);
         g.FillPath(&lg, &p);
     }
     DrawUI(g);
@@ -1781,9 +1834,9 @@ static void DrawLobby(Graphics &g)
 {
     GraphicsPath pp;
     RoundRect(pp, kOptPanel, 18);
-    SolidBrush bg(Color(250, 252, 249, 251));
+    SolidBrush bg(TH(panel));
     g.FillPath(&bg, &pp);
-    Pen border(Color(150, 255, 255, 255), 1.5f);
+    Pen border(TH(panelBorder), 1.5f);
     g.DrawPath(&border, &pp);
 
     std::vector<LobbyPeer> peers;
@@ -1812,17 +1865,17 @@ static void DrawLobby(Graphics &g)
         GraphicsPath rp;
         RoundRect(rp, r, 12);
         if (i >= (int)peers.size()) {
-            Pen dash(Color(255, 236, 214, 224), 1.4f);
+            Pen dash(TH(dash), 1.4f);
             dash.SetDashStyle(DashStyleDash);
             g.DrawPath(&dash, &rp);
-            Text(g, T(L"En attente d'un joueur\u2026", L"Waiting for a player\u2026"), r, 12.5f, FontStyleRegular, Color(255, 200, 186, 196));
+            Text(g, T(L"En attente d'un joueur\u2026", L"Waiting for a player\u2026"), r, 12.5f, FontStyleRegular, TH(dashText));
             continue;
         }
         const LobbyPeer &p = peers[i];
         bool me = p.id == g_myId;
-        SolidBrush rb(me ? Color(255, 255, 240, 246) : Color(255, 255, 255, 255));
+        SolidBrush rb(me ? TH(cardSel) : TH(card));
         g.FillPath(&rb, &rp);
-        Pen rpen(me ? Color(255, 255, 170, 200) : Color(255, 240, 226, 232), 1.2f);
+        Pen rpen(me ? Color(255, 255, 170, 200) : TH(cardBorder), 1.2f);
         g.DrawPath(&rpen, &rp);
         // portrait de sa tenue (sinon initiale), dans un cercle a la couleur du joueur en jeu
         std::wstring nm = Widen(p.name, CP_UTF8);
@@ -1853,9 +1906,9 @@ static void DrawLobby(Graphics &g)
     Text(g, T(L"PARTIE", L"GAME"), RectF(460, 432, 200, 18), 10.5f, FontStyleBold, kGrey, StringAlignmentNear);
     GraphicsPath cp;
     RoundRect(cp, kChoiceR, 15);
-    SolidBrush cb(Color(255, 255, 255, 255));
+    SolidBrush cb(TH(card));
     g.FillPath(&cb, &cp);
-    Pen cpen(Color(255, 240, 196, 214), 1.2f);
+    Pen cpen(TH(choiceBorder), 1.2f);
     g.DrawPath(&cpen, &cp);
     bool host = lobby == LB_HOST;
     if (host && (int)g_saves.size() > 0) {
@@ -1877,7 +1930,7 @@ static void DrawLobby(Graphics &g)
         info = b;
     }
     Text(g, info, RectF(460, 490, 476, 20), 12, FontStyleRegular, kGrey, StringAlignmentNear);
-    Pen sep(Color(255, 240, 214, 226), 1);
+    Pen sep(TH(sep), 1);
     g.DrawLine(&sep, kOptPanel.X + 18, 532.0f, kOptPanel.X + kOptPanel.Width - 18, 532.0f);
     const wchar_t *hint = host ? T(L"Quand tout le monde est pr\u00EAt et a les mods, \u00AB Lancer \u00BB d\u00E9marre le jeu de chacun, directement en partie.",
                                    L"Once everyone is ready and has the mods, \"Start\" launches everyone's game, straight into the session.")
@@ -1943,25 +1996,43 @@ static std::wstring SkinDisplayName(const std::string &n)
     return w;
 }
 
+struct ModEntry { std::wstring name, dff, txd; bool on; int files; uint64_t bytes; std::vector<uint32_t> thumb; bool thumbDone; };
+static std::vector<ModEntry> g_modList;
+static std::atomic<int> g_modSel(0), g_modGen(0);
+static const int kThumbPx = 64;
+
 static DWORD WINAPI PreviewThread(void *)
 {
-    std::string loaded;
+    std::wstring loaded;
     Model3D *model = NULL;
-    int gen = -1;
+    int gen = -1, style = 0;
     std::vector<uint32_t> buf;
     for (;;) {
-        if (g_tab != TAB_SKIN || !g_imgOk || g_state != ST_IDLE) { Sleep(60); continue; }
-        std::string want;
+        bool skins = g_tab == TAB_SKIN && g_imgOk, mods = g_tab == TAB_MODS;
+        if ((!skins && !mods) || g_state != ST_IDLE) { Sleep(60); continue; }
+        std::wstring want, txd;
+        int wantGen;
         EnterCriticalSection(&g_scs);
-        int sel = g_skinSel;
-        if (sel >= 0 && sel < (int)g_skinList.size()) want = g_skinList[sel];
+        if (skins) {
+            int sel = g_skinSel;
+            if (sel >= 0 && sel < (int)g_skinList.size()) want = L"t:" + Widen(g_skinList[sel]);
+            wantGen = g_skinGen;
+        } else {
+            int sel = g_modSel;
+            if (sel >= 0 && sel < (int)g_modList.size() && !g_modList[sel].dff.empty()) { want = L"m:" + g_modList[sel].dff; txd = g_modList[sel].txd; }
+            wantGen = 1000000 + g_modGen;
+        }
         LeaveCriticalSection(&g_scs);
-        if (want != loaded || gen != g_skinGen) { ModelFree(model); model = ModelLoad(want); loaded = want; gen = g_skinGen; }
+        if (want != loaded || gen != wantGen) {
+            ModelFree(model);
+            model = want.empty() ? NULL : want[0] == L't' ? ModelLoad(Narrow(want.substr(2))) : ModelLoadPath(want.substr(2), txd);
+            loaded = want; gen = wantGen; style = skins ? 0 : 2;
+        }
         int w = g_prevW, h = g_prevH;
         if (w <= 0 || h <= 0) { Sleep(30); continue; }
         buf.resize((size_t)w * h);
         DWORD t0 = GetTickCount();
-        ModelRender(model, buf.data(), w, h, g_prevYaw, false);
+        ModelRender(model, buf.data(), w, h, g_prevYaw, style);
         DWORD spent = GetTickCount() - t0;
         EnterCriticalSection(&g_scs);
         g_prevFrame.swap(buf);
@@ -1980,6 +2051,21 @@ static DWORD WINAPI PortraitThread(void *)
         for (auto &n : g_portraitWanted) if (!g_portraits.count(n)) { next = n; break; }
         if (next.empty()) for (auto &n : g_skinList) if (!g_portraits.count(n)) { next = n; break; }
         LeaveCriticalSection(&g_scs);
+        if (next.empty()) {   // portraits faits : miniatures des mods
+            std::wstring dff, txd;
+            int idx = -1, mg = g_modGen;
+            EnterCriticalSection(&g_scs);
+            for (int i = 0; i < (int)g_modList.size(); i++) if (!g_modList[i].thumbDone) { idx = i; dff = g_modList[i].dff; txd = g_modList[i].txd; break; }
+            LeaveCriticalSection(&g_scs);
+            if (idx >= 0) {
+                std::vector<uint32_t> px((size_t)kThumbPx * kThumbPx, 0);
+                if (!dff.empty()) { Model3D *m = ModelLoadPath(dff, txd); if (m) ModelRender(m, px.data(), kThumbPx, kThumbPx, 0.7f, 2); ModelFree(m); }
+                EnterCriticalSection(&g_scs);
+                if (mg == g_modGen && idx < (int)g_modList.size()) { g_modList[idx].thumb.swap(px); g_modList[idx].thumbDone = true; }
+                LeaveCriticalSection(&g_scs);
+                continue;
+            }
+        }
         if (next.empty() || !g_imgOk) { Sleep(200); continue; }
         Portrait pr;
         pr.size = kPortraitPx;
@@ -2010,6 +2096,7 @@ static void SkinsInit()
     g_skinGen++;
     LeaveCriticalSection(&g_scs);
     g_imgOk = ok && !list.empty();
+    if (!g_gameDir.empty()) ModsScan();
     if (g_imgOk && !threads) {
         threads = true;
         HANDLE a = CreateThread(NULL, 0, PreviewThread, NULL, 0, NULL), b = CreateThread(NULL, 0, PortraitThread, NULL, 0, NULL);
@@ -2054,7 +2141,7 @@ void DrawAvatar(Graphics &g, RectF r, const std::string &skin, const std::wstrin
     auto it = g_portraits.find(k);
     bool have = it != g_portraits.end();
     if (!have) { bool asked = false; for (auto &w : g_portraitWanted) asked |= w == k; if (!asked && g_portraitWanted.size() < 16) g_portraitWanted.push_back(k); }
-    SolidBrush bg(have ? Color(255, 250, 238, 244) : col);
+    SolidBrush bg(have ? TH(thumbBg) : col);
     g.FillEllipse(&bg, r);
     if (have) {
         GraphicsPath clip;
@@ -2075,9 +2162,9 @@ static void DrawSkin(Graphics &g)
 {
     GraphicsPath pp;
     RoundRect(pp, kOptPanel, 18);
-    SolidBrush bg(Color(250, 252, 249, 251));
+    SolidBrush bg(TH(panel));
     g.FillPath(&bg, &pp);
-    Pen border(Color(150, 255, 255, 255), 1.5f);
+    Pen border(TH(panelBorder), 1.5f);
     g.DrawPath(&border, &pp);
 
     std::vector<std::string> list;
@@ -2094,7 +2181,7 @@ static void DrawSkin(Graphics &g)
     // apercu : fond doux, ombre au sol, modele rendu a la taille de l'ecran (fil PreviewThread)
     GraphicsPath vp;
     RoundRect(vp, kPrevR, 14);
-    LinearGradientBrush vb(kPrevR, Color(255, 255, 244, 248), Color(255, 255, 222, 214), LinearGradientModeVertical);
+    LinearGradientBrush vb(kPrevR, TH(prevA), TH(prevB), LinearGradientModeVertical);
     g.FillPath(&vb, &vp);
     SolidBrush shadow(Color(40, 120, 40, 80));
     g.FillEllipse(&shadow, kPrevR.X + kPrevR.Width / 2 - 52, kPrevR.Y + kPrevR.Height - 34, 104.0f, 16.0f);
@@ -2109,7 +2196,7 @@ static void DrawSkin(Graphics &g)
     Text(g, SkinDisplayName(cur), RectF(kPrevR.X + 30, kPrevR.Y + kPrevR.Height - 30, kPrevR.Width - 60, 24), 14, FontStyleBold, kInk);
     for (int side = -1; side <= 1; side += 2) {   // tenue precedente / suivante
         RectF a(side < 0 ? kPrevR.X + 6 : kPrevR.X + kPrevR.Width - 34, kPrevR.Y + kPrevR.Height - 34, 28, 28);
-        SolidBrush ab(g_arrowHot == side ? kPink : Color(255, 255, 255, 255));
+        SolidBrush ab(g_arrowHot == side ? kPink : TH(card));
         g.FillEllipse(&ab, a);
         Text(g, side < 0 ? L"\u2039" : L"\u203A", RectF(a.X, a.Y - 2, a.Width, a.Height), 20, FontStyleBold, g_arrowHot == side ? Color(255, 255, 255, 255) : kPink);
     }
@@ -2122,7 +2209,7 @@ static void DrawSkin(Graphics &g)
         if (t.Y + t.Height < kGridR.Y || t.Y > kGridR.Y + kGridR.Height) continue;
         GraphicsPath tp;
         RoundRect(tp, t, 12);
-        SolidBrush tb(i == sel ? Color(255, 255, 236, 244) : Color(255, 255, 255, 255));
+        SolidBrush tb(i == sel ? TH(cardSel) : TH(card));
         g.FillPath(&tb, &tp);
         EnterCriticalSection(&g_scs);
         auto it = g_portraits.find(list[i]);
@@ -2135,7 +2222,7 @@ static void DrawSkin(Graphics &g)
             g.SetClip(&old);
         }
         LeaveCriticalSection(&g_scs);
-        Pen tpen(i == sel ? kPink : i == g_tileHot ? Color(255, 255, 170, 200) : Color(255, 240, 226, 232), i == sel ? 2.4f : 1.2f);
+        Pen tpen(i == sel ? kPink : i == g_tileHot ? Color(255, 255, 170, 200) : TH(cardBorder), i == sel ? 2.4f : 1.2f);
         g.DrawPath(&tpen, &tp);
     }
     g.ResetClip();
@@ -2145,7 +2232,7 @@ static void DrawSkin(Graphics &g)
         GraphicsPath sp; RoundRect(sp, RectF(kGridR.X + kGridR.Width + 4, y, 4, h), 2);
         SolidBrush sb(Color(120, 255, 79, 139)); g.FillPath(&sb, &sp);
     }
-    Pen sep(Color(255, 240, 214, 226), 1);
+    Pen sep(TH(sep), 1);
     g.DrawLine(&sep, kOptPanel.X + 18, 536.0f, kOptPanel.X + kOptPanel.Width - 18, 536.0f);
     FontFamily fam(L"Segoe UI");
     Font font(&fam, 12, FontStyleRegular, UnitPixel);
@@ -2191,6 +2278,231 @@ static bool SkinMouseDown(float x, float y, bool *drag)
     return kOptPanel.Contains(x, y);
 }
 
+// ---------------------------------------------------------------- mods partages (hote)
+// Un mod = une entree du dossier VCCoop\mods (sous-dossier ou fichier). Desactive = deplace dans VCCoop\mods-off : le
+// jeu (mods.cpp) et le salon ne lisent que VCCoop\mods. Apercu 3D : le premier .dff du mod, avec son .txd (ou celui
+// du jeu du meme nom).
+static std::wstring ModsDirW(bool on) { return g_gameDir + (on ? L"VCCoop\\mods\\" : L"VCCoop\\mods-off\\"); }
+static void WalkMod(const std::wstring &dir, ModEntry &e)
+{
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    std::vector<std::wstring> dffs, txds;
+    do {
+        std::wstring n = fd.cFileName;
+        if (n == L"." || n == L"..") continue;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { WalkMod(dir + n + L"\\", e); continue; }
+        e.files++;
+        e.bytes += ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        std::wstring low = n;
+        for (auto &c : low) c = towlower(c);
+        if (low.size() > 4 && !low.compare(low.size() - 4, 4, L".dff")) dffs.push_back(dir + n);
+        if (low.size() > 4 && !low.compare(low.size() - 4, 4, L".txd")) txds.push_back(dir + n);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    if (e.dff.empty() && !dffs.empty()) {
+        e.dff = dffs[0];
+        std::wstring base = e.dff.substr(0, e.dff.size() - 4);
+        for (auto &t : txds) if (!_wcsicmp(t.substr(0, t.size() - 4).c_str(), base.c_str())) e.txd = t;
+    }
+}
+static void ModsScan()
+{
+    std::vector<ModEntry> list;
+    for (int on = 1; on >= 0; on--) {
+        std::wstring dir = ModsDirW(on != 0);
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((dir + L"*").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        do {
+            std::wstring n = fd.cFileName;
+            if (n == L"." || n == L".." || !_wcsicmp(n.c_str(), L"LISEZMOI.txt")) continue;
+            ModEntry e;
+            e.name = n; e.on = on != 0; e.files = 0; e.bytes = 0; e.thumbDone = false;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) WalkMod(dir + n + L"\\", e);
+            else {
+                e.files = 1;
+                e.bytes = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+                size_t l = n.size();
+                if (l > 4 && !_wcsicmp(n.c_str() + l - 4, L".dff")) {
+                    e.dff = dir + n;
+                    if (GetFileAttributesW((dir + n.substr(0, l - 4) + L".txd").c_str()) != INVALID_FILE_ATTRIBUTES) e.txd = dir + n.substr(0, l - 4) + L".txd";
+                }
+            }
+            list.push_back(e);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    std::sort(list.begin(), list.end(), [](const ModEntry &a, const ModEntry &b) { return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0; });
+    EnterCriticalSection(&g_scs);
+    std::wstring selName = g_modSel >= 0 && g_modSel < (int)g_modList.size() ? g_modList[g_modSel].name : L"";
+    // (les miniatures deja faites sont gardees)
+    for (auto &e : list) for (auto &o : g_modList) if (o.name == e.name && o.thumbDone && o.dff.substr(o.dff.find_last_of(L'\\') + 1) == e.dff.substr(e.dff.find_last_of(L'\\') + 1)) { e.thumb = o.thumb; e.thumbDone = true; }
+    g_modList.swap(list);
+    int sel = 0;
+    for (int i = 0; i < (int)g_modList.size(); i++) if (g_modList[i].name == selName) sel = i;
+    g_modSel = sel;
+    g_modGen++;
+    LeaveCriticalSection(&g_scs);
+}
+static void ModToggle(int i)
+{
+    if (g_lobby != LB_NONE) { SetStatus(K_WARN, T(L"Ferme le salon pour changer les mods", L"Close the lobby to change mods")); return; }
+    ModEntry e;
+    EnterCriticalSection(&g_scs);
+    bool ok = i >= 0 && i < (int)g_modList.size();
+    if (ok) e = g_modList[i];
+    LeaveCriticalSection(&g_scs);
+    if (!ok) return;
+    CreateDirectoryW((g_gameDir + L"VCCoop").c_str(), NULL);
+    CreateDirectoryW(ModsDirW(false).c_str(), NULL);
+    CreateDirectoryW(ModsDirW(true).c_str(), NULL);
+    std::wstring from = ModsDirW(e.on) + e.name, to = ModsDirW(!e.on) + e.name;
+    if (!MoveFileW(from.c_str(), to.c_str())) {
+        SetStatus(K_ERR, T(L"Impossible de d\u00E9placer %s (erreur %lu)", L"Could not move %s (error %lu)"), e.name.c_str(), GetLastError());
+        return;
+    }
+    SetStatus(K_OK, e.on ? T(L"Mod d\u00E9sactiv\u00E9 : %s", L"Mod disabled: %s") : T(L"Mod activ\u00E9 : %s", L"Mod enabled: %s"), e.name.c_str());
+    ModsScan();
+}
+static float ModsMaxScroll()
+{
+    EnterCriticalSection(&g_scs);
+    int n = (int)g_modList.size();
+    LeaveCriticalSection(&g_scs);
+    return max(0.0f, n * 52.0f - kGridR.Height);
+}
+static const RectF kModsFolderR(826, 124, 110, 22);
+static int g_modRowHot = -1;
+
+static void DrawMods(Graphics &g)
+{
+    GraphicsPath pp;
+    RoundRect(pp, kOptPanel, 18);
+    SolidBrush bg(TH(panel));
+    g.FillPath(&bg, &pp);
+    Pen border(TH(panelBorder), 1.5f);
+    g.DrawPath(&border, &pp);
+    Text(g, L"MODS", RectF(460, 122, 120, 26), 17, FontStyleBold, kInk, StringAlignmentNear);
+    EnterCriticalSection(&g_scs);
+    int n = (int)g_modList.size(), on = 0;
+    for (auto &e : g_modList) on += e.on;
+    int sel = g_modSel;
+    std::wstring selName = sel >= 0 && sel < n ? g_modList[sel].name : L"";
+    bool selHas3d = sel >= 0 && sel < n && !g_modList[sel].dff.empty();
+    LeaveCriticalSection(&g_scs);
+    wchar_t cnt[64];
+    swprintf_s(cnt, T(L"%d actif(s) / %d", L"%d enabled / %d"), on, n);
+    Text(g, cnt, RectF(560, 122, 180, 26), 12.5f, FontStyleBold, kGrey, StringAlignmentNear);
+    Text(g, T(L"Ouvrir le dossier", L"Open folder"), kModsFolderR, 12, FontStyleUnderline, g_btn[B_EXE].hover > 2 ? kPink : kPink, StringAlignmentFar);
+
+    // apercu
+    GraphicsPath vp;
+    RoundRect(vp, kPrevR, 14);
+    LinearGradientBrush vb(kPrevR, TH(prevA), TH(prevB), LinearGradientModeVertical);
+    g.FillPath(&vb, &vp);
+    g_prevW = (int)(kPrevR.Width * g_scale);
+    g_prevH = (int)((kPrevR.Height - 34) * g_scale);
+    if (selHas3d) {
+        SolidBrush shadow(Color(34, 120, 40, 80));
+        g.FillEllipse(&shadow, kPrevR.X + 34, kPrevR.Y + kPrevR.Height * 0.5f + 18, kPrevR.Width - 68, 30.0f);
+        EnterCriticalSection(&g_scs);
+        if (!g_prevFrame.empty() && g_prevFrameW > 0) {
+            Bitmap b(g_prevFrameW, g_prevFrameH, g_prevFrameW * 4, PixelFormat32bppPARGB, (BYTE *)g_prevFrame.data());
+            g.DrawImage(&b, RectF(kPrevR.X, kPrevR.Y + 8, kPrevR.Width, kPrevR.Height - 34));
+        }
+        LeaveCriticalSection(&g_scs);
+    } else if (n) Text(g, T(L"Pas de mod\u00E8le 3D\n(conduite, couleurs\u2026)", L"No 3D model\n(handling, colours\u2026)"), RectF(kPrevR.X, kPrevR.Y + 120, kPrevR.Width, 60), 13, FontStyleRegular, kGrey);
+    else Text(g, T(L"Aucun mod dans\nVCCoop\\mods", L"No mods in\nVCCoop\\mods"), RectF(kPrevR.X, kPrevR.Y + 120, kPrevR.Width, 60), 13, FontStyleRegular, kGrey);
+    Text(g, selName, RectF(kPrevR.X + 10, kPrevR.Y + kPrevR.Height - 30, kPrevR.Width - 20, 24), 14, FontStyleBold, kInk);
+
+    // liste
+    float sc = g_scroll[TAB_MODS];
+    g.SetClip(kGridR);
+    EnterCriticalSection(&g_scs);
+    for (int i = 0; i < n; i++) {
+        const ModEntry &e = g_modList[i];
+        RectF r(kGridR.X, kGridR.Y + i * 52.0f - sc, kGridR.Width - 6, 46);
+        if (r.Y + r.Height < kGridR.Y || r.Y > kGridR.Y + kGridR.Height) continue;
+        GraphicsPath rp;
+        RoundRect(rp, r, 10);
+        SolidBrush rb(i == sel ? TH(cardSel) : TH(card));
+        g.FillPath(&rb, &rp);
+        Pen rpen(i == sel ? kPink : i == g_modRowHot ? Color(255, 255, 170, 200) : TH(cardBorder), i == sel ? 2.0f : 1.2f);
+        g.DrawPath(&rpen, &rp);
+        RectF th(r.X + 4, r.Y + 3, 40, 40);
+        if (e.thumbDone && !e.thumb.empty()) {
+            Bitmap b(kThumbPx, kThumbPx, kThumbPx * 4, PixelFormat32bppPARGB, (BYTE *)e.thumb.data());
+            ImageAttributes ia;
+            ColorMatrix cm = { { { 1, 0, 0, 0, 0 }, { 0, 1, 0, 0, 0 }, { 0, 0, 1, 0, 0 }, { 0, 0, 0, e.on ? 1.0f : 0.35f, 0 }, { 0, 0, 0, 0, 1 } } };
+            ia.SetColorMatrix(&cm);
+            g.DrawImage(&b, th, 0, 0, (REAL)kThumbPx, (REAL)kThumbPx, UnitPixel, &ia);
+        } else {
+            SolidBrush tb(TH(thumbBg));
+            g.FillEllipse(&tb, th);
+        }
+        Text(g, e.name, RectF(r.X + 50, r.Y + 4, r.Width - 104, 20), 12.5f, FontStyleBold, e.on ? kInk : kGrey, StringAlignmentNear);
+        wchar_t info[64];
+        swprintf_s(info, T(L"%d fichier(s) \u00B7 %.1f Mo", L"%d file(s) \u00B7 %.1f MB"), e.files, e.bytes / 1048576.0);
+        Text(g, info, RectF(r.X + 50, r.Y + 23, r.Width - 104, 18), 10.5f, FontStyleRegular, kGrey, StringAlignmentNear);
+        RectF tr(r.X + r.Width - 50, r.Y + 13, 42, 20);
+        GraphicsPath tp; RoundRect(tp, tr, 10);
+        if (e.on) { LinearGradientBrush lg(tr, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &tp); }
+        else { SolidBrush ob(TH(toggleOff)); g.FillPath(&ob, &tp); }
+        SolidBrush knob(Color(255, 255, 255, 255));
+        g.FillEllipse(&knob, e.on ? tr.X + 24 : tr.X + 2, tr.Y + 2, 16.0f, 16.0f);
+    }
+    LeaveCriticalSection(&g_scs);
+    g.ResetClip();
+    float ms = ModsMaxScroll();
+    if (ms > 0) {
+        float h = kGridR.Height * kGridR.Height / (kGridR.Height + ms), y = kGridR.Y + (kGridR.Height - h) * sc / ms;
+        GraphicsPath sp; RoundRect(sp, RectF(kGridR.X + kGridR.Width + 4, y, 4, h), 2);
+        SolidBrush sb(Color(120, 255, 79, 139)); g.FillPath(&sb, &sp);
+    }
+    Pen sep(TH(sep), 1);
+    g.DrawLine(&sep, kOptPanel.X + 18, 536.0f, kOptPanel.X + kOptPanel.Width - 18, 536.0f);
+    FontFamily fam(L"Segoe UI");
+    Font font(&fam, 12, FontStyleRegular, UnitPixel);
+    StringFormat sf;
+    sf.SetLineAlignment(StringAlignmentCenter);
+    SolidBrush db(kGrey);
+    const wchar_t *hint = g_lobby != LB_NONE ? T(L"Salon ouvert : ferme-le pour activer ou d\u00E9sactiver des mods.", L"Lobby open: close it to enable or disable mods.")
+                                             : T(L"Les mods actifs remplacent ceux du jeu et sont envoy\u00E9s aux invit\u00E9s. D\u00E9sactiv\u00E9s : rang\u00E9s dans VCCoop\\mods-off.",
+                                                 L"Enabled mods replace the game's and are sent to guests. Disabled ones are moved to VCCoop\\mods-off.");
+    g.DrawString(hint, -1, &font, RectF(kOptPanel.X + 20, 540, kOptPanel.Width - 40, 42), &sf, &db);
+}
+
+static int ModRowAt(float x, float y, bool *onToggle)
+{
+    *onToggle = false;
+    if (!kGridR.Contains(x, y)) return -1;
+    int i = (int)((y - kGridR.Y + g_scroll[TAB_MODS]) / 52.0f);
+    float within = y - kGridR.Y + g_scroll[TAB_MODS] - i * 52.0f;
+    EnterCriticalSection(&g_scs);
+    int n = (int)g_modList.size();
+    LeaveCriticalSection(&g_scs);
+    if (i < 0 || i >= n || within > 46) return -1;
+    *onToggle = x > kGridR.X + kGridR.Width - 60;
+    return i;
+}
+static bool ModsMouseDown(float x, float y, bool *drag)
+{
+    *drag = false;
+    if (kModsFolderR.Contains(x, y)) {
+        CreateDirectoryW((g_gameDir + L"VCCoop").c_str(), NULL);
+        CreateDirectoryW(ModsDirW(true).c_str(), NULL);
+        ShellExecuteW(g_wnd, L"open", ModsDirW(true).c_str(), NULL, NULL, SW_SHOWNORMAL);
+        return true;
+    }
+    bool tog;
+    int i = ModRowAt(x, y, &tog);
+    if (i >= 0) { if (tog) ModToggle(i); else g_modSel = i; return true; }
+    if (kPrevR.Contains(x, y)) { *drag = true; g_skinDrag = true; g_skinDragX = x; return true; }
+    return kOptPanel.Contains(x, y);
+}
+
 static void OnButton(int id)
 {
     switch (id) {
@@ -2208,6 +2520,7 @@ static void OnButton(int id)
     case B_EXE: ChooseExe(); break;
     case B_CLOSE: g_state = ST_CLOSING; break;
     case B_MIN: ShowWindow(g_wnd, SW_MINIMIZE); break;
+    case B_THEME: g_dark = !g_dark; WritePrivateProfileStringW(L"Lanceur", L"Theme", g_dark ? L"sombre" : L"clair", g_iniLauncher.c_str()); break;
     case B_BUY: ShellExecuteW(g_wnd, L"open", kStoreUrl, NULL, NULL, SW_SHOWNORMAL); break;
     }
 }
@@ -2219,7 +2532,7 @@ static void Tick()
     DWORD now = GetTickCount();
     float dt = min((now - last) / 1000.0f, 0.1f);
     last = now;
-    if (g_tab == TAB_SKIN && !g_skinDrag) g_prevYaw = g_prevYaw + dt * 0.55f;
+    if ((g_tab == TAB_SKIN || g_tab == TAB_MODS) && !g_skinDrag) g_prevYaw = g_prevYaw + dt * 0.55f;
     g_time += dt;
     for (int i = 0; i < B_COUNT; i++) {
         float want = (g_hot == i && g_btn[i].enabled) ? 1.0f : 0.0f;
@@ -2320,10 +2633,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (g_skinDrag) { g_prevYaw = g_prevYaw + (x - g_skinDragX) * 0.018f; g_skinDragX = x; }
         g_tileHot = g_tab == TAB_SKIN ? SkinTileAt(x, y) : -1;
         g_arrowHot = g_tab == TAB_SKIN ? SkinArrowAt(x, y) : 0;
+        { bool tg; g_modRowHot = g_tab == TAB_MODS ? ModRowAt(x, y, &tg) : -1; }
         TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
         TrackMouseEvent(&tme);
-        SetCursor(LoadCursor(NULL, (g_skinDrag || (g_tab == TAB_SKIN && kPrevR.Contains(x, y))) ? IDC_SIZEWE
-                                   : ((g_hot >= 0 && g_btn[g_hot].enabled) || g_tabHot >= 0 || g_optHot >= 0 || g_tileHot >= 0 || g_arrowHot) ? IDC_HAND
+        SetCursor(LoadCursor(NULL, (g_skinDrag || ((g_tab == TAB_SKIN || g_tab == TAB_MODS) && kPrevR.Contains(x, y))) ? IDC_SIZEWE
+                                   : ((g_hot >= 0 && g_btn[g_hot].enabled) || g_tabHot >= 0 || g_optHot >= 0 || g_tileHot >= 0 || g_arrowHot || g_modRowHot >= 0
+                                      || (g_tab == TAB_MODS && kModsFolderR.Contains(x, y))) ? IDC_HAND
                                    : HitField(x, y) >= 0 ? IDC_IBEAM : IDC_ARROW));
         return 0;
     }
@@ -2345,12 +2660,13 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (f >= 0) { g_focus = f; g_time = 0; return 0; }
         g_focus = -1;
         int t = HitTab(x, y);
-        if (t >= 0) { g_tab = g_tab == t ? -1 : t; g_optHot = -1; return 0; }   // un 2e clic referme
+        if (t >= 0) { g_tab = g_tab == t ? -1 : t; g_optHot = -1; if (g_tab == TAB_MODS) ModsScan(); return 0; }   // un 2e clic referme
         int row, part;
         HitOption(x, y, &row, &part);
         if (row >= 0) { OptStep(row, part < 0 ? -1 : 1); return 0; }
         if (g_tab == TAB_LOBBY && LobbyClick(x, y)) return 0;
         if (g_tab == TAB_SKIN) { bool drag; if (SkinMouseDown(x, y, &drag)) { if (drag) SetCapture(h); return 0; } }
+        if (g_tab == TAB_MODS) { bool drag; if (ModsMouseDown(x, y, &drag)) { if (drag) SetCapture(h); return 0; } }
         if (g_tab >= 0 && kOptPanel.Contains(x, y)) return 0;
         ReleaseCapture();
         SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);   // glisser la fenetre
@@ -2431,11 +2747,11 @@ static bool EncoderClsid(const wchar_t *mime, CLSID *out)
     return false;
 }
 
-static void LoadBackground()
+static Bitmap *LoadPng(const wchar_t *file)
 {
     for (const std::wstring &d : { g_dir, g_gameDir }) {
         if (d.empty()) continue;
-        std::wstring p = d + L"VCCoop\\interface\\launcher.png";
+        std::wstring p = d + L"VCCoop\\interface\\" + file;
         if (!FileExists(p)) continue;
         // Copie en memoire : Bitmap::FromFile garde le fichier ouvert, et la mise a jour doit pouvoir le remplacer.
         Bitmap *b = Bitmap::FromFile(p.c_str());
@@ -2447,11 +2763,16 @@ static void LoadBackground()
                 g.DrawImage(b, 0, 0, b->GetWidth(), b->GetHeight());
             }
             delete b;
-            g_bg = copy;
-            return;
+            return copy;
         }
         delete b;
     }
+    return NULL;
+}
+static void LoadBackground()
+{
+    g_bg = LoadPng(L"launcher.png");
+    g_bgDark = LoadPng(L"launcher-sombre.png");
 }
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
@@ -2473,12 +2794,24 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     GetPrivateProfileStringW(L"Lanceur", L"Langue", L"", lang, 8, g_iniLauncher.c_str());
     if (!_wcsicmp(lang, L"fr")) g_fr = true;
     else if (!_wcsicmp(lang, L"en")) g_fr = false;
+    // Theme : Theme=clair|sombre, sinon celui des applications de Windows
+    {
+        wchar_t th[16] = L"";
+        GetPrivateProfileStringW(L"Lanceur", L"Theme", L"", th, 16, g_iniLauncher.c_str());
+        if (!_wcsicmp(th, L"sombre") || !_wcsicmp(th, L"dark")) g_dark = true;
+        else if (!_wcsicmp(th, L"clair") || !_wcsicmp(th, L"light")) g_dark = false;
+        else {
+            DWORD v = 1, sz = sizeof(v);
+            if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &v, &sz) == ERROR_SUCCESS) g_dark = v == 0;
+        }
+    }
 
     int argc = 0;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argc >= 3 && !_wcsicmp(argv[1], L"/check")) return (int)CheckExe(argv[2]);
     for (int i = 1; i + 1 < argc; i++) {
         if (!_wcsicmp(argv[i], L"/lang")) g_fr = !_wcsicmp(argv[i + 1], L"fr");
+        if (!_wcsicmp(argv[i], L"/theme")) g_dark = !_wcsicmp(argv[i + 1], L"sombre");
         if (!_wcsicmp(argv[i], L"/testfenetre")) g_testLog = argv[i + 1];
         if (!_wcsicmp(argv[i], L"/testlancer") && i + 2 < argc) { g_testLaunch = _wtoi(argv[i + 1]); g_testLog = argv[i + 2]; }
         if (!_wcsicmp(argv[i], L"/testsalon") && i + 2 < argc) { g_testSalon = argv[i + 1]; g_testSalonLog = argv[i + 2]; g_testLog = g_testSalonLog + L".fin"; g_testLaunch = 99; }
@@ -2598,12 +2931,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             if (host) SetStatus(K_OK, T(L"Salon ouvert \u00B7 port 7790", L"Lobby open \u00B7 port 7790"));
             g_localVer = L"2026.09.29m";
         }
+        else if (st == L"mods") { g_tab = TAB_MODS; ModsScan(); g_prevYaw = 0.6f; }
         else if (st == L"tenue") { g_tab = TAB_SKIN; g_skinSel = 0; g_prevYaw = 0.35f; g_tileHot = 4; }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }
         else { g_localVer = g_localVer.empty() ? L"2026.09.29h" : g_localVer; SetStatus(K_OK, T(L"VCCoop %s \u00B7 \u00E0 jour", L"VCCoop %s \u00B7 up to date"), g_localVer.c_str()); g_hot = B_HOST; g_btn[B_HOST].hover = 1; }
         int rc = 1;
         // tenues : attendre l'apercu et les portraits (fils de fond)
-        if (g_imgOk && (st == L"tenue" || st == L"salon" || st == L"saloninvite")) {
+        if (g_imgOk && (st == L"tenue" || st == L"salon" || st == L"saloninvite" || st == L"mods")) {
             g_prevW = (int)kPrevR.Width; g_prevH = (int)(kPrevR.Height - 34);
             int st0 = g_state; g_state = ST_IDLE;
             if (st == L"salon" || st == L"saloninvite") { EnterCriticalSection(&g_scs); g_portraitWanted = { "player", "igken", "hfyst" }; LeaveCriticalSection(&g_scs); }
@@ -2612,7 +2946,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
                 size_t np = g_portraits.size();
                 bool frame = !g_prevFrame.empty();
                 LeaveCriticalSection(&g_scs);
-                if (np >= 15 && (frame || st != L"tenue")) break;
+                bool thumbs = true;
+                for (auto &e : g_modList) thumbs &= e.thumbDone;
+                if (np >= 15 && (frame || (st != L"tenue" && st != L"mods")) && (thumbs || st != L"mods")) break;
                 Sleep(100);
             }
             g_state = st0;
