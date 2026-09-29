@@ -71,6 +71,7 @@ static std::wstring g_launchInfo;
 
 static std::wstring g_testLog;          // /testfenetre : fenetre hors ecran, sans activation, journal puis sortie
 static int g_ulwOk = -1, g_frames;
+static int g_testLaunch = -1;           // /testlancer <0|1|2> <journal> : idem, et lance le jeu tout seul au bout de 3 s
 
 static const wchar_t *T(const wchar_t *fr, const wchar_t *en) { return g_fr ? fr : en; }
 
@@ -363,6 +364,7 @@ static void MergeIni(const std::wstring &newIni, const std::wstring &userIni)
 }
 
 // Copie l'arbre extrait dans le dossier du jeu. selfReplaced : le lanceur en cours a ete remplace.
+static DWORD g_copyError;
 static bool CopyTree(const std::wstring &src, const std::wstring &dst, bool *selfReplaced, std::wstring *failed)
 {
     CreateDirectoryW(dst.c_str(), NULL);
@@ -380,14 +382,24 @@ static bool CopyTree(const std::wstring &src, const std::wstring &dst, bool *sel
         if (!_wcsicmp(d.c_str(), g_self.c_str())) {
             std::wstring old = g_self + L".old";
             DeleteFileW(old.c_str());
-            if (!MoveFileExW(g_self.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING)) { ok = false; *failed = n; continue; }
+            if (!MoveFileExW(g_self.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING)) { g_copyError = GetLastError(); ok = false; *failed = n; continue; }
             *selfReplaced = true;
         }
         SetFileAttributesW(d.c_str(), FILE_ATTRIBUTE_NORMAL);
-        if (!CopyFileW(s.c_str(), d.c_str(), FALSE)) { ok = false; *failed = n; }
+        if (!CopyFileW(s.c_str(), d.c_str(), FALSE)) { g_copyError = GetLastError(); ok = false; *failed = n; }
     } while (FindNextFileW(h, &fd));
     FindClose(h);
     return ok;
+}
+
+// Le dossier accepte-t-il l'ecriture (Program Files sans droits, par exemple) ?
+static bool IsWritableDir(const std::wstring &dir)
+{
+    std::wstring p = dir + L"vccoop-ecriture.tmp";
+    HANDLE f = CreateFileW(p.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    CloseHandle(f);
+    return true;
 }
 
 static DWORD WINAPI UpdateThread(void *)
@@ -455,6 +467,11 @@ static DWORD WINAPI UpdateThread(void *)
     if (ok && !CopyFileW((ext + L"\\VCCoop\\version.txt").c_str(), (g_gameDir + L"VCCoop\\version.txt").c_str(), FALSE)) { ok = false; failed = L"version.txt"; }
     DeleteTree(work);
     g_progress = -1;
+    if (!ok && g_copyError == ERROR_ACCESS_DENIED && !IsWritableDir(g_gameDir)) {
+        SetStatus(K_ERR, T(L"Dossier du jeu prot\u00E9g\u00E9 : lance VCCoop.exe en administrateur pour mettre \u00E0 jour", L"Game folder is protected: run VCCoop.exe as administrator to update"));
+        g_busy = false;
+        return 0;
+    }
     if (!ok) {
         SetStatus(K_ERR, T(L"%s est occup\u00E9 : ferme le jeu, puis relance le lanceur", L"%s is in use: close the game, then restart the launcher"), failed.c_str());
         g_busy = false;
@@ -771,20 +788,28 @@ static void Launch(int mode)
         return;
     }
     SavePlayer();
-    std::wstring cmd = L"\"" + g_exe + L"\"";
-    if (mode == 1) cmd += L" -vccoop hote";
-    else if (mode == 2) cmd += L" -vccoop invite " + addr;
-    std::vector<wchar_t> c(cmd.begin(), cmd.end());
-    c.push_back(0);
-    STARTUPINFOW si = { sizeof(si) };
-    PROCESS_INFORMATION pi;
-    if (!CreateProcessW(g_exe.c_str(), c.data(), NULL, NULL, FALSE, 0, NULL, g_gameDir.c_str(), &si, &pi)) {
-        SetStatus(K_ERR, T(L"Impossible de lancer gta-vc.exe (erreur %lu)", L"Could not start gta-vc.exe (error %lu)"), GetLastError());
+    std::wstring args;
+    if (mode == 1) args = L"-vccoop hote";
+    else if (mode == 2) args = L"-vccoop invite " + addr;
+    // Lance comme un double-clic dans l'explorateur : les modes de compatibilite de l'exe (Windows XP, "executer en
+    // tant qu'administrateur") exigent parfois l'administrateur ; CreateProcess echoue alors (erreur 740), ShellExecuteEx
+    // affiche la demande de Windows.
+    SHELLEXECUTEINFOW sei = { sizeof(sei) };
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
+    sei.hwnd = g_wnd;
+    sei.lpVerb = L"open";
+    sei.lpFile = g_exe.c_str();
+    sei.lpParameters = args.empty() ? NULL : args.c_str();
+    sei.lpDirectory = g_gameDir.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+    if (!ShellExecuteExW(&sei) || !sei.hProcess) {
+        DWORD e = GetLastError();
+        if (e == ERROR_CANCELLED) SetStatus(K_WARN, T(L"Lancement annul\u00E9 (demande d'administrateur refus\u00E9e)", L"Launch cancelled (administrator prompt declined)"));
+        else SetStatus(K_ERR, T(L"Impossible de lancer gta-vc.exe (erreur %lu)", L"Could not start gta-vc.exe (error %lu)"), e);
         return;
     }
-    CloseHandle(pi.hThread);
-    g_proc = pi.hProcess;
-    g_pid = pi.dwProcessId;
+    g_proc = sei.hProcess;
+    g_pid = GetProcessId(sei.hProcess);
     g_launchT = GetTickCount();
     g_winSeenT = 0;
     g_launchMode = mode;
@@ -866,19 +891,22 @@ static void TypeChar(wchar_t ch)
     f.text += ch;
 }
 
+static void WriteTestLog(HWND h)
+{
+    FILE *f = _wfopen(g_testLog.c_str(), L"w, ccs=UTF-8");
+    RECT r;
+    GetWindowRect(h, &r);
+    if (f) { fwprintf(f, L"ulw=%d images=%d alpha=%.2f taille=%dx%d echelle=%.2f exe=%d local=%s pid=%lu fenetre_jeu=%lu ms\n%s\n", g_ulwOk, g_frames, g_alpha,
+                      r.right - r.left, r.bottom - r.top, g_scale, (int)g_exeKind, g_localVer.c_str(), g_pid,
+                      g_winSeenT ? g_winSeenT - g_launchT : 0, g_status.c_str()); fclose(f); }
+}
+
 static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
 {
     switch (m) {
     case WM_TIMER:
-        if (wp == 2) {
-            FILE *f = _wfopen(g_testLog.c_str(), L"w, ccs=UTF-8");
-            RECT r;
-            GetWindowRect(h, &r);
-            if (f) { fwprintf(f, L"ulw=%d images=%d alpha=%.2f taille=%dx%d echelle=%.2f exe=%d local=%s\n%s\n", g_ulwOk, g_frames, g_alpha,
-                              r.right - r.left, r.bottom - r.top, g_scale, (int)g_exeKind, g_localVer.c_str(), g_status.c_str()); fclose(f); }
-            DestroyWindow(h);
-            return 0;
-        }
+        if (wp == 3) { KillTimer(h, 3); Launch(g_testLaunch); return 0; }
+        if (wp == 2) { WriteTestLog(h); DestroyWindow(h); return 0; }
         Tick();
         return 0;
     case WM_MOUSEMOVE: {
@@ -937,7 +965,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_CLOSE: g_state = ST_CLOSING; return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY:
+        if (g_testLaunch >= 0) WriteTestLog(h);   // test de lancement : fermeture apres la fenetre du jeu
+        PostQuitMessage(0);
+        return 0;
     }
     return DefWindowProcW(h, m, wp, lp);
 }
@@ -999,6 +1030,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     for (int i = 1; i + 1 < argc; i++) {
         if (!_wcsicmp(argv[i], L"/lang")) g_fr = !_wcsicmp(argv[i + 1], L"fr");
         if (!_wcsicmp(argv[i], L"/testfenetre")) g_testLog = argv[i + 1];
+        if (!_wcsicmp(argv[i], L"/testlancer") && i + 2 < argc) { g_testLaunch = _wtoi(argv[i + 1]); g_testLog = argv[i + 2]; }
     }
 
     GdiplusStartupInput gin;
@@ -1086,7 +1118,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     Present();
     ShowWindow(g_wnd, test ? SW_SHOWNOACTIVATE : SW_SHOW);
     SetTimer(g_wnd, 1, 16, NULL);
-    if (test) SetTimer(g_wnd, 2, 5000, NULL);
+    if (test) SetTimer(g_wnd, g_testLaunch >= 0 ? 3 : 2, g_testLaunch >= 0 ? 3000 : 5000, NULL);
     if (g_exeKind == EXE_OK) StartUpdate();
     else if (g_exeKind != EXE_MISSING && !test) BadExeMessage(g_exeKind);
 
