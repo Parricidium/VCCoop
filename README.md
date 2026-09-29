@@ -132,7 +132,8 @@ host's shared mods downloaded beforehand with everyone's %, *New game* or *Load*
 **Play** = the game's COOP menu, no lobby). The **Outfit** tab picks your in-game outfit (the F7 list) with a turning
 3D preview and portraits, also shown next to each name in the lobby; the models are read from your own game files. The host's **Mods** tab
 turns each shared mod on or off (3D preview; disabled mods go to `VCCoop/mods-off`). Light or dark theme (moon / sun
-button, Windows' theme by default).
+button, Windows' theme by default). The **Updates** tab lists what each version fixes and adds (pink dot when
+there is something new; read from the GitHub releases, kept for offline use).
 Its **Video / Rendering / Effects / Co-op** tabs change the `vccoop.ini` settings (the same as the
 game's COOP menu; Rendering and Effects only with Direct3D 9, host settings tagged HOST).
 It stays on screen until the game window shows up. English unless Windows is in French
@@ -433,7 +434,7 @@ joueurs (prêt, ping), mods partagés de l'hôte téléchargés avant la partie 
 jeu** si l'hôte joue déjà ; **Jouer** = menu COOP du jeu, sans salon). L'onglet **Tenue** choisit ta tenue en jeu (la liste de F7) avec un aperçu
 3D qui tourne et des portraits, repris à côté de chaque pseudo dans le salon ; les modèles sont lus dans les fichiers de
 ton jeu. L'onglet **Mods** de l'hôte active ou désactive chaque mod partagé (aperçu 3D ; désactivé = rangé dans
-`VCCoop/mods-off`). Thème clair ou sombre (bouton lune / soleil, celui de Windows par défaut). Ses onglets **Vidéo / Rendu / Effets / Coop** modifient les réglages de `vccoop.ini` (les mêmes que le
+`VCCoop/mods-off`). Thème clair ou sombre (bouton lune / soleil, celui de Windows par défaut). L'onglet **Nouveautés** liste ce que chaque version corrige et apporte (pastille rose quand il y a du nouveau ; lu dans les releases GitHub, gardé pour le hors-ligne). Ses onglets **Vidéo / Rendu / Effets / Coop** modifient les réglages de `vccoop.ini` (les mêmes que le
 menu COOP du jeu ; Rendu et Effets seulement en Direct3D 9, réglages d'hôte marqués HÔTE).
 Il reste affiché jusqu'à l'apparition de la fenêtre du jeu. En français si Windows est en
 français, sinon en anglais (`Langue=fr|en` dans `[Lanceur]` de `vccoop-launcher.ini` pour forcer). Son fond est

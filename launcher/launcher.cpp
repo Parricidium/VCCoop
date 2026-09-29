@@ -685,7 +685,11 @@ static void DrawBar(Graphics &g, RectF r, float p)
 // ---------------------------------------------------------------- options (vccoop.ini du jeu)
 // Les memes cles que le menu COOP du jeu (menu.cpp SaveIni) et que dllmain.cpp LoadConfig, memes valeurs par defaut ;
 // ecrites tout de suite, prises au prochain lancement. Onglets RENDU et EFFETS : seulement avec Rendu=9 (Direct3D 9).
-enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_COUNT };
+enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_NOTES, TAB_COUNT };
+static void DrawNotes(Graphics &g);
+static float NotesMaxScroll();
+static bool NotesUnseen();
+static void NotesMarkSeen();
 static void DrawMods(Graphics &g);
 static float ModsMaxScroll();
 static void ModsScan();
@@ -813,27 +817,40 @@ static bool TabVisible(int t)
     if (t == TAB_LOBBY) return g_lobby != LB_NONE;
     if (t == TAB_SKIN) return g_imgOk;
     if (t == TAB_MODS) return !g_gameDir.empty() && g_lobby != LB_GUEST && g_lobby != LB_CONNECTING;   // (l'invite prend ceux de l'hote)
+    if (t == TAB_NOTES) return true;
     return (t != TAB_RENDER && t != TAB_FX) || Modern();
 }
 static const wchar_t *TabName(int t)
 {
-    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE", L"MODS" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT", L"MODS" };
+    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE", L"MODS", L"NOUVEAUT\u00C9S" },
+                         *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT", L"MODS", L"UPDATES" };
     return g_fr ? fr[t] : en[t];
 }
+static float MeasureW(Graphics &g, const std::wstring &s, float px, int style);
 static void LayoutTabs()
 {
     float x = 440;
-    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP };
+    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_NOTES };
+    // Largeur de chaque libelle mesuree ; trop d'onglets pour la place (jusqu'aux boutons reduire / fermer, x 898) :
+    // marges et ecarts resserres.
+    float tw[TAB_COUNT] = {}, total = 0, pad = 12, gap = 6;
+    int n = 0;
+    {
+        Bitmap bm(1, 1);
+        Graphics mg(&bm);
+        for (int t : order) if (TabVisible(t)) { tw[t] = MeasureW(mg, TabName(t), 11.5f, FontStyleBold); total += tw[t]; n++; }
+    }
+    while (pad > 4 && total + n * pad + (n - 1) * gap > 458) { pad -= 2; gap = 4; }
     for (int t : order) {
         if (!TabVisible(t)) { g_tabR[t] = RectF(0, 0, 0, 0); continue; }
-        float w = 16 + 7.2f * (float)wcslen(TabName(t));
+        float w = pad + tw[t];
         g_tabR[t] = RectF(x, 78, w, 26);
-        x += w + 6;
+        x += w + gap;
     }
     if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = -1;
 }
 static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t) r.push_back(i); return r; }
-static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : t == TAB_SKIN ? SkinMaxScroll() : t == TAB_MODS ? ModsMaxScroll() : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
+static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : t == TAB_SKIN ? SkinMaxScroll() : t == TAB_MODS ? ModsMaxScroll() : t == TAB_NOTES ? NotesMaxScroll() : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
 
 static int ValueIndex(const Opt &o, int v)
 {
@@ -883,6 +900,10 @@ static void DrawTabs(Graphics &g)
         if (on) { LinearGradientBrush lg(r, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &p); }
         else { SolidBrush b(hot ? TH(tabHot) : TH(tab)); g.FillPath(&b, &p); }
         Text(g, TabName(t), r, 11.5f, FontStyleBold, on ? Color(255, 255, 255, 255) : Mix(kInk, kPink, hot ? 1.0f : 0.0f));
+        if (t == TAB_NOTES && !on && NotesUnseen()) {   // pastille : des notes pas encore lues
+            SolidBrush dot(kPink);
+            g.FillEllipse(&dot, r.X + r.Width - 7, r.Y - 1, 8.0f, 8.0f);
+        }
     }
 }
 
@@ -892,6 +913,7 @@ static void DrawOptions(Graphics &g)
     if (g_tab == TAB_LOBBY) { DrawLobby(g); return; }
     if (g_tab == TAB_SKIN) { DrawSkin(g); return; }
     if (g_tab == TAB_MODS) { DrawMods(g); return; }
+    if (g_tab == TAB_NOTES) { DrawNotes(g); return; }
     GraphicsPath pp;
     RoundRect(pp, kOptPanel, 18);
     SolidBrush bg(TH(panel));
@@ -964,7 +986,7 @@ static void DrawOptions(Graphics &g)
 static void HitOption(float x, float y, int *row, int *part)
 {
     *row = -1; *part = 0;
-    if (g_tab < 0 || g_tab == TAB_LOBBY || g_tab == TAB_SKIN || g_tab == TAB_MODS || !kOptList.Contains(x, y)) return;
+    if (g_tab < 0 || g_tab == TAB_LOBBY || g_tab == TAB_SKIN || g_tab == TAB_MODS || g_tab == TAB_NOTES || !kOptList.Contains(x, y)) return;
     std::vector<int> rows = TabRows(g_tab);
     int k = (int)((y - kOptList.Y + g_scroll[g_tab]) / kRowH);
     if (k < 0 || k >= (int)rows.size()) return;
@@ -978,6 +1000,194 @@ static int HitTab(float x, float y)
     if (g_state != ST_IDLE || g_gameDir.empty()) return -1;
     for (int t = 0; t < TAB_COUNT; t++) if (TabVisible(t) && g_tabR[t].Contains(x, y)) return t;
     return -1;
+}
+
+// ---------------------------------------------------------------- onglet NOUVEAUTES / UPDATES
+// Notes des versions publiees sur GitHub (releases, 40 dernieres) : le texte de chaque release est en francais,
+// puis une ligne "---", puis en anglais (dist\make-release.ps1 -Notes). Gardees dans VCCoop\notes-maj.json pour
+// les lire hors ligne. Pastille sur l'onglet tant que la plus recente n'a pas ete vue (NotesVues du lanceur).
+struct Note { std::wstring ver, date, fr, en; };
+static std::vector<Note> g_notes;
+static volatile bool g_notesDone;
+static float g_notesH;
+
+// Chaine JSON a partir de son guillemet ouvrant, echappements decodes (en UTF-8).
+static std::string JsonDecode(const std::string &json, size_t q)
+{
+    std::string v;
+    for (size_t i = q + 1; i < json.size() && json[i] != '"'; i++) {
+        char c = json[i];
+        if (c != '\\' || i + 1 >= json.size()) { v += c; continue; }
+        char e = json[++i];
+        if (e == 'n') v += '\n';
+        else if (e == 'r') {}
+        else if (e == 't') v += ' ';
+        else if (e == 'u' && i + 4 < json.size()) {
+            unsigned cp = strtoul(json.substr(i + 1, 4).c_str(), NULL, 16);
+            i += 4;
+            if (cp >= 0xD800 && cp <= 0xDFFF) continue;   // emoji (paires) : laisses
+            if (cp < 0x80) v += (char)cp;
+            else if (cp < 0x800) { v += (char)(0xC0 | (cp >> 6)); v += (char)(0x80 | (cp & 0x3F)); }
+            else { v += (char)(0xE0 | (cp >> 12)); v += (char)(0x80 | ((cp >> 6) & 0x3F)); v += (char)(0x80 | (cp & 0x3F)); }
+        } else v += e;
+    }
+    return v;
+}
+static std::string JsonField(const std::string &json, const char *key, size_t from, size_t to)
+{
+    std::string k = std::string("\"") + key + "\"";
+    size_t p = json.find(k, from);
+    if (p == std::string::npos || p >= to) return "";
+    p = json.find(':', p + k.size());
+    size_t q = p == std::string::npos ? p : json.find_first_not_of(" \t\r\n", p + 1);
+    return q != std::string::npos && json[q] == '"' ? JsonDecode(json, q) : "";
+}
+// Markdown simple : titres, gras et code retires ; puces "- " -> "•".
+static std::wstring CleanNote(const std::wstring &s)
+{
+    std::wstring o;
+    for (size_t i = 0; i < s.size(); i++) {
+        bool lineStart = i == 0 || s[i - 1] == L'\n';
+        if (s[i] == L'`') continue;
+        if (s[i] == L'*' && i + 1 < s.size() && s[i + 1] == L'*') { i++; continue; }
+        if (lineStart && s[i] == L'#') { while (i < s.size() && (s[i] == L'#' || s[i] == L' ')) i++; i--; continue; }
+        if (lineStart && (s[i] == L'-' || s[i] == L'*') && i + 1 < s.size() && s[i + 1] == L' ') { o += L"\u2022"; continue; }
+        o += s[i];
+    }
+    size_t b = o.find_first_not_of(L"\n "), e = o.find_last_not_of(L"\n ");
+    return b == std::wstring::npos ? L"" : o.substr(b, e - b + 1);
+}
+static void ParseNotes(const std::string &json)
+{
+    std::vector<Note> list;
+    for (size_t at = 0;;) {
+        size_t p = json.find("\"tag_name\"", at);
+        if (p == std::string::npos) break;
+        size_t next = json.find("\"tag_name\"", p + 10), end = next == std::string::npos ? json.size() : next;
+        Note n;
+        n.ver = Widen(JsonField(json, "tag_name", p, end));
+        if (!n.ver.empty() && (n.ver[0] == L'v' || n.ver[0] == L'V')) n.ver.erase(0, 1);
+        std::string d = JsonField(json, "published_at", p, end);
+        if (d.size() >= 10) n.date = Widen(d.substr(8, 2) + "/" + d.substr(5, 2) + "/" + d.substr(0, 4));
+        std::wstring body = Widen(JsonField(json, "body", p, end));
+        size_t sep = body.find(L"\n---");
+        if (sep == std::wstring::npos) n.fr = n.en = CleanNote(body);
+        else {
+            size_t enAt = body.find(L'\n', sep + 1);
+            n.fr = CleanNote(body.substr(0, sep));
+            n.en = CleanNote(enAt == std::wstring::npos ? L"" : body.substr(enAt + 1));
+            if (n.en.empty()) n.en = n.fr;
+        }
+        if (!n.ver.empty()) list.push_back(n);
+        at = end;
+    }
+    EnterCriticalSection(&g_cs);
+    g_notes = list;
+    LeaveCriticalSection(&g_cs);
+}
+static void NotesFetch()
+{
+    std::wstring cache = g_dir + L"VCCoop\\notes-maj.json";
+    std::string json;
+    if (HttpGet(L"https://api.github.com/repos/Parricidium/VCCoop/releases?per_page=40", &json, L"", false) && json.find("\"tag_name\"") != std::string::npos) {
+        HANDLE f = CreateFileW(cache.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+        if (f != INVALID_HANDLE_VALUE) { DWORD w; WriteFile(f, json.data(), (DWORD)json.size(), &w, NULL); CloseHandle(f); }
+    } else {
+        json.clear();
+        HANDLE f = CreateFileW(cache.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+        if (f != INVALID_HANDLE_VALUE) {
+            DWORD size = GetFileSize(f, NULL), r = 0;
+            if (size != INVALID_FILE_SIZE && size < 8u << 20) { json.resize(size); ReadFile(f, &json[0], size, &r, NULL); json.resize(r); }
+            CloseHandle(f);
+        }
+    }
+    if (!json.empty()) ParseNotes(json);
+    g_notesDone = true;
+}
+static DWORD WINAPI NotesThread(void *) { NotesFetch(); return 0; }
+
+static std::wstring NewestNote()
+{
+    EnterCriticalSection(&g_cs);
+    std::wstring v = g_notes.empty() ? L"" : g_notes[0].ver;
+    LeaveCriticalSection(&g_cs);
+    return v;
+}
+static bool NotesUnseen()
+{
+    std::wstring v = NewestNote();
+    if (v.empty()) return false;
+    wchar_t seen[64] = {};
+    GetPrivateProfileStringW(L"Lanceur", L"NotesVues", L"", seen, 64, g_iniLauncher.c_str());
+    return !seen[0] || CmpVer(v, seen) > 0;
+}
+static void NotesMarkSeen()
+{
+    std::wstring v = NewestNote();
+    if (!v.empty()) WritePrivateProfileStringW(L"Lanceur", L"NotesVues", v.c_str(), g_iniLauncher.c_str());
+}
+
+static RectF NotesArea() { return RectF(kOptList.X, kOptList.Y, kOptList.Width, kOptPanel.Y + kOptPanel.Height - 14 - kOptList.Y); }
+static float NotesMaxScroll() { return max(0.0f, g_notesH - NotesArea().Height); }
+
+static void DrawNotes(Graphics &g)
+{
+    GraphicsPath pp;
+    RoundRect(pp, kOptPanel, 18);
+    SolidBrush bg(TH(panel));
+    g.FillPath(&bg, &pp);
+    Pen border(TH(panelBorder), 1.5f);
+    g.DrawPath(&border, &pp);
+    RectF area = NotesArea();
+    std::vector<Note> notes;
+    EnterCriticalSection(&g_cs);
+    notes = g_notes;
+    LeaveCriticalSection(&g_cs);
+    if (notes.empty()) {
+        Text(g, g_notesDone ? T(L"Notes de version indisponibles (hors ligne).", L"Release notes unavailable (offline).")
+                            : T(L"Chargement des notes de version\u2026", L"Loading release notes\u2026"), area, 13, FontStyleRegular, kGrey);
+        return;
+    }
+    FontFamily fam(L"Segoe UI");
+    Font fh(&fam, 14.5f, FontStyleBold, UnitPixel), fd(&fam, 11.5f, FontStyleRegular, UnitPixel), fb(&fam, 12.5f, FontStyleRegular, UnitPixel);
+    StringFormat sf;
+    SolidBrush ink(kInk), grey(kGrey), pink(kPink);
+    Pen sep(TH(sep), 1);
+    float sc = g_scroll[TAB_NOTES], y = area.Y - sc, w = area.Width - 14;
+    g.SetClip(area);
+    for (size_t i = 0; i < notes.size(); i++) {
+        const Note &n = notes[i];
+        const std::wstring &body = g_fr ? n.fr : n.en;
+        RectF box;
+        g.MeasureString(body.c_str(), -1, &fb, RectF(0, 0, w - 16, 100000), &sf, &box);
+        float h = 26 + (body.empty() ? 0 : box.Height) + 16;
+        if (y + h >= area.Y && y <= area.Y + area.Height) {
+            std::wstring title = L"VCCoop " + n.ver;
+            g.DrawString(title.c_str(), -1, &fh, PointF(area.X + 6, y), &pink);
+            float tw = MeasureW(g, title, 14.5f, FontStyleBold);
+            g.DrawString(n.date.c_str(), -1, &fd, PointF(area.X + 12 + tw, y + 3), &grey);
+            int cmp = g_localVer.empty() ? 1 : CmpVer(n.ver, g_localVer);
+            if (cmp >= 0 && !g_localVer.empty()) {   // version installee, ou plus recente (a venir)
+                const wchar_t *lab = cmp == 0 ? T(L"INSTALL\u00C9E", L"INSTALLED") : T(L"NOUVELLE", L"NEW");
+                RectF br(area.X + w - 12 - 7.0f * (float)wcslen(lab), y + 2, 12 + 7.0f * (float)wcslen(lab), 17);
+                GraphicsPath bp; RoundRect(bp, br, 8.5f);
+                SolidBrush bb(cmp == 0 ? Color(45, 38, 150, 96) : Color(45, 255, 79, 139));
+                g.FillPath(&bb, &bp);
+                Text(g, lab, br, 9.5f, FontStyleBold, cmp == 0 ? Color(255, 38, 150, 96) : kPink);
+            }
+            if (!body.empty()) g.DrawString(body.c_str(), -1, &fb, RectF(area.X + 10, y + 26, w - 16, box.Height + 4), &sf, &ink);
+            if (i + 1 < notes.size()) g.DrawLine(&sep, area.X + 6, y + h - 8, area.X + w, y + h - 8);
+        }
+        y += h;
+    }
+    g.ResetClip();
+    g_notesH = y + sc - area.Y;
+    float ms = NotesMaxScroll();
+    if (ms > 0) {
+        float bh = area.Height * area.Height / (area.Height + ms), by = area.Y + (area.Height - bh) * sc / ms;
+        GraphicsPath sp; RoundRect(sp, RectF(area.X + area.Width - 5, by, 4, bh), 2);
+        SolidBrush sb(Color(120, 255, 79, 139)); g.FillPath(&sb, &sp);
+    }
 }
 
 static void DrawUI(Graphics &g)
@@ -2660,7 +2870,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (f >= 0) { g_focus = f; g_time = 0; return 0; }
         g_focus = -1;
         int t = HitTab(x, y);
-        if (t >= 0) { g_tab = g_tab == t ? -1 : t; g_optHot = -1; if (g_tab == TAB_MODS) ModsScan(); return 0; }   // un 2e clic referme
+        if (t >= 0) { g_tab = g_tab == t ? -1 : t; g_optHot = -1; if (g_tab == TAB_MODS) ModsScan(); if (g_tab == TAB_NOTES) NotesMarkSeen(); return 0; }   // un 2e clic referme
         int row, part;
         HitOption(x, y, &row, &part);
         if (row >= 0) { OptStep(row, part < 0 ? -1 : 1); return 0; }
@@ -2959,6 +3169,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             g_localVer = L"2026.09.29m";
         }
         else if (st == L"mods") { g_tab = TAB_MODS; ModsScan(); g_prevYaw = 0.6f; }
+        else if (st == L"notes") { NotesFetch(); g_tab = TAB_NOTES; LayoutTabs(); }
         else if (st == L"tenue") { g_tab = TAB_SKIN; g_skinSel = 0; g_prevYaw = 0.35f; g_tileHot = 4; }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }
         else { g_localVer = g_localVer.empty() ? L"2026.09.29h" : g_localVer; SetStatus(K_OK, T(L"VCCoop %s \u00B7 \u00E0 jour", L"VCCoop %s \u00B7 up to date"), g_localVer.c_str()); g_hot = B_HOST; g_btn[B_HOST].hover = 1; }
@@ -3034,6 +3245,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     if (test && !g_testSalon.empty()) SetTimer(g_wnd, 4, 500, NULL);
     if (g_exeKind == EXE_OK) StartUpdate();
     else if (g_exeKind != EXE_MISSING && !test) BadExeMessage(g_exeKind);
+    { HANDLE nt = CreateThread(NULL, 0, NotesThread, NULL, 0, NULL); if (nt) CloseHandle(nt); }
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }

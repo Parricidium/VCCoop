@@ -42,6 +42,8 @@ LANCEUR
   personnage, objet) et un interrupteur. Desactive = range dans
   VCCoop\mods-off (le jeu et le salon ne l'utilisent plus). Salon ouvert :
   le fermer pour changer les mods.
+- NOUVEAUTES : ce que chaque version corrige et apporte (pastille rose quand
+  il y a du nouveau).
 - Theme clair ou sombre : bouton lune / soleil en haut du panneau (par
   defaut celui de Windows ; Theme=clair|sombre dans vccoop-launcher.ini).
 - Si l'hote joue deja (pas de salon), "Rejoindre en jeu" entre dans sa

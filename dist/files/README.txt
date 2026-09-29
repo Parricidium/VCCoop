@@ -38,6 +38,8 @@ LAUNCHER
 - MODS (host): the mods in VCCoop\mods, each with a 3D preview (vehicle,
   character, object) and a switch. Disabled = moved to VCCoop\mods-off (the
   game and the lobby stop using it). Close the lobby to change mods.
+- UPDATES: what each version fixes and adds (pink dot when there is
+  something new).
 - Light or dark theme: moon / sun button at the top of the panel (Windows'
   theme by default; Theme=clair|sombre in vccoop-launcher.ini).
 - If the host is already playing (no lobby), "Join in game" enters their
