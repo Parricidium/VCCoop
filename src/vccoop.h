@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.29p"
+#define VCCOOP_VERSION "2026.09.29q"
 struct Config {
     bool windowed;
     bool borderless;

@@ -217,6 +217,34 @@ bool ParseGeometry(Rd &r, uint32_t ver, Geo &g)
             while (sub.left(12)) {
                 Chunk e;
                 if (!sub.chunk(e)) break;
+                if (e.type == 0x50E) {
+                    // Bin Mesh : les triangles groupes par materiau, tels que le jeu les dessine (listes ou bandes). Certains
+                    // exports (mods convertis) ne mettent le vrai materiau qu'ici (la liste de la structure dit 0 partout).
+                    Rd k(sub.p, sub.p + e.size);
+                    uint32_t strip = k.u32(), meshes = k.u32();
+                    k.u32();
+                    size_t nv = g.pos.size() / 3;
+                    std::vector<int> tris;
+                    bool ok = meshes > 0 && meshes < 4096;
+                    for (uint32_t mI = 0; ok && mI < meshes; mI++) {
+                        uint32_t n = k.u32(), mat = k.u32();
+                        if (!k.left((size_t)n * 4)) { ok = false; break; }
+                        std::vector<uint32_t> idx(n);
+                        memcpy(idx.data(), k.p, (size_t)n * 4);
+                        k.skip((size_t)n * 4);
+                        for (uint32_t v : idx) if (v >= nv) ok = false;
+                        if (!ok) break;
+                        if (strip & 1) {
+                            for (uint32_t i = 2; i < n; i++) {
+                                uint32_t a0 = idx[i - 2], a1 = idx[i - 1], a2 = idx[i];
+                                if (a0 == a1 || a1 == a2 || a0 == a2) continue;   // degeneres (jonctions)
+                                if (i & 1) tris.insert(tris.end(), { (int)a1, (int)a0, (int)a2, (int)mat });
+                                else tris.insert(tris.end(), { (int)a0, (int)a1, (int)a2, (int)mat });
+                            }
+                        } else for (uint32_t i = 0; i + 2 < n; i += 3) tris.insert(tris.end(), { (int)idx[i], (int)idx[i + 1], (int)idx[i + 2], (int)mat });
+                    }
+                    if (ok && !tris.empty()) g.tri.swap(tris);
+                }
                 if (e.type == 0x116) {
                     g.skinned = true;
                     Rd k(sub.p, sub.p + e.size);
@@ -549,6 +577,12 @@ static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector
             if (fn.find("_dam") != std::string::npos || fn.find("_vlo") != std::string::npos) continue;
             if (!fn.compare(0, 5, "wheel") && fn.find("dummy") == std::string::npos) haveWheel = true;
         }
+        {   // pieces aux coordonnees absurdes (restes d'un outil d'export dans certains mods) : ignorees, sinon la boite
+            // englobante part a l'infini et le modele n'est plus cadre
+            bool bad = false;
+            for (float v : g.pos) if (!(v == v) || fabsf(v) > 500.0f) { bad = true; break; }
+            if (bad) continue;
+        }
         // matrice du cadre (et de ses parents), sauf pour un modele a squelette : sommets deja places
         float M[12] = { 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0 };
         // Squelette : chaque sommet suit ses os (poids x matrice inverse de la pose d'origine x matrice de l'os).
@@ -618,7 +652,7 @@ static Model3D *ModelFromData(const std::vector<uint8_t> &dff, const std::vector
             for (int t = 0; t < (int)m->texs.size(); t++) if (m->texs[t].name == x.tex) x.ti = t;
             // couleurs "a peindre" des vehicules (le jeu les remplace par celles de carcols.dat) : peinture neutre
             if (x.r == 60 && x.g == 255 && x.b == 0) { x.r = 205; x.g = 208; x.b = 216; }
-            else if (x.r == 255 && x.g == 0 && x.b == 175) { x.r = 70; x.g = 72; x.b = 82; }
+            else if (x.r == 255 && x.g == 0 && x.b == 175) { x.r = 168; x.g = 170; x.b = 182; }
             m->mats.push_back(x);
         }
         for (size_t t = 0; t < g.tri.size(); t += 4) {
@@ -701,6 +735,25 @@ Model3D *ModelLoadPath(const std::wstring &dffPath, const std::wstring &txdPath)
 }
 
 void ModelFree(Model3D *m) { delete m; }
+std::string ModelInfo(const Model3D *m)
+{
+    std::string out;
+    if (!m) return out;
+    char b[256];
+    for (auto &t : m->texs) {
+        double r = 0, g = 0, bl = 0, al = 0;
+        for (uint32_t c : t.px) { r += (c >> 16) & 255; g += (c >> 8) & 255; bl += c & 255; al += c >> 24; }
+        double n = t.px.empty() ? 1 : (double)t.px.size();
+        sprintf_s(b, "%s %dx%d moy %.0f %.0f %.0f a%.0f\n", t.name.c_str(), t.w, t.h, r / n, g / n, bl / n, al / n);
+        out += b;
+    }
+    int used = 0, untex = 0;
+    for (size_t i = 0; i < m->tri.size(); i += 4) { int mi = m->tri[i + 3]; if (mi >= 0 && m->mats[mi].ti >= 0) used++; else untex++; }
+    sprintf_s(b, "triangles textures %d, sans texture %d\n", used, untex);
+    out += b;
+    for (auto &mt : m->mats) { sprintf_s(b, "mat %d %d %d %d tex '%s' ti %d\n", mt.r, mt.g, mt.b, mt.a, mt.tex.c_str(), mt.ti); out += b; }
+    return out;
+}
 void ModelBounds(const Model3D *m, float *lo, float *hi) { for (int j = 0; j < 3; j++) { lo[j] = m ? m->lo[j] : 0; hi[j] = m ? m->hi[j] : 0; } }
 
 void ModelRender(const Model3D *m, uint32_t *out, int w, int h, float yaw, int style)
