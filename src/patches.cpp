@@ -38,9 +38,28 @@ static void GuardSectorList()
     PatchJump(0x4B1190, s, sizeof(orig));
 }
 
+// CAutomobile::OpenDoor (0x59CF50, component, porte, ouverture) : CMatrix(RwFrameGetMatrix(m_aCarNodes[component]))
+// sans verifier la piece. Certains modeles de packs (voitures converties de GTA IV / V) n'ont pas toutes les portieres :
+// un personnage qui en ouvrait une plantait le jeu (0x4DFB30, acces 0x10 ; invite de JD, 29/09, NextGen Cars Pack).
+// Piece absente : la portiere ne s'anime pas, c'est tout.
+typedef void(__thiscall *OpenDoor_t)(void *car, int component, int door, float ratio);
+static OpenDoor_t o_OpenDoor;
+static void __fastcall h_OpenDoor(void *car, void *, int component, int door, float ratio)
+{
+    if (component < 0 || component >= 32 || !*(void **)((uint8_t *)car + 0x394 + component * 4)) {
+        static int logged;
+        if (logged++ < 10) Log("garde-fou : portiere %d (piece %d) absente du modele %d, pas animee", door, component, *(short *)((uint8_t *)car + 0x5C));
+        return;
+    }
+    o_OpenDoor(car, component, door, ratio);
+}
+
 void InstallGamePatches()
 {
     GuardSectorList();
+    static const uint8_t openDoorPro[] = { 0x53, 0x56, 0x57, 0x55, 0x89, 0xCD };
+    o_OpenDoor = (OpenDoor_t)MakeDetour(0x59CF50, openDoorPro, sizeof(openDoorPro), (void *)h_OpenDoor);
+    if (!o_OpenDoor) Log("garde-fou des portieres : CAutomobile::OpenDoor introuvable");
     static const uint8_t focusMenu[] = { 0xC6, 0x05, 0x42, 0x96, 0x86, 0x00, 0x01 };
     if (Expect(0x4A4FFC, "menu au retour du focus", focusMenu, sizeof(focusMenu)))
         PatchCall(0x4A4FFC, (void *)FocusBackMenu, sizeof(focusMenu));
