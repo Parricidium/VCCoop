@@ -671,6 +671,17 @@ void AutotestFrame()
             MirrorLocal(0x0055, 4, p);
             Log("autotest : phares, %d h 30", hm[0]);
         }
+        // TestVise=x,y,z (ini) : camera fixe au-dessus du joueur, pointee sur ce point (captures).
+        if (t >= 120 && t % 60 == 0) {
+            char vis[64]; float at[3];
+            GetPrivateProfileStringA("VCCoop", "TestVise", "", vis, sizeof(vis), IniPath());
+            if (vis[0] && sscanf(vis, "%f,%f,%f", &at[0], &at[1], &at[2]) == 3) {
+                float cam[6] = { Pos(me).x, Pos(me).y, Pos(me).z + 4.0f, 0, 0, 0 };
+                MirrorLocal(0x015F, 6, (const int32_t *)cam);
+                int32_t pt[4]; memcpy(pt, at, 12); pt[3] = 2;
+                MirrorLocal(0x0160, 4, pt);
+            }
+        }
         int MI_CAR = g_cfg.testModel ? g_cfg.testModel : 130;
         if (!other && t > 90 && t < 140) {
             if (!HasModelLoaded(MI_CAR) || !HasModelLoaded(130)) { RequestModel(MI_CAR, 1); RequestModel(130, 1); return; }
