@@ -1,0 +1,61 @@
+VCCoop - GTA Vice City Co-op (2 to 4 players)
+
+Play the whole Vice City story together. The host plays the missions and up to 3 friends join the game: they see the same cutscenes, the same mission characters and vehicles, the same markers and objectives, and they can help finish the missions.
+
+REQUIREMENTS
+- GTA Vice City version 1.0 (gta-vc.exe 1.0). The Steam and GOG versions must be downgraded to 1.0 first. The launcher checks the exe and tells you if it is not the right one.
+- Every player needs the same VCCoop version (the launcher updates itself automatically).
+
+INSTALLATION
+1. Extract the zip into your GTA Vice City folder (next to gta-vc.exe).
+2. Run VCCoop.exe.
+3. Host a game, or type the host's address and join.
+The host must open UDP/TCP port 7790, or everybody can use a virtual LAN (Radmin VPN, ZeroTier...).
+
+ANTIVIRUS FALSE POSITIVE
+Some antivirus programs (and browsers) flag the download as suspicious. This is a false positive: VCCoop is a proxy dinput8.dll that loads with the game and patches it in memory (like every GTA mod loader), and the launcher downloads its own updates from GitHub. Both are typical "generic" detections. The full source code is public on GitHub (Parricidium/VCCoop), so you can check and build it yourself. If it is blocked, add an exception for the game folder.
+
+FEATURES
+
+The launcher
+- Automatic updates from GitHub.
+- Lobby: player list, "Ready" button, host chooses New game or Load a game, then everyone goes straight into the game.
+- Outfit tab: choose your in-game outfit with a rotating 3D preview; portraits next to each nickname.
+- Mods tab (host): turn shared mods on/off with a 3D preview; guests download the host's mods from the lobby, with a % for each player.
+- Video, Render, Effects and Co-op options; light and dark theme; English and French.
+
+The story in co-op
+- Missions run on the host and are mirrored to the guests: cutscenes, fades, camera, texts, radar blips, markers, pickups, timers and counters.
+- Mission contact icons stay on the map; "Mission passed" and "Mission failed" show for everybody.
+- Guests who join later receive the host's save and the current state.
+- Each guest keeps their own money, weapons and bought properties.
+
+Players
+- Each player has a colour: radar blip and nickname above their head.
+- Outfits: Tommy, story characters or any pedestrian (F7), seen by everybody.
+- Take a free seat in another player's vehicle (F / G), and shoot from the passenger seat.
+- Meeting point (B), player list (Tab), first-person view (F6), free vehicle camera with mouse aiming.
+
+In-game menu (F10) and chat (T) - NEW
+- Players tab for everybody: teleport next to any player.
+- Admins (the host, plus the players they choose): spawn any vehicle (seen by everybody), health, armour, weapons, money, repair or flip your vehicle, clear the wanted level, police off, time and weather for everybody, bring or kick a player.
+- Host tab: co-op options applied immediately.
+- Chat: while you type, Tommy takes out his phone, and the others see it.
+
+The shared world
+- Shared pedestrians and traffic around the host; each guest populates their own area when far away.
+- Shared vehicles with interpolated physics, damage, doors, lights, sirens and radio.
+- Combat: optional friendly fire; bullets, punches, grenades, molotovs and rockets synchronised; police chases everybody.
+- Soft-body ragdolls for the dead (optional).
+- Broken and knocked-over props are the same for everybody.
+
+Modern graphics (optional, Direct3D 9)
+- Real-time sun and moon shadows, lights that cast shadows, modern water with reflections, ambient occlusion, reflective cars, wet roads, sun rays, bloom, haze, SMAA, sharper textures and more.
+- Widescreen (16:9, 21:9...) for the 3D, the HUD and the menus; borderless window and any window size.
+- Every effect can be turned off; the original Direct3D 8 renderer is still available.
+
+Other
+- Custom menu and loading screen images.
+- The game's replay keys (F1 to F3) are disabled so they cannot break the co-op.
+
+This is an unofficial fan mod. It contains no Rockstar Games files: you need your own copy of GTA Vice City.
