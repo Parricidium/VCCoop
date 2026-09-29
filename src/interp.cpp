@@ -114,17 +114,20 @@ bool TrackSample(const Track &tr, int src, Snap &o, bool linear)
 // m_fGenerationDistMultiplier (0x7E477C : jusqu'ou la circulation et les passants apparaissent / sont gardes).
 // On les augmente (la generation moitie moins, pour rester dans les limites du jeu : ~110 vehicules, ~140
 // personnages) ; la memoire de chargement (CStreaming::ms_memoryAvailable, 0x94DD54, 45 Mo) suit.
+float g_genBoost = 1.0f;   // facteur applique ici a 0x7E477C (population.cpp le retire pour les voitures garees)
 static void ApplyDrawDistance()
 {
     // ZonePopulation : la zone de naissance et de maintien des passants et voitures, en plus (le nombre maximal suit,
     // population.cpp : la densite reste la meme sur une zone plus grande).
     *(float *)0x7E477C *= g_cfg.zonePop / 100.0f;
+    g_genBoost = g_cfg.zonePop / 100.0f;
     float f = g_cfg.drawDistance / 100.0f;
     if (f <= 1.0f) return;
     *(float *)0x7E4778 *= f;
     float gen = 1.0f + (f - 1.0f) * 0.5f;
     if (gen > 1.6f) gen = 1.6f;
     *(float *)0x7E477C *= gen;
+    g_genBoost *= gen;
     int mem = 45 * 1024 * 1024 + (int)((f - 1.0f) * 80 * 1024 * 1024);
     if (mem > 256 * 1024 * 1024) mem = 256 * 1024 * 1024;
     if (*(int *)0x94DD54 < mem) *(int *)0x94DD54 = mem;

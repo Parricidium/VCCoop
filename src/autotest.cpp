@@ -23,6 +23,8 @@
 //   Autotest=principal : (hote) se teleporte sur les cylindres du script principal (lance les missions)
 //   Autotest=cours : cycles de 3 s : marche, course, sprint, arret (tourne un peu pour rester dans la zone)
 //   Autotest=rejoindre : idem, puis se teleporte devant le joueur 0, un peu de cote (une fois)
+//   Autotest=pcj : (hote) va chercher la PCJ-600 de PCJ Playground et monte dessus (la mission doit demarrer) ;
+//                  (invite) regarde le premier checkpoint (cercles de l'hote). pcjinvite : l'invite fait le defi
 #include "util.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -523,6 +525,60 @@ void AutotestFrame()
             Log("autotest : voitures creees");
         }
         if (car && t == 170) { WarpIntoSeat(me, car, 0); Log("autotest : au volant (conducteur %d)", VehDriver(car) == me); }
+        return;
+    }
+    // Autotest=pcj : (hote) PCJ Playground. Le generateur de la PCJ-600 (main.scm, 507.4 -308.8) ne la fait naitre que
+    // quand le joueur est a 90-110 m (x multiplicateur de distance) : on se pose a 150 m, on attend, on revient sur le
+    // spot ; si elle est la, on monte dessus : le fil "O4X4_1" du script principal doit lancer la mission T4X4_1.
+    // Autotest=pcjinvite : la meme chose faite par un invite (defi joue chez lui, IsChallengeMission).
+    bool pcjGuest = _stricmp(g_cfg.autotest, "pcjinvite") == 0;
+    if (pcjGuest || _stricmp(g_cfg.autotest, "pcj") == 0) {
+        static void *pcj;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        const float gx = 507.4f, gy = -308.8f;
+        auto warp = [](float x, float y, float z) { int32_t p[4] = { 0 }; float xyz[3] = { x, y, z }; memcpy(p + 1, xyz, 12); MirrorLocal(0x0055, 4, p); };
+        if (!g_cfg.host && !pcjGuest) {   // invite : pres du premier checkpoint, tourne vers lui (il doit voir le cercle de l'hote)
+            if (t == 300) {
+                warp(474.0f, -400.4f, -100.0f);
+                float h = 1.5708f;   // vers l'ouest
+                SetHeadingMatrix(me, h);
+                Heading(me) = HeadingGoal(me) = h;
+                Log("autotest : pcj (invite), pres du premier checkpoint");
+            }
+            if (t == 330) {   // camera fixe a 8 m du checkpoint, pointee dessus
+                float cam[6] = { 466.0f, -394.0f, 21.0f, 0, 0, 0 }, at[3] = { 460.0f, -400.4f, 18.0f };
+                MirrorLocal(0x015F, 6, (const int32_t *)cam);
+                int32_t pt[4]; memcpy(pt, at, 12); pt[3] = 2;
+                MirrorLocal(0x0160, 4, pt);
+            }
+            return;
+        }
+        if (t == 31) { int32_t hm[2] = { 12, 0 }; MirrorLocal(0x00C0, 2, hm); warp(gx, gy + 150.0f, -100.0f); Log("autotest : pcj, a 150 m du spot"); }
+        if (t == 200) warp(gx, gy + 80.0f, -100.0f);
+        if (t > 31 && t < 330 && t % 60 == 0) {
+            float dx = Pos(me).x - gx, dy = Pos(me).y - gy;
+            Log("autotest : pcj, a %.0f m, voitures garees %d, multiplicateur %.2f", sqrtf(dx * dx + dy * dy), *(int *)0x978D88, *(float *)0x7E477C);
+        }
+        if (t == 330) warp(gx - 2.0f, gy + 6.0f, 13.0f);
+        if (t == 400 || t == 700) {
+            Pool *vp = VehiclePool();
+            int n = 0;
+            for (int i = 0; i < vp->size; i++) {
+                if (vp->flags[i] & 0x80) continue;
+                void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+                float dx = Pos(v).x - gx, dy = Pos(v).y - gy;
+                if (dx * dx + dy * dy > 15.0f * 15.0f) continue;
+                n++;
+                Log("autotest : pcj, vehicule %d (cree par %d) a %.1f m du spot", ModelIndex(v), Field<uint8_t>(v, 0x1F8), sqrtf(dx * dx + dy * dy));
+                if (ModelIndex(v) == 191 && !pcj) { pcj = v; RegisterReference(v, &pcj); }
+            }
+            if (!n) Log("autotest : pcj, aucun vehicule sur le spot (voitures garees %d)", *(int *)0x978D88);
+        }
+        if (pcj && t == 430) { WarpIntoSeat(me, pcj, 0); Log("autotest : pcj, sur la moto (conducteur %d)", VehDriver(pcj) == me); }
+        if (t > 430 && t < 1200 && t % 90 == 0)
+            Log("autotest : pcj, en mission %d, drapeaux %d %d %d", *(int *)(ScriptSpace() + 1252), *(int *)(ScriptSpace() + 1368),
+                *(int *)(ScriptSpace() + 1416), *(int *)(ScriptSpace() + 1356));
         return;
     }
     if (_stricmp(g_cfg.autotest, "porte") == 0) {

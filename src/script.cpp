@@ -78,7 +78,28 @@ bool GuestSideMission() { return g_sideMission; }
 static bool PropertyBuyPending();
 // Invite : peut-il lancer une mission ? Seulement les secondaires (au volant du bon vehicule) et l'achat d'un immeuble ;
 // les missions de l'histoire, c'est l'hote (conditions.cpp coupe CAN_PLAYER_START_MISSION pour le reste).
-bool GuestMayStartMission() { return InSideMissionVehicle() || PropertyBuyPending(); }
+// Defis (IsChallengeMission) : le fil du script principal verifie le modele et l'emplacement ; seuls ceux des
+// helicopteres (HELI1..4, Chopper Checkpoint) demandent aussi CAN_PLAYER_START_MISSION : au volant d'un Maverick.
+static bool InChallengeHeli()
+{
+    void *me = FindPlayerPed();
+    return me && InVehicle(me) && PedVehicle(me) && VehDriver(PedVehicle(me)) == me && ModelIndex(PedVehicle(me)) == 199;
+}
+bool GuestMayStartMission() { return InSideMissionVehicle() || PropertyBuyPending() || InChallengeHeli(); }
+
+// Numero de mission de LOAD_AND_LAUNCH_MISSION (0417) a l'adresse ip, sans executer la commande.
+static int MissionNumberAt(int ip)
+{
+    uint8_t *ss = ScriptSpace();
+    int at = ip + 2;
+    switch (ss[at]) {
+    case 1: return *(int32_t *)(ss + at + 1);
+    case 2: return *(int32_t *)(ss + *(uint16_t *)(ss + at + 1));
+    case 4: return (int8_t)ss[at + 1];
+    case 5: return *(int16_t *)(ss + at + 1);
+    }
+    return -1;
+}
 
 // --- Achat d'immeubles par l'invite ---
 // Les icones d'immeuble (CREATE_PROTECTION_PICKUP 0517 verrouillee / 0518 a vendre) sont creees par le script
@@ -123,9 +144,10 @@ static char __fastcall h_ProcessOneCommand(void *script)
         g_buyMission = false;
         OverlayBuyEnd();
     }
-    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && (InSideMissionVehicle() || PropertyBuyPending())) {
+    bool challenge = !g_cfg.host && op == OP_START_MISSION && !Field<bool>(script, 0x85) && IsChallengeMission(MissionNumberAt(ip));
+    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && (challenge || InSideMissionVehicle() || PropertyBuyPending())) {
         g_sideMission = true;
-        g_buyMission = PropertyBuyPending() && !InSideMissionVehicle();
+        g_buyMission = !challenge && PropertyBuyPending() && !InSideMissionVehicle();
         g_propCollectedAt = 0;
         if (g_buyMission) OverlayBuyStart();
         Log("script : l'invite lance une mission %s (par %.8s)", g_buyMission ? "d'achat d'immeuble" : "secondaire", (char *)script + 8);

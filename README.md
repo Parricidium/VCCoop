@@ -125,7 +125,10 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Death**: a dead or busted guest reappears at the nearest hospital / police station, keeping
   weapons and money (`GarderArmes`), or next to the host (`ReapparitionHote=1`).
 - **Side missions**: a guest can run taxi, ambulance, firefighter, vigilante and pizza missions on
-  their side, in the right vehicle; the host's own side missions are not mirrored either.
+  their side, in the right vehicle; the host's own side missions are not mirrored either. Same for
+  the checkpoint challenges (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper
+  Checkpoint, RC races, Checkpoint Charlie): everyone runs their own. The checkpoint rings of story
+  missions (boat race, Kickstart...) are shown to the guests too.
 - **Properties per player**: a guest can buy safehouses and businesses with their own money
   (the purchase mission runs on their side); the host's purchases stay the host's, the icon remains
   on sale for the others. A guest's money, weapons and properties are kept in
@@ -351,7 +354,10 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Mort** : un invité mort ou arrêté réapparaît à l'hôpital / au commissariat le plus proche, avec ses
   armes et son argent (`GarderArmes`), ou près de l'hôte (`ReapparitionHote=1`).
 - **Missions secondaires** : un invité peut jouer taxi, ambulance, pompiers, justicier et pizzas de son
-  côté, dans le bon véhicule ; celles de l'hôte ne sont pas reproduites non plus.
+  côté, dans le bon véhicule ; celles de l'hôte ne sont pas reproduites non plus. Pareil pour les défis
+  à checkpoints (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper Checkpoint, courses RC,
+  Checkpoint Charlie) : chacun fait les siens. Les cercles à traverser des missions de l'histoire (course
+  de bateaux, Kickstart...) s'affichent aussi chez les invités.
 - **Immeubles par joueur** : un invité peut acheter planques et commerces avec son propre argent (la
   mission d'achat tourne chez lui) ; les achats de l'hôte restent à l'hôte, l'icône reste à vendre
   pour les autres. Argent, armes et immeubles d'un invité sont gardés dans `joueur-<pseudo>.ini` à

@@ -17,6 +17,11 @@ void RequestGather();
 void MirrorFollowHostArea(int area);
 void CoopWatchWalls();   // coop.cpp : quelques secondes de surveillance "pas dans un mur" apres une teleportation   // invite : prend la zone visible de l'hote (il est pose a cote de lui)
 void MirrorLocal(uint16_t op, int n, const int32_t *vals);   // invite : execute une commande de script chez soi
+bool MirrorHostQuiet();   // hote : la mission en cours n'est pas reproduite (secondaire, defi, achat)
+// Defis chronometres a checkpoints (table de main.scm) : 84-87 Chopper Checkpoint, 88 Trial by Dirt, 89 Test Track,
+// 90 PCJ Playground, 91 Cone Crazy, 93 RC Raider Pickup, 94 RC Bandit Race, 95 RC Baron Race, 96 Checkpoint Charlie.
+// Chacun joue les siens (comme taxi, pizza...).
+inline bool IsChallengeMission(int m) { return (m >= 84 && m <= 91) || (m >= 93 && m <= 96); }
 struct MirrorPoint { float x, y, z; int serial; };
 extern MirrorPoint g_lastObjective, g_lastContact;   // hote : derniers marqueurs poses par les missions   // coop.cpp : l'invite se replacera a cote de l'hote
 

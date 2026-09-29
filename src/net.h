@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 15 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 16 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -23,6 +23,7 @@ enum MsgType : uint8_t {
     MSG_RDV,         // point de rendez-vous d'un joueur (players.cpp), relaye par l'hote
     MSG_TIMERS,      // hote -> invites : valeur des minuteurs / compteurs de mission a l'ecran (mirror.cpp)
     MSG_RESYNC,      // hote -> invite : ton flux fiable est perdu, reconnecte-toi (nouvelle session, tout est renvoye)
+    MSG_CORONA,      // hote -> invites : cercle lumineux d'une mission (DRAW_CORONA, checkpoints) (conditions.cpp)
 };
 // Refus : reason 1 = partie pleine, 2 = version differente (hostVersion = la sienne).
 struct MsgFull { uint8_t type, reason, hostVersion; };
