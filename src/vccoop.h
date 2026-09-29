@@ -43,7 +43,14 @@ struct Config {
     int grade;          // Etalonnage=1 : 0 Original, 1 Vice (couleurs "Miami 80"), 2 Film
     int sharpen;        // Nettete=40 (0 a 100) : netteté adaptative des textures
     bool softParticles; // ParticulesDouces=1 : fumee, poussiere, explosions sans coupure nette contre le decor
-    bool lampLights;    // LampadairesEclairent=1 : reverberes, neons et enseignes eclairent vraiment (sans leur tache peinte)
+    bool lampLights;
+    bool wetRoads;      // RoutesMouillees=1 : sol sombre et brillant sous la pluie (reflets, flaques), sols brillants des interieurs
+    bool sunRays;       // RayonsSoleil=1 : faisceaux de soleil entre les immeubles et les palmiers
+    bool windPlants;    // VegetationVent=1 : palmiers et arbres plient au vent
+    bool beams;         // FaisceauxPhares=1 : cones des phares visibles dans la pluie et le brouillard
+    bool haze;
+    bool carReflections;   // RefletsVoitures=1 : la carrosserie reflete la rue, les neons et le ciel
+    bool indirectLight;    // LumiereIndirecte=1 : les surfaces eclairees teintent leurs voisines (facade rose -> trottoir)          // Brume=1 : la ville se fond au loin dans une brume qui suit l'heure    // LampadairesEclairent=1 : reverberes, neons et enseignes eclairent vraiment (sans leur tache peinte)
     bool dynLights;     // LumieresDynamiques=1 (rendu moderne) : lampadaires, phares, explosions eclairent par pixel
     int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine
     int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)

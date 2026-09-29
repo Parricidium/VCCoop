@@ -651,8 +651,8 @@ public:
         if (Gfx9Intercept(m_fvf, d, false)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, false);
         HRESULT hr = m_obj->DrawPrimitive(t, start, count);
-        Gfx9DrawDone();
         Gfx9AfterDraw(m_fvf, d);
+        Gfx9DrawDone();
         return hr;
     }
     STDM DrawIndexedPrimitive(D3DPRIMITIVETYPE t, UINT minIdx, UINT numVerts, UINT start, UINT count)
@@ -661,8 +661,8 @@ public:
         if (Gfx9Intercept(m_fvf, d, false)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, false);
         HRESULT hr = m_obj->DrawIndexedPrimitive(t, m_baseVertex, minIdx, numVerts, start, count);
-        Gfx9DrawDone();
         Gfx9AfterDraw(m_fvf, d);
+        Gfx9DrawDone();
         return hr;
     }
     STDM DrawPrimitiveUP(D3DPRIMITIVETYPE t, UINT count, const void *data, UINT stride)

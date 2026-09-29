@@ -58,7 +58,9 @@ static int g_captureStage;                    // 1 : capture demandee pour cette
 static int g_captureIndex;
 static UINT g_width, g_height;
 static bool g_msaa;
-static bool g_effectsPass, g_depthReady;   // pendant RenderEffects ; profondeur de la scene prete (particules douces)
+static float SkyChan(uintptr_t a);
+static bool g_effectsPass, g_depthReady;
+static void *g_curEntity;   // entite en cours de dessin (CRenderer::RenderOneNonRoad)   // pendant RenderEffects ; profondeur de la scene prete (particules douces)
 
 // ======================================================================= Matrices (lignes, vecteurs lignes)
 struct M4 { float m[16]; };
@@ -572,6 +574,181 @@ float4 PsAOBlur(float2 vpos : VPOS) : COLOR {
   float ao = sum / max(wsum, 0.001);
   return float4(ao, ao, ao, 1);
 }
+
+// ---- sols mouilles (pluie) et sols brillants (interieurs) : reflet de l'image le long du rayon reflechi
+float4 gWet : register(c30);                  // mouillage, temps (s), brillance des interieurs, force
+row_major float4x4 gWetVP : register(c31);    // monde -> clip (camera principale)
+float4 gWetSky : register(c35);               // couleur du ciel bas (reflet quand le rayon ne touche rien)
+float3 NormalAt(float2 uv, float d, float3 P) {
+  float2 dx = float2(gScreen.z, 0), dy = float2(0, gScreen.w);
+  float dl = tex2Dlod(sDepth, float4(uv - dx, 0, 0)).r, dr = tex2Dlod(sDepth, float4(uv + dx, 0, 0)).r;
+  float du = tex2Dlod(sDepth, float4(uv - dy, 0, 0)).r, dd = tex2Dlod(sDepth, float4(uv + dy, 0, 0)).r;
+  float3 ex = abs(dr - d) < abs(d - dl) ? WorldAt(uv + dx, dr) - P : P - WorldAt(uv - dx, dl);
+  float3 ey = abs(dd - d) < abs(d - du) ? WorldAt(uv + dy, dd) - P : P - WorldAt(uv - dy, du);
+  float3 N = normalize(cross(ey, ex));
+  if (dot(N, gCam.xyz - P) < 0) N = -N;
+  return N;
+}
+float3 TraceScreen(float3 P, float3 R, float2 vpos, float3 fallback, out float found);
+float4 PsWet(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return float4(scene, 1);
+  float3 P = WorldAt(uv, d);
+  float3 N = NormalAt(uv, d, P);
+  float3 V = gCam.xyz - P;
+  float dist = length(V); V /= dist;
+  if (N.z < 0.8 || dist > 160) return float4(scene, 1);
+  float puddle = saturate(Noise(P.xy * 0.16) * 1.7 - 0.45);        // flaques
+  float wet = gWet.z > 0 ? gWet.z : gWet.x * lerp(0.5, 1.0, puddle);
+  // Ondes des gouttes dans les flaques.
+  float2 rip = (float2(Noise(P.xy * 3.0 + gWet.y * 2.3), Noise(P.xy * 3.1 - gWet.y * 1.9)) - 0.5) * 0.05 * gWet.x * puddle;
+  float3 Nw = normalize(float3(rip, 1));
+  float3 R = reflect(-V, Nw);
+  float found;
+  float3 refl = TraceScreen(P + Nw * 0.03, R, vpos, gWetSky.rgb, found);
+  float fres = 0.04 + 0.96 * pow(1 - saturate(dot(Nw, V)), 5);
+  float3 dark = scene * (1 - 0.32 * wet * (gWet.z > 0 ? 0 : 1));    // un sol mouille est plus sombre
+  float mixK = saturate(0.18 + fres * 1.5) * wet * gWet.w * saturate(1 - dist / 160);
+  return float4(lerp(dark, refl, mixK), 1);
+}
+
+
+// Rayon reflechi suivi dans l'image (reflets a l'ecran) : couleur touchee, found = 0..1 (bords de l'image adoucis).
+float3 TraceScreen(float3 P, float3 R, float2 vpos, float3 fallback, out float found) {
+  float3 refl = fallback;
+  found = 0;
+  float t = 0.3;
+  [loop] for (int k = 0; k < 28; k++) {
+    float3 Q = P + R * t;
+    float4 c = mul(float4(Q, 1), gWetVP);
+    if (c.w < 0.1) break;
+    float2 su = c.xy / c.w * float2(0.5, -0.5) + 0.5;
+    if (any(su < 0) || any(su > 1)) break;
+    float sw = tex2Dlod(sDepth, float4(su, 0, 0)).r * gProj.z;
+    if (c.w > sw + 0.05 && c.w < sw + 1.2 + t * 0.12) {
+      // Affinage (dichotomie entre le pas precedent et celui-ci) : plus de pointilles.
+      float lo = t / 1.22, hi = t;
+      [unroll] for (int r = 0; r < 5; r++) {
+        float mid = (lo + hi) * 0.5;
+        float4 cm = mul(float4(P + R * mid, 1), gWetVP);
+        float2 sm = cm.xy / cm.w * float2(0.5, -0.5) + 0.5;
+        float swm = tex2Dlod(sDepth, float4(sm, 0, 0)).r * gProj.z;
+        if (cm.w > swm + 0.05) { hi = mid; su = sm; } else lo = mid;
+      }
+      float2 edge = saturate(min(su, 1 - su) * 12);
+      found = edge.x * edge.y;
+      refl = lerp(fallback, tex2Dlod(sScene, float4(su, 0, 0)).rgb, found);
+      break;
+    }
+    t *= 1.22;
+  }
+  return refl;
+}
+// ---- carrosseries : reflet de la rue, des neons, du ciel (masque des vehicules en s1)
+sampler2D sCarMask : register(s1);
+float4 PsCarRefl(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
+  if (tex2Dlod(sCarMask, float4(uv, 0, 0)).r < 0.5) return float4(scene, 1);
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return float4(scene, 1);
+  float3 P = WorldAt(uv, d);
+  float3 N = NormalAt(uv, d, P);
+  float3 V = normalize(gCam.xyz - P);
+  float3 R = reflect(-V, N);
+  float3 sky = lerp(gWetSky.rgb, gWetSky.rgb * 1.4 + 0.08, saturate(R.z * 2));
+  float found;
+  float3 refl = TraceScreen(P + N * 0.05, R, vpos, sky, found);
+  float fres = 0.04 + 0.96 * pow(1 - saturate(dot(N, V)), 5);
+  float k = (0.10 + fres * 0.55) * gWet.x;
+  return float4(lerp(scene, refl, saturate(k)), 1);
+}
+// ---- lumiere indirecte : une facade eclairee teinte ses voisines (8 echantillons autour du point)
+float4 PsGI(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return float4(scene, 1);
+  float w0 = d * gProj.z;
+  if (w0 > 70) return float4(scene, 1);
+  float3 P = WorldAt(uv, d);
+  float3 N = NormalAt(uv, d, P);
+  float2 cell = fmod(floor(vpos), 4);
+  float idx = cell.x * 4 + cell.y;
+  float3 T = normalize(abs(N.z) < 0.9 ? cross(N, float3(0, 0, 1)) : cross(N, float3(1, 0, 0)));
+  float3 B = cross(N, T);
+  float Rr = gWet.y;
+  float3 sum = 0;
+  [unroll] for (int k = 0; k < 8; k++) {
+    float u = (k + frac(idx * 0.618034)) / 8;
+    float a = idx * 0.39269908 + k * 2.3999632;
+    float3 dir = (T * cos(a) + B * sin(a)) * sqrt(u) + N * sqrt(1 - u);
+    float4 c = mul(float4(P + N * 0.05 + dir * Rr * (0.25 + 0.75 * u), 1), gWetVP);
+    float2 su = c.xy / max(c.w, 0.05) * float2(0.5, -0.5) + 0.5;
+    if (c.w < 0.05 || any(su < 0) || any(su > 1)) continue;
+    float sw = tex2Dlod(sDepth, float4(su, 0, 0)).r * gProj.z;
+    float hit = c.w > sw + 0.03 ? saturate(1 - abs(c.w - sw) / Rr) : 0;
+    sum += tex2Dlod(sScene, float4(su, 0, 0)).rgb * hit;
+  }
+  float fade = saturate(1 - w0 / 70);
+  return float4(sum / 8 * fade, 1);   // lumiere renvoyee (floutee et appliquee par PsGIApply)
+}
+// Flou 4x4 qui respecte les bords (comme l'occlusion), puis image + couleur propre x lumiere renvoyee.
+sampler2D sGI : register(s1);
+float4 PsGIApply(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
+  float d0 = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d0 >= 0.999) return float4(scene, 1);
+  float3 sum = 0; float wsum = 0;
+  [unroll] for (int y = -2; y < 2; y++) {
+    [unroll] for (int x = -2; x < 2; x++) {
+      float2 o = uv + float2(x, y) * gScreen.zw;
+      float dk = tex2Dlod(sDepth, float4(o, 0, 0)).r;
+      float wk = saturate(1 - abs(dk - d0) / (d0 * 0.03 + 0.0002));
+      sum += tex2Dlod(sGI, float4(o, 0, 0)).rgb * wk;
+      wsum += wk;
+    }
+  }
+  float3 bounce = sum / max(wsum, 0.001);
+  float lum = dot(scene, float3(0.3, 0.59, 0.11));
+  float3 albedo = saturate(lerp(scene, lum.xxx, 0.3) * 1.4);
+  return float4(scene + albedo * bounce * gWet.x, 1);
+}
+// masque des vehicules
+float4 PsFlag(VOut i) : COLOR { return 1; }
+// ---- brume : la ville se fond au loin dans une teinte qui suit l'heure (doree, violette, bleutee)
+float4 gHaze : register(c30);    // couleur, densite (par m)
+float4 gHaze2 : register(c31);   // distance ou elle commence, chute avec la hauteur (par m), part sur l'horizon du ciel
+float4 PsHaze(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) {
+    float3 dir = normalize(WorldAt(uv, 0.5) - gCam.xyz);
+    return float4(gHaze.rgb, gHaze2.z * saturate(1 - abs(dir.z) * 5));   // bande claire sur l'horizon
+  }
+  float3 P = WorldAt(uv, d);
+  float dist = length(P - gCam.xyz);
+  float f = 1 - exp(-max(dist - gHaze2.x, 0) * gHaze.w);
+  f *= exp(-max(P.z - 6, 0) * gHaze2.y);   // moins dense en hauteur (toits, collines)
+  return float4(gHaze.rgb, saturate(f) * 0.8);
+}
+
+// ---- faisceaux des phares : cones lumineux visibles dans la pluie, le brouillard, la nuit
+row_major float4x4 gBeamVP : register(c0);
+struct BIn { float4 pos : POSITION; float4 col : COLOR0; };
+struct BOut { float4 pos : POSITION; float4 col : COLOR0; float w : TEXCOORD0; };
+BOut VsBeam(BIn i) { BOut o; o.pos = mul(float4(i.pos.xyz, 1), gBeamVP); o.col = i.col; o.w = o.pos.w; return o; }
+float4 gBeam : register(c30);   // densite de l'air (pluie, brouillard), echelle de profondeur
+float4 PsBeam(BOut i, float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float sw = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  sw = sw >= 0.999 ? 1e6 : sw * gBeam.y;
+  float soft = saturate((sw - i.w) / 1.5);   // s'efface contre le decor au lieu de le couper
+  return float4(i.col.rgb * i.col.a * gBeam.x * soft, 1);
+}
 )HLSL";
 
 typedef HRESULT(WINAPI *D3DCompile_t)(LPCVOID, SIZE_T, LPCSTR, const D3D_SHADER_MACRO *, ID3DInclude *, LPCSTR, LPCSTR, UINT, UINT, ID3DBlob **, ID3DBlob **);
@@ -626,7 +803,10 @@ static IDirect3DTexture9 *g_lightAtlas;
 static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
 static IDirect3DVertexShader9 *g_vsRefl[8];   // selon le format : normale (1), couleur (2), uv (4)
 static IDirect3DPixelShader9 *g_psRefl;
-static IDirect3DPixelShader9 *g_psAO, *g_psAOBlur;
+static IDirect3DPixelShader9 *g_psAO, *g_psAOBlur, *g_psWet, *g_psHaze, *g_psBeam, *g_psCarRefl, *g_psGI, *g_psGIApply, *g_psFlag[2];
+static IDirect3DTexture9 *g_carMask;
+static IDirect3DSurface9 *g_carMaskSurf;
+static IDirect3DVertexShader9 *g_vsBeam;
 static IDirect3DTexture9 *g_ao;          // occlusion ambiante avant le flou
 static IDirect3DSurface9 *g_aoSurf;
 static IDirect3DTexture9 *g_refl;
@@ -664,6 +844,14 @@ static bool CreateShaders()
     g_psRefl = (IDirect3DPixelShader9 *)CompileShader("PsRefl", "ps_3_0", false);
     g_psAO = (IDirect3DPixelShader9 *)CompileShader("PsAO", "ps_3_0", false);
     g_psAOBlur = (IDirect3DPixelShader9 *)CompileShader("PsAOBlur", "ps_3_0", false);
+    g_psWet = (IDirect3DPixelShader9 *)CompileShader("PsWet", "ps_3_0", false);
+    g_psCarRefl = (IDirect3DPixelShader9 *)CompileShader("PsCarRefl", "ps_3_0", false);
+    g_psGI = (IDirect3DPixelShader9 *)CompileShader("PsGI", "ps_3_0", false);
+    g_psGIApply = (IDirect3DPixelShader9 *)CompileShader("PsGIApply", "ps_3_0", false);
+    for (int v = 0; v < 2; v++) g_psFlag[v] = (IDirect3DPixelShader9 *)CompileShader("PsFlag", "ps_3_0", v == 1);
+    g_psHaze = (IDirect3DPixelShader9 *)CompileShader("PsHaze", "ps_3_0", false);
+    g_psBeam = (IDirect3DPixelShader9 *)CompileShader("PsBeam", "ps_3_0", false);
+    g_vsBeam = (IDirect3DVertexShader9 *)CompileShader("VsBeam", "vs_3_0", false);
     g_vsWater = (IDirect3DVertexShader9 *)CompileShader("VsWater", "vs_3_0", false);
     g_psWater = (IDirect3DPixelShader9 *)CompileShader("PsWater", "ps_3_0", false);
     g_shadersOk = g_vsLight[0] && g_vsLight[1] && g_vsView[0] && g_vsView[1] && g_psDepth[0] && g_psDepth[1] && g_vsQuad && g_psMask;
@@ -679,6 +867,7 @@ static void ReleaseResources()
     SafeRelease(g_lightAtlasSurf); SafeRelease(g_lightAtlas); SafeRelease(g_lightAtlasDs);
     SafeRelease(g_reflSurf); SafeRelease(g_refl); SafeRelease(g_reflDs);
     SafeRelease(g_aoSurf); SafeRelease(g_ao);
+    SafeRelease(g_carMaskSurf); SafeRelease(g_carMask);
     SafeRelease(g_replayVb); SafeRelease(g_replayIb);
     SafeRelease(g_state);
     g_replayVbSize = g_replayIbSize = 0;
@@ -721,6 +910,8 @@ static bool CreateResources()
     if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_X8R8G8B8, D3DPOOL_DEFAULT, &g_ao, NULL)))
         g_ao->GetSurfaceLevel(0, &g_aoSurf);
     else Log("rendu : cible de l'occlusion ambiante impossible");
+    if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &g_carMask, NULL)))
+        g_carMask->GetSurfaceLevel(0, &g_carMaskSurf);
     if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_state))) { Log("rendu : bloc d'etats impossible"); ReleaseResources(); return false; }
     g_resourcesFailed = false;
     g_resourcesOk = true;
@@ -739,6 +930,7 @@ struct Rec {
     bool recvCand;        // recevrait ombres et lumieres s'il est vu par la camera principale
     uint8_t viewIdx;      // sa camera (g_views)
     bool caster, water;   // projette une ombre ; surface de l'eau (dessinee par nous)
+    bool vehicle;         // dessin d'un vehicule (reflets des carrosseries)
     GfxDraw d;
     DWORD fvf;
     float world[16];
@@ -1023,6 +1215,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     r.alphaRef = blend ? 0.5f : (at ? (aref & 255) / 255.0f : 0.0f);
     if (r.alphaTest && r.alphaRef < 0.02f) r.alphaRef = 0.02f;
     r.recvCand = !blend && zw && !g_bridgeCasterOnly;
+    r.vehicle = g_curEntity && (((uint8_t *)g_curEntity)[0x50] & 7) == 2;
     r.receiver = false;   // fixe par ChooseMainView
     r.caster = true;
     g_recs.push_back(r);
@@ -1414,6 +1607,171 @@ static void PrepareLightShadows(Vec3 cam)
     }
 }
 
+
+// ======================================================================= Ambiance (dans Apply, apres les lumieres)
+static M4 g_lastVP;          // camera de la derniere image (rayons de soleil, dans le post-traitement)
+static bool g_carMaskReady;
+static Vec3 g_lastCam;
+static float WeatherF(uintptr_t a) { float v = *(float *)a; return v == v && v > 0 ? (v > 1.5f ? 1.5f : v) : 0.0f; }
+static float SunsetK()
+{
+    if (g_moon || g_sun.z <= -0.05f || g_sun.z >= 0.35f) return 0;
+    float k = 1.0f - fabsf(g_sun.z - 0.12f) / 0.23f;
+    return k < 0 ? 0 : k;
+}
+static const float kFullTri[12] = { -1, -1, 0.5f, 1, -1, 3, 0.5f, 1, 3, -1, 0.5f, 1 };
+
+// Cones des phares (lumieres de genre 1), additifs, testes contre la profondeur du jeu, adoucis contre le decor.
+static void DrawBeams(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldDs)
+{
+    float rain = WeatherF(0x975340), fog = WeatherF(0x94DDC0);
+    float dens = (0.12f + 0.9f * rain + 1.0f * fog) * (0.4f + 0.6f * g_night);
+    if (dens < 0.02f) return;
+    struct BV { float x, y, z; DWORD c; };
+    static BV v[MAX_LIGHTS * 3 * 2 * 18];
+    int nv = 0;
+    for (int i = 0; i < g_lightCount; i++) {
+        const DynLight &l = g_lightList[i];
+        if (l.type != 1) continue;
+        Vec3 o = { l.x, l.y, l.z }, dir = Norm({ l.dx, l.dy, l.dz });
+        Vec3 dc = Sub(o, cam);
+        if (Dot(dc, dc) > 80.0f * 80.0f || Dot(dir, dir) < 0.5f) continue;
+        Vec3 up = fabsf(dir.z) > 0.9f ? Vec3{ 1, 0, 0 } : Vec3{ 0, 0, 1 };
+        Vec3 a = Norm(Cross(dir, up)), b = Cross(dir, a);
+        float len = 13.0f, rad = len * 0.42f;
+        float lum = l.r + l.g + l.b; if (lum < 0.01f) continue;
+        int cr = (int)(255 * l.r / lum * 1.2f), cg = (int)(255 * l.g / lum * 1.2f), cb = (int)(255 * l.b / lum * 1.2f);
+        cr = cr > 255 ? 255 : cr; cg = cg > 255 ? 255 : cg; cb = cb > 255 ? 255 : cb;
+        DWORD tip = D3DCOLOR_ARGB(150, cr, cg, cb), mid = D3DCOLOR_ARGB(70, cr, cg, cb), end = D3DCOLOR_ARGB(0, cr, cg, cb);
+        const int seg = 18;
+        for (int k = 0; k < seg; k++) {
+            float a0 = k * 6.2831853f / seg, a1 = (k + 1) * 6.2831853f / seg;
+            Vec3 r0 = { a.x * cosf(a0) + b.x * sinf(a0), a.y * cosf(a0) + b.y * sinf(a0), a.z * cosf(a0) + b.z * sinf(a0) };
+            Vec3 r1 = { a.x * cosf(a1) + b.x * sinf(a1), a.y * cosf(a1) + b.y * sinf(a1), a.z * cosf(a1) + b.z * sinf(a1) };
+            auto P = [&](float t, Vec3 r) { return Vec3{ o.x + dir.x * len * t + r.x * rad * t, o.y + dir.y * len * t + r.y * rad * t, o.z + dir.z * len * t + r.z * rad * t }; };
+            Vec3 m0 = P(0.35f, r0), m1 = P(0.35f, r1), e0 = P(1, r0), e1 = P(1, r1);
+            if (nv + 9 > (int)(sizeof(v) / sizeof(v[0]))) break;
+            v[nv++] = { o.x, o.y, o.z, tip }; v[nv++] = { m0.x, m0.y, m0.z, mid }; v[nv++] = { m1.x, m1.y, m1.z, mid };
+            v[nv++] = { m0.x, m0.y, m0.z, mid }; v[nv++] = { e0.x, e0.y, e0.z, end }; v[nv++] = { e1.x, e1.y, e1.z, end };
+            v[nv++] = { m0.x, m0.y, m0.z, mid }; v[nv++] = { e1.x, e1.y, e1.z, end }; v[nv++] = { m1.x, m1.y, m1.z, mid };
+        }
+    }
+    if (!nv) return;
+    g_dev->SetDepthStencilSurface(oldDs);
+    g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
+    g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_ZFUNC, D3DCMP_LESSEQUAL);
+    g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
+    g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+    g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
+    g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+    g_dev->SetVertexShaderConstantF(0, vp.m, 4);
+    float bc[4] = { dens, 1.0f / kDepthScale, 0, 0 };
+    g_dev->SetPixelShaderConstantF(30, bc, 1);
+    g_dev->SetVertexShader(g_vsBeam);
+    g_dev->SetPixelShader(g_psBeam);
+    g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
+    g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, nv / 3, v, sizeof(BV));
+    g_dev->SetDepthStencilSurface(NULL);
+    g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+    g_dev->SetVertexShader(g_vsQuad);
+    g_dev->SetFVF(D3DFVF_XYZW);
+}
+
+static void AmbiencePasses(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldRt, IDirect3DSurface9 *oldDs, bool lights)
+{
+    if (g_debugMask) return;
+    bool outdoors = Outdoors();
+    float wetRoads = WeatherF(0x9B6A9C);   // CWeather::WetRoads
+    float sky[3] = { SkyChan(0xA0D958), SkyChan(0x97F208), SkyChan(0x9B6DF4) };
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0x7);
+    float vpc[6 * 4] = {};
+    memcpy(vpc + 4, vp.m, 64);
+    vpc[20] = sky[0]; vpc[21] = sky[1]; vpc[22] = sky[2]; vpc[23] = 1;
+    // Lumiere indirecte (de jour, et un peu la nuit sous les neons).
+    if (g_cfg.indirectLight && g_psGI && g_psGIApply && g_refractSurf && g_aoSurf) {
+        g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_NONE);
+        g_dev->SetTexture(3, g_refract);
+        g_dev->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(3, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        vpc[0] = 0.22f + 0.13f * (1 - g_night); vpc[1] = 2.5f; vpc[2] = 0; vpc[3] = 0;
+        g_dev->SetPixelShaderConstantF(30, vpc, 6);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+        g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+        g_dev->SetRenderTarget(0, g_aoSurf);            // lumiere renvoyee (la cible de l'occlusion est libre)
+        g_dev->SetPixelShader(g_psGI);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+        g_dev->SetRenderTarget(0, oldRt);
+        D3DVIEWPORT9 fullVp = { 0, 0, g_width, g_height, 0, 1 };
+        g_dev->SetViewport(&fullVp);
+        g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0x7);
+        g_dev->SetTexture(1, g_ao);
+        g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+        g_dev->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        g_dev->SetPixelShader(g_psGIApply);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+        g_dev->SetTexture(1, NULL);
+    }
+    // Carrosseries.
+    if (g_cfg.carReflections && g_carMaskReady && g_psCarRefl && g_refractSurf) {
+        g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_NONE);
+        g_dev->SetTexture(3, g_refract);
+        g_dev->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+        g_dev->SetSamplerState(3, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+        g_dev->SetTexture(1, g_carMask);
+        g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        vpc[0] = 1.0f; vpc[1] = 0; vpc[2] = 0; vpc[3] = 0;
+        g_dev->SetPixelShaderConstantF(30, vpc, 6);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+        g_dev->SetPixelShader(g_psCarRefl);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+        g_dev->SetTexture(1, NULL);
+    }
+    // Sols mouilles (pluie) ; sols brillants des interieurs (Malibu, centre commercial...).
+    if (g_cfg.wetRoads && g_psWet && g_refractSurf && (wetRoads > 0.03f || !outdoors)) {
+        g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_NONE);
+        g_dev->SetTexture(3, g_refract);
+        g_dev->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
+        g_dev->SetSamplerState(3, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
+        float wc[6 * 4] = {};
+        wc[0] = outdoors ? wetRoads : 0; wc[1] = (float)(GetTickCount() % 600000) / 1000.0f; wc[2] = outdoors ? 0 : 0.28f; wc[3] = 0.85f;
+        memcpy(wc + 4, vp.m, 64);
+        wc[20] = sky[0]; wc[21] = sky[1]; wc[22] = sky[2]; wc[23] = 1;
+        g_dev->SetPixelShaderConstantF(30, wc, 6);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+        g_dev->SetPixelShader(g_psWet);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+    }
+    // Brume : teinte du jour (bleu pale), du coucher (doree), du soir et de la nuit (violette) ; pluie et brouillard : grise.
+    if (g_cfg.haze && g_psHaze && outdoors) {
+        float sunset = SunsetK(), rain = WeatherF(0x975340), fog = WeatherF(0x94DDC0);
+        float col[3] = { 0.72f, 0.82f, 0.95f };
+        const float gold[3] = { 1.0f, 0.70f, 0.52f }, violet[3] = { 0.30f, 0.25f, 0.44f };
+        DWORD fogCol = 0;
+        g_dev->GetRenderState(D3DRS_FOGCOLOR, &fogCol);
+        float gray[3] = { ((fogCol >> 16) & 255) / 255.0f, ((fogCol >> 8) & 255) / 255.0f, (fogCol & 255) / 255.0f };
+        float wx = rain * 0.8f + fog; if (wx > 1) wx = 1;
+        for (int k = 0; k < 3; k++) {
+            col[k] = col[k] + (gold[k] - col[k]) * sunset;
+            col[k] = col[k] + (violet[k] - col[k]) * g_night;
+            col[k] = col[k] + (gray[k] - col[k]) * wx;
+        }
+        float hc[2 * 4] = { col[0], col[1], col[2], 0.0015f + 0.002f * sunset + 0.004f * fog + 0.0015f * rain,
+                            70.0f - 40.0f * fog, 0.025f, 0.15f + 0.35f * sunset, 0 };
+        g_dev->SetPixelShaderConstantF(30, hc, 2);
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+        g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+        g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+        g_dev->SetPixelShader(g_psHaze);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+    }
+    if (g_cfg.beams && lights && g_psBeam && g_vsBeam && outdoors) DrawBeams(vp, cam, oldDs);
+    g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+}
+
 static void Apply()
 {
     FpuGuard fpu;
@@ -1424,12 +1782,13 @@ static void Apply()
     bool shadows = ShadowsWanted() && g_sunK > 0.01f;
     bool lights = LightsWanted() && g_lightCount > 0;
     bool aoWanted = AoWanted();
-    if (g_recs.empty() || !g_haveMain || (!shadows && !lights && !aoWanted) || !CreateResources()) return;
+    bool ambience = g_cfg.wetRoads || g_cfg.haze || g_cfg.beams || g_cfg.sunRays || g_cfg.softParticles || g_cfg.carReflections || g_cfg.indirectLight;
+    if (g_recs.empty() || !g_haveMain || (!shadows && !lights && !aoWanted && !ambience) || !CreateResources()) return;
     if (lights && !g_psLights) lights = false;
     bool ao = aoWanted && g_psAO && g_psAOBlur && g_aoSurf;
     int receivers = 0;
     for (const Rec &r : g_recs) receivers += r.receiver;
-    if (receivers < 20 || (!shadows && !lights && !ao)) return;
+    if (receivers < 20 || (!shadows && !lights && !ao && !ambience)) return;
 
     // Camera principale.
     M4 view, proj, vp, invVp;
@@ -1482,6 +1841,24 @@ static void Apply()
     const float depthScale = kDepthScale;
     RenderScreenDepth(vp, true);
     g_depthReady = true;
+    // 2b. Masque des carrosseries (memes sommets et matrices : meme profondeur, test "inferieur ou egal").
+    g_carMaskReady = false;
+    if (g_cfg.carReflections && g_carMaskSurf && g_psFlag[0] && g_psFlag[1]) {
+        g_dev->SetRenderTarget(0, g_carMaskSurf);
+        g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0, 1.0f, 0);
+        g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        for (const Rec &r : g_recs) {
+            if (!r.receiver || !r.vehicle) continue;
+            int v = (r.fvf & D3DFVF_TEXCOUNT_MASK) ? 0 : 1;
+            M4 w; memcpy(w.m, r.world, 64);
+            DrawRec(r, Mul(w, vp), true);
+            g_dev->SetPixelShader(g_psFlag[v]);
+            if (r.d.indexed) g_dev->DrawIndexedPrimitive((D3DPRIMITIVETYPE)r.d.type, (INT)r.d.baseVertex, r.d.minIndex, r.d.numVerts, r.d.start, r.d.count);
+            else g_dev->DrawPrimitive((D3DPRIMITIVETYPE)r.d.type, r.d.start, r.d.count);
+            g_carMaskReady = true;
+        }
+        g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    }
 
     // 3. Masque d'ombre sur l'image.
     if (g_captureStage == 1 && !g_captureBefore && SUCCEEDED(g_dev->CreateRenderTarget(g_width, g_height, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &g_captureBefore, NULL)))
@@ -1606,6 +1983,11 @@ static void Apply()
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
 
+    // 5. Ambiance : sols mouilles / brillants, brume, faisceaux des phares.
+    AmbiencePasses(vp, cam, oldRt, oldDs, lights);
+    g_lastVP = vp;
+    g_lastCam = cam;
+
     // Retour a l'etat du jeu.
     g_dev->SetTexture(0, NULL);
     g_dev->SetTexture(1, NULL);
@@ -1640,8 +2022,87 @@ static void *g_waterTex;
 static int g_waterDraws;
 
 static void MaybeBindSoft(DWORD fvf);
+
+// ======================================================================= Vegetation au vent
+// CRenderer::RenderOneNonRoad (0x4C9DA0, aussi pour les entites en fondu) : on retient l'entite dessinee. Palmiers,
+// arbres, buissons (nom du modele) : juste avant chacun de leurs dessins, la matrice monde est cisaillee depuis la base
+// de l'objet (x += a (z - base)) selon le vent du jeu (CWeather::Wind 0x97533C), avec une phase par objet et des
+// rafales ; retablie juste apres (Gfx9DrawDone). Les ombres (dessins notes) suivent le meme mouvement.
+typedef void(__cdecl *RenderOne_t)(void *);
+static RenderOne_t o_RenderOneNonRoad;
+static void __cdecl h_RenderOneNonRoad(void *e)
+{
+    void *prev = g_curEntity;
+    g_curEntity = e;
+    o_RenderOneNonRoad(e);
+    g_curEntity = prev;
+}
+static uint8_t g_vegFlag[6600];   // 0 inconnu, 1 vegetation, 2 non
+static bool IsVegetation(int model)
+{
+    if (model < 0 || model >= 6600) return false;
+    if (!g_vegFlag[model]) {
+        const char *n = ModelName(model);
+        static const char *const keys[] = { "palm", "tree", "veg_", "bush", "plant", "hedge", "shrub", "fern", "flower", "banana", "cypress", "leaves" };
+        bool veg = false;
+        if (n && n[0]) {
+            char low[32]; int i = 0;
+            for (; n[i] && i < 31; i++) low[i] = (char)((n[i] >= 'A' && n[i] <= 'Z') ? n[i] + 32 : n[i]);
+            low[i] = 0;
+            for (const char *k : keys) if (strstr(low, k)) veg = true;
+        }
+        g_vegFlag[model] = veg ? 1 : 2;
+    }
+    return g_vegFlag[model] == 1;
+}
+static bool g_windBound;
+static D3DMATRIX g_windSaved;
+static int g_windDraws;
+static void MaybeWind()
+{
+    if (!g_cfg.windPlants || !g_curEntity || !g_dev) return;
+    uint8_t *e = (uint8_t *)g_curEntity;
+    int type = e[0x50] & 7;
+    if (type != 1 && type != 4 && type != 5) return;   // batiment, objet, decor
+    if (!IsVegetation(*(short *)(e + 0x5C))) return;
+    float bx = *(float *)(e + 0x34), by = *(float *)(e + 0x38), bz = *(float *)(e + 0x3C);
+    float t = (GetTickCount() % 3600000) / 1000.0f;
+    float wind = *(float *)0x97533C;
+    if (!(wind >= 0 && wind < 3)) wind = 0;
+    float amp = 0.006f + 0.022f * wind;
+    float ph = bx * 0.13f + by * 0.17f;
+    float gust = 0.75f + 0.25f * sinf(t * 0.37f + ph * 0.3f);
+    float sx = amp * gust * (sinf(t * 1.3f + ph) + 0.35f * sinf(t * 3.1f + ph * 1.7f));
+    float sy = amp * gust * 0.6f * sinf(t * 1.1f + ph * 0.7f + 1.0f);
+    M4 w;
+    g_dev->GetTransform(D3DTS_WORLD, (D3DMATRIX *)w.m);
+    memcpy(&g_windSaved, w.m, 64);
+    M4 a = Identity4();
+    a.m[8] = sx; a.m[9] = sy;                     // ligne z : x += sx z, y += sy z
+    a.m[12] = -sx * bz; a.m[13] = -sy * bz;       // ... mesure depuis la base de l'objet
+    M4 w2 = Mul(w, a);
+    g_dev->SetTransform(D3DTS_WORLD, (D3DMATRIX *)w2.m);
+    g_windBound = true;
+    g_windDraws++;
+    (void)bx; (void)by;
+}
+static void RestoreWind()
+{
+    if (!g_windBound) return;
+    g_windBound = false;
+    g_dev->SetTransform(D3DTS_WORLD, &g_windSaved);
+}
+
 extern bool g_hideOwnGlass;   // camera.cpp : vehicule du joueur en vue a la premiere personne
+static bool InterceptInner(DWORD fvf, const GfxDraw &d, bool up);
 bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
+{
+    MaybeWind();
+    bool r = InterceptInner(fvf, d, up);
+    if (r) RestoreWind();   // dessin saute : la matrice est rendue tout de suite
+    return r;
+}
+static bool InterceptInner(DWORD fvf, const GfxDraw &d, bool up)
 {
     if (g_hideOwnGlass && g_dev) {   // ses vitres (dessins transparents) ne sont pas dessinees
         DWORD blend = 0;
@@ -1931,6 +2392,8 @@ sampler2D sSrc : register(s0);
 sampler2D sB1 : register(s1);
 sampler2D sB2 : register(s2);
 sampler2D sB3 : register(s3);
+sampler2D sRays : register(s4);
+float4 gRay : register(c6);        // soleil a l'ecran (uv), force, rapport largeur / hauteur
 struct PIn { float4 pos : POSITION; float2 uv : TEXCOORD0; };
 PIn VsPost(PIn i) { return i; }
 
@@ -1956,6 +2419,24 @@ float4 PsBlur(PIn i) : COLOR {
   [unroll] for (int k = 1; k < 5; k++) c += (tex2D(sSrc, i.uv + d * k).rgb + tex2D(sSrc, i.uv - d * k).rgb) * w[k];
   return float4(c, 1);
 }
+// Rayons de soleil : ciel clair pres du soleil (profondeur en s1), puis flou radial vers lui.
+float4 PsRayMask(PIn i) : COLOR {
+  float d = tex2Dlod(sB1, float4(i.uv, 0, 0)).r;
+  float sky = d >= 0.999 ? 1 : 0;
+  float3 c = tex2Dlod(sSrc, float4(i.uv, 0, 0)).rgb;
+  float l = dot(c, float3(0.3, 0.59, 0.11));
+  float2 dv = i.uv - gRay.xy; dv.x *= gRay.w;
+  float fall = saturate(1 - length(dv) * 1.1);
+  return float4(c * sky * saturate(l * 1.6 - 0.35) * fall * fall, 1);
+}
+float4 PsRayBlur(PIn i) : COLOR {
+  float2 delta = (i.uv - gRay.xy) * (0.92 / 40);
+  float2 uv = i.uv;
+  float3 sum = 0;
+  float decay = 1;
+  [unroll] for (int k = 0; k < 40; k++) { uv -= delta; sum += tex2Dlod(sSrc, float4(uv, 0, 0)).rgb * decay; decay *= 0.965; }
+  return float4(sum / 22, 1);
+}
 float3 Hable(float3 x) {
   const float A = 0.22, B = 0.30, C = 0.10, D = 0.20, E = 0.01, F = 0.30;
   return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
@@ -1972,6 +2453,7 @@ float4 PsFinal(PIn i) : COLOR {
     c = saturate((c + (n + s + e + w) * wgt) / (1 + 4 * wgt));
   }
   c += (tex2D(sB1, i.uv).rgb * 0.55 + tex2D(sB2, i.uv).rgb * 0.75 + tex2D(sB3, i.uv).rgb * 0.95) * gGradeHi.w;
+  c += tex2D(sRays, i.uv).rgb * gRay.z * float3(1.0, 0.9, 0.72);
   c *= gGrade0.z;
   if (gGradeLo.w > 0.5) c = Hable(c * 3.2) / Hable(3.2);   // courbe "film" : hautes lumieres adoucies
   float l = dot(c, float3(0.2126, 0.7152, 0.0722));
@@ -2008,7 +2490,8 @@ float4 PsSmaaBlend(SBlend i) : COLOR { return SMAANeighborhoodBlendingPS(i.uv, i
 )HLSL";
 
 static IDirect3DVertexShader9 *g_vsPost, *g_vsSmaa[3];
-static IDirect3DPixelShader9 *g_psSmaa[3], *g_psBright, *g_psDown, *g_psBlur, *g_psFinal;
+static IDirect3DPixelShader9 *g_psSmaa[3], *g_psBright, *g_psDown, *g_psBlur, *g_psFinal, *g_psRayMask, *g_psRayBlur;
+static IDirect3DTexture9 *g_rayTex[2];
 static IDirect3DTexture9 *g_postA, *g_postB, *g_smaaEdge, *g_smaaWeight, *g_areaTex, *g_searchTex, *g_bloomTex[3][2];
 static IDirect3DStateBlock9 *g_postState;
 static bool g_postTried, g_postShadersOk, g_postResOk;
@@ -2044,6 +2527,8 @@ static bool CreatePostShaders()
     g_psDown = (IDirect3DPixelShader9 *)CompileFrom(post, "PsDown", "ps_3_0");
     g_psBlur = (IDirect3DPixelShader9 *)CompileFrom(post, "PsBlur", "ps_3_0");
     g_psFinal = (IDirect3DPixelShader9 *)CompileFrom(post, "PsFinal", "ps_3_0");
+    g_psRayMask = (IDirect3DPixelShader9 *)CompileFrom(post, "PsRayMask", "ps_3_0");
+    g_psRayBlur = (IDirect3DPixelShader9 *)CompileFrom(post, "PsRayBlur", "ps_3_0");
     std::string smaa = std::string(kSmaaWrap) + kSmaaSource + kSmaaEntries;
     static const char *vs[3] = { "VsSmaaEdge", "VsSmaaWeight", "VsSmaaBlend" }, *ps[3] = { "PsSmaaEdge", "PsSmaaWeight", "PsSmaaBlend" };
     for (int k = 0; k < 3; k++) {
@@ -2061,6 +2546,7 @@ static void ReleasePostResources()
 {
     SafeRelease(g_postA); SafeRelease(g_postB); SafeRelease(g_smaaEdge); SafeRelease(g_smaaWeight);
     for (auto &l : g_bloomTex) { SafeRelease(l[0]); SafeRelease(l[1]); }
+    SafeRelease(g_rayTex[0]); SafeRelease(g_rayTex[1]);
     SafeRelease(g_postState);
     g_postResOk = false;
 }
@@ -2086,6 +2572,9 @@ static bool CreatePostResources()
         if (!RenderTargetTex(g_bloomW[l], g_bloomH[l], &g_bloomTex[l][0]) || !RenderTargetTex(g_bloomW[l], g_bloomH[l], &g_bloomTex[l][1])) {
             Log("rendu : cibles de l'eclat impossibles"); ReleasePostResources(); return false;
         }
+    }
+    if (!RenderTargetTex(g_bloomW[0], g_bloomH[0], &g_rayTex[0]) || !RenderTargetTex(g_bloomW[0], g_bloomH[0], &g_rayTex[1])) {
+        Log("rendu : cibles des rayons impossibles"); ReleasePostResources(); return false;
     }
     // Tables du SMAA (gardees d'une remise a zero a l'autre) : aire en A8L8 (R -> L, G -> A : lue .ra), recherche en L8.
     if (!g_areaTex && SUCCEEDED(g_dev->CreateTexture(AREATEX_WIDTH, AREATEX_HEIGHT, 1, 0, D3DFMT_A8L8, D3DPOOL_MANAGED, &g_areaTex, NULL))) {
@@ -2220,6 +2709,35 @@ static void PostProcess()
             }
         }
     }
+    // 2b. Rayons de soleil : le soleil devant la camera, au-dessus de l'horizon, dehors.
+    float rayK = 0, rayUv[2] = { 0.5f, 0.5f };
+    if (g_cfg.sunRays && g_psRayMask && g_psRayBlur && g_depthReady && g_screenDepth && !g_moon && g_sun.z > 0.02f && g_sunK > 0.05f && Outdoors()) {
+        Vec3 sp = { g_lastCam.x + g_sun.x * 800, g_lastCam.y + g_sun.y * 800, g_lastCam.z + g_sun.z * 800 };
+        float cl[4];
+        for (int j = 0; j < 4; j++) cl[j] = sp.x * g_lastVP.m[j] + sp.y * g_lastVP.m[4 + j] + sp.z * g_lastVP.m[8 + j] + g_lastVP.m[12 + j];
+        if (cl[3] > 1) {
+            rayUv[0] = cl[0] / cl[3] * 0.5f + 0.5f; rayUv[1] = -cl[1] / cl[3] * 0.5f + 0.5f;
+            float off = fmaxf(fmaxf(-rayUv[0], rayUv[0] - 1), fmaxf(-rayUv[1], rayUv[1] - 1));   // hors de l'image : s'efface
+            float vis = off <= 0 ? 1.0f : fmaxf(0.0f, 1.0f - off * 2.5f);
+            float sunsetR = 0;
+            if (g_sun.z < 0.35f) sunsetR = 1.0f - fabsf(g_sun.z - 0.12f) / 0.23f;
+            if (sunsetR < 0) sunsetR = 0;
+            rayK = vis * g_sunK * (0.28f + 0.45f * sunsetR);
+        }
+        if (rayK > 0.01f) {
+            float rc[4] = { rayUv[0], rayUv[1], rayK, (float)g_width / g_height };
+            float tx[4] = { 1.0f / g_width, 1.0f / g_height, (float)g_width, (float)g_height };
+            g_dev->SetPixelShaderConstantF(0, tx, 1);
+            g_dev->SetPixelShaderConstantF(6, rc, 1);
+            Sampler(0, src, true); Sampler(1, g_screenDepth, false);
+            g_dev->SetPixelShader(g_psRayMask);
+            PostQuad(g_rayTex[0], g_bloomW[0], g_bloomH[0]);
+            Sampler(1, NULL, true);
+            Sampler(0, g_rayTex[0], true);
+            g_dev->SetPixelShader(g_psRayBlur);
+            PostQuad(g_rayTex[1], g_bloomW[0], g_bloomH[0]);
+        }
+    }
     // 3. Passe finale vers l'image.
     float sunset = 0;   // soleil bas sur l'horizon (lever, coucher)
     if (g_sun.z > -0.05f && g_sun.z < 0.35f && !g_moon) sunset = 1.0f - fabsf(g_sun.z - 0.12f) / 0.23f;
@@ -2241,12 +2759,15 @@ static void PostProcess()
     hi[3] = bloom ? (0.35f + 0.55f * night) : 0.0f;
     c[20] = g_cfg.sharpen / 100.0f;
     g_dev->SetPixelShaderConstantF(0, c, 6);
+    float rc2[4] = { rayUv[0], rayUv[1], rayK > 0.01f ? rayK : 0.0f, (float)g_width / g_height };
+    g_dev->SetPixelShaderConstantF(6, rc2, 1);
+    Sampler(4, rayK > 0.01f ? g_rayTex[1] : NULL, true);
     Sampler(0, src, false);
     for (int l = 0; l < 3; l++) Sampler(1 + l, bloom ? g_bloomTex[l][0] : NULL, true);
     g_dev->SetPixelShader(g_psFinal);
     PostQuadTo(bb, g_width, g_height);
 
-    for (int s = 0; s < 4; s++) g_dev->SetTexture(s, NULL);
+    for (int s = 0; s < 5; s++) g_dev->SetTexture(s, NULL);
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
     g_postState->Apply();
@@ -2350,6 +2871,7 @@ static void MaybeBindSoft(DWORD fvf)
 
 void Gfx9DrawDone()
 {
+    RestoreWind();
     if (!g_softBound) return;
     g_softBound = false;
     g_dev->SetVertexShader(NULL);
@@ -2434,6 +2956,14 @@ void Gfx9BeforePresent()
     g_lightCount = 0;
     g_lampCount = 0;
     g_depthReady = false;
+    {
+        static uint32_t lastWindLog;
+        if (g_windDraws && GetTickCount() - lastWindLog > 10000) {
+            lastWindLog = GetTickCount();
+            Log("rendu : %d dessins de vegetation au vent (vent %.2f, pluie %.2f, sol mouille %.2f)", g_windDraws, *(float *)0x97533C, *(float *)0x975340, *(float *)0x9B6A9C);
+        }
+        g_windDraws = 0;
+    }
     g_waterDraws = 0;
     g_lightsLive = LightsWanted() && g_shadersOk && g_psLights;
     g_night = 1.0f - SkyLum();
@@ -2455,6 +2985,9 @@ void InstallGfx9Hooks()
         PatchCall(0x4A6594, (void *)h_RenderWater);
         PatchCall(0x4A65AE, (void *)h_RenderTransparentWater);
     } else Log("rendu : appels de l'eau introuvables (eau moderne coupee)");
+    static const uint8_t roneProl[] = { 0x53, 0x56, 0x57, 0x55, 0x83, 0xEC, 0x08 };
+    o_RenderOneNonRoad = (RenderOne_t)MakeDetour(0x4C9DA0, roneProl, sizeof(roneProl), (void *)h_RenderOneNonRoad);
+    if (!o_RenderOneNonRoad) Log("rendu : RenderOneNonRoad introuvable (vegetation au vent coupee)");
     if (*(uint8_t *)0x4A604F == 0xE8 && *(int32_t *)0x4A6050 == 0x4A6510 - 0x4A6054) PatchCall(0x4A604F, (void *)h_RenderEffects);
     else Log("rendu : appel de RenderEffects introuvable (particules douces coupees)");
     if (*(uint8_t *)0x4A604A == 0xE8 && *(int32_t *)0x4A604B == 0x4A6570 - 0x4A604F) { PatchCall(0x4A604A, (void *)h_RenderScene); g_sceneHooked = true; }

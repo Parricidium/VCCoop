@@ -32,7 +32,8 @@ enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRE
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
        ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
        ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS, ACT_POPZONE, ACT_POPDENS, ACT_RAGDOLL,
-       ACT_POSTPAGE, ACT_AMBPAGE, ACT_SMAA, ACT_BLOOM, ACT_GRADE, ACT_SHARPEN, ACT_SOFTPART, ACT_LAMPS };
+       ACT_POSTPAGE, ACT_AMBPAGE, ACT_SMAA, ACT_BLOOM, ACT_GRADE, ACT_SHARPEN, ACT_SOFTPART, ACT_LAMPS,
+       ACT_WET, ACT_RAYS, ACT_WIND, ACT_BEAMS, ACT_HAZE, ACT_CARREFL, ACT_GI };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
 enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN, SUB_POST, SUB_AMB };   // Effets d'image, Ambiance : sous-pages de Options video
@@ -103,6 +104,13 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "Nettete", dd, ini);
     WritePrivateProfileStringA("VCCoop", "ParticulesDouces", g_cfg.softParticles ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "LampadairesEclairent", g_cfg.lampLights ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "RoutesMouillees", g_cfg.wetRoads ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "RayonsSoleil", g_cfg.sunRays ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "VegetationVent", g_cfg.windPlants ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "FaisceauxPhares", g_cfg.beams ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "Brume", g_cfg.haze ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "RefletsVoitures", g_cfg.carReflections ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "LumiereIndirecte", g_cfg.indirectLight ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "VuePremierePersonne", g_cfg.fpsView ? "1" : "0", ini);
     wsprintfA(dd, "%d", g_cfg.zonePop);
     WritePrivateProfileStringA("VCCoop", "ZonePopulation", dd, ini);
@@ -115,7 +123,7 @@ static void SaveIni()
 }
 
 // --- Textes ---
-static wchar_t g_text[48][80];
+static wchar_t g_text[56][80];
 
 static const wchar_t *Put(int slot, const char *s)
 {
@@ -193,6 +201,13 @@ static const wchar_t *CoopText(const char *key)
     }
     if (!strcmp(key, "VCC_SP")) { wsprintfA(buf, "%s : %s", fr ? "Particules douces" : "Soft particles", g_cfg.softParticles ? yes : no); return Put(42, buf); }
     if (!strcmp(key, "VCC_LP")) { wsprintfA(buf, "%s : %s", fr ? "Lampadaires et neons eclairent" : "Street lamps and neons cast light", g_cfg.lampLights ? yes : no); return Put(43, buf); }
+    if (!strcmp(key, "VCC_WE")) { wsprintfA(buf, "%s : %s", fr ? "Routes mouillees, sols brillants" : "Wet roads, shiny floors", g_cfg.wetRoads ? yes : no); return Put(44, buf); }
+    if (!strcmp(key, "VCC_RY")) { wsprintfA(buf, "%s : %s", fr ? "Rayons de soleil" : "Sun rays", g_cfg.sunRays ? yes : no); return Put(45, buf); }
+    if (!strcmp(key, "VCC_WI")) { wsprintfA(buf, "%s : %s", fr ? "Vegetation au vent" : "Plants in the wind", g_cfg.windPlants ? yes : no); return Put(46, buf); }
+    if (!strcmp(key, "VCC_BE")) { wsprintfA(buf, "%s : %s", fr ? "Faisceaux des phares" : "Headlight beams", g_cfg.beams ? yes : no); return Put(47, buf); }
+    if (!strcmp(key, "VCC_HZ")) { wsprintfA(buf, "%s : %s", fr ? "Brume au loin" : "Distance haze", g_cfg.haze ? yes : no); return Put(48, buf); }
+    if (!strcmp(key, "VCC_CR")) { wsprintfA(buf, "%s : %s", fr ? "Reflets des voitures" : "Car reflections", g_cfg.carReflections ? yes : no); return Put(49, buf); }
+    if (!strcmp(key, "VCC_GI")) { wsprintfA(buf, "%s : %s", fr ? "Lumiere indirecte" : "Indirect light", g_cfg.indirectLight ? yes : no); return Put(50, buf); }
     if (!strcmp(key, "VCC_RG")) {
         wsprintfA(buf, "%s : %s", fr ? "Corps mous" : "Ragdolls", g_cfg.ragdoll ? yes : no);
         return Put(35, buf);
@@ -430,6 +445,13 @@ static void OnCoopAction(int action)
     case ACT_SHARPEN: g_cfg.sharpen = g_cfg.sharpen >= 100 ? 0 : g_cfg.sharpen + 20; SaveIni(); break;
     case ACT_SOFTPART: g_cfg.softParticles = !g_cfg.softParticles; SaveIni(); break;
     case ACT_LAMPS: g_cfg.lampLights = !g_cfg.lampLights; SaveIni(); break;
+    case ACT_WET: g_cfg.wetRoads = !g_cfg.wetRoads; SaveIni(); break;
+    case ACT_RAYS: g_cfg.sunRays = !g_cfg.sunRays; SaveIni(); break;
+    case ACT_WIND: g_cfg.windPlants = !g_cfg.windPlants; SaveIni(); break;
+    case ACT_BEAMS: g_cfg.beams = !g_cfg.beams; SaveIni(); break;
+    case ACT_HAZE: g_cfg.haze = !g_cfg.haze; SaveIni(); break;
+    case ACT_CARREFL: g_cfg.carReflections = !g_cfg.carReflections; SaveIni(); break;
+    case ACT_GI: g_cfg.indirectLight = !g_cfg.indirectLight; SaveIni(); break;
     case ACT_BACKSUB: SubBack(); break;
     }
 }
@@ -512,6 +534,9 @@ static void BuildCoopPage()
     } else if (g_sub == SUB_AMB) {
         items[n++] = { ACT_AO, "VCC_AO" }; items[n++] = { ACT_MOON, "VCC_MO" };
         items[n++] = { ACT_LAMPS, "VCC_LP" }; items[n++] = { ACT_SOFTPART, "VCC_SP" };
+        items[n++] = { ACT_WET, "VCC_WE" }; items[n++] = { ACT_RAYS, "VCC_RY" }; items[n++] = { ACT_WIND, "VCC_WI" };
+        items[n++] = { ACT_BEAMS, "VCC_BE" }; items[n++] = { ACT_HAZE, "VCC_HZ" };
+        items[n++] = { ACT_CARREFL, "VCC_CR" }; items[n++] = { ACT_GI, "VCC_GI" };
     } else if (!g_netStarted && !inGame) {
         // Accueil : Creer / Rejoindre / Pseudo / Options (coop + video : a regler avant de creer ou rejoindre).
         items[n++] = { ACT_CREATE, "VCC_CRE" }; items[n++] = { ACT_JOINPAGE, "VCC_JP" };
