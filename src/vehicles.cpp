@@ -858,9 +858,25 @@ void VehiclesAfterAudio()
     g_audioStatusN = 0;
 }
 
+// Vehicule au statut "joueur" (0) sans conducteur : le conducteur est descendu pendant qu'un autre joueur montait en
+// passager (sieges poses par nous). Le jeu y applique la conduite et le tir en roulant du conducteur absent
+// (plantage 0x5C9210 chez un invite, moto de l'hote, 29/09) : il redevient "abandonne".
+static void FixDriverlessPlayerVehicles()
+{
+    Pool *pool = VehiclePool();
+    for (int i = 0; i < pool->size; i++) {
+        if (pool->flags[i] & 0x80) continue;
+        void *v = pool->objects + i * VEHICLE_POOL_ENTRY;
+        if (EntityStatus(v) != 0 || VehDriver(v)) continue;
+        SetEntityStatus(v, STATUS_ABANDONED);
+        static int logged;
+        if (logged++ < 10) Log("vehicules : modele %d au statut joueur sans conducteur, remis abandonne", ModelIndex(v));
+    }
+}
+
 void VehiclesFrame(bool inGame)
 {
-    if (inGame) { CopyCollisions(); RunOverByPlayers(); MyCarHitsPlayers(); }
+    if (inGame) { FixDriverlessPlayerVehicles(); CopyCollisions(); RunOverByPlayers(); MyCarHitsPlayers(); }
     static bool wasConnected[MAX_PLAYERS];
     for (int i = 0; i < MAX_PLAYERS; i++) {
         bool c = i != g_localId && g_players[i].connected;

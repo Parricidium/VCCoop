@@ -54,9 +54,24 @@ static void __fastcall h_OpenDoor(void *car, void *, int component, int door, fl
     o_OpenDoor(car, component, door, ratio);
 }
 
+// CVehicle::DoDriveByShootings (0x5C91E0), appele par la moto (et la voiture) au statut "joueur" : lit l'arme du
+// conducteur (m_pDriver +0x1A8) sans verifier qu'il y en a un. En coop, un vehicule peut rester au statut "joueur"
+// sans conducteur (le conducteur descend pendant qu'un invite monte passager) : plantage 0x5C9210, acces 0x504
+// (invite de JD, 29/09, sur la moto de l'hote). Sans conducteur : pas de tir en roulant, rien d'autre.
+typedef void(__thiscall *DriveBy_t)(void *veh);
+static DriveBy_t o_DriveBy;
+static void __fastcall h_DriveBy(void *veh, void *)
+{
+    if (!*(void **)((uint8_t *)veh + 0x1A8)) return;
+    o_DriveBy(veh);
+}
+
 void InstallGamePatches()
 {
     GuardSectorList();
+    static const uint8_t driveByPro[] = { 0x53, 0x56, 0x55, 0x89, 0xCD, 0x83, 0xEC, 0x08 };
+    o_DriveBy = (DriveBy_t)MakeDetour(0x5C91E0, driveByPro, sizeof(driveByPro), (void *)h_DriveBy);
+    if (!o_DriveBy) Log("garde-fou du tir en roulant : DoDriveByShootings introuvable");
     static const uint8_t openDoorPro[] = { 0x53, 0x56, 0x57, 0x55, 0x89, 0xCD };
     o_OpenDoor = (OpenDoor_t)MakeDetour(0x59CF50, openDoorPro, sizeof(openDoorPro), (void *)h_OpenDoor);
     if (!o_OpenDoor) Log("garde-fou des portieres : CAutomobile::OpenDoor introuvable");
