@@ -20,9 +20,22 @@ INSTALL
    Tip: use a separate copy of the game folder for co-op.
 2. Open vccoop.ini and set your nickname ("Pseudo").
 
+LAUNCHER
+--------
+- VCCoop.exe (in the game folder): checks that gta-vc.exe is the 1.0 (the
+  Steam, GOG and 1.1 exes are refused; "Change exe" picks another one), looks
+  for a new version on GitHub every time it starts and installs it by itself
+  (vccoop.ini settings and vccoop-joueur.ini are kept).
+- Host / Join (nickname and host address typed in the launcher) / Play (the
+  game's COOP menu). The launcher stays on screen until the game window
+  shows up.
+- Background: VCCoop\interface\launcher.png (1000x620, transparency
+  supported: the window takes the image's shape).
+
 PLAY
 ----
-- Start the game normally (gta-vc.exe). In the main menu: COOP.
+- Start VCCoop.exe, or the game normally (gta-vc.exe). In the main menu:
+  COOP.
 - The host picks "Host a game", then confirms the new game.
 - The others set "Address" (the host's IP: Enter, type it, Enter) and their
   "Nickname", then "Join": once connected, they confirm the new game.
