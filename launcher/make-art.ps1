@@ -5,7 +5,7 @@ Add-Type -AssemblyName System.Drawing
 $ui = Join-Path (Split-Path $PSScriptRoot) 'dist\files\VCCoop\interface'
 $W = 1000; $H = 620
 $card = New-Object System.Drawing.RectangleF 20, 60, 960, 540
-$panel = New-Object System.Drawing.RectangleF 48, 88, 360, 484
+$panel = New-Object System.Drawing.RectangleF 48, 88, 360, 500
 
 # Cadre des pixels visibles d'une image (alpha > 8)
 function AlphaBox($img) {

@@ -29,6 +29,8 @@ LAUNCHER
 - Host / Join (nickname and host address typed in the launcher) / Play (the
   game's COOP menu). The launcher stays on screen until the game window
   shows up.
+- Language: French when Windows is in French, English otherwise. To force
+  it: Langue=fr or Langue=en in the [Lanceur] section of vccoop-launcher.ini.
 - Background: VCCoop\interface\launcher.png (1000x620, transparency
   supported: the window takes the image's shape).
 
