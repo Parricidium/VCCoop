@@ -110,6 +110,19 @@ bool GuestVehicleForHost(uint32_t host, uint32_t &guest)
     return false;
 }
 
+static void SendVehicle(NetVehicle &e);
+// Vehicule cree par le menu en jeu (panel.cpp) : en reseau tout de suite, a nous, les autres le voient arriver.
+void NetVehicleShare(void *veh)
+{
+    if (!veh || g_localId < 0 || FindByPtr(veh)) return;
+    NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
+    if (!e) return;
+    e->owner = (uint8_t)g_localId;
+    Bind(*e, veh);
+    SendVehicle(*e);
+    Log("vehicules : %08X cree par le menu (modele %d)", e->id, ModelIndex(veh));
+}
+
 void *NetVehicleById(uint32_t id)
 {
     NetVehicle *e = FindById(id);

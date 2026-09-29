@@ -71,6 +71,14 @@ PLAY
 - Each player has a colour (blue = host, orange, green, purple): a dot on the
   radar and map, and their name above their head (AfficherPseudos=0 in
   vccoop.ini to hide names).
+- F10: in-game menu, with the mouse. PLAYERS tab: teleport next to a player
+  (everybody). Admins also get VEHICLES (the vehicle appears in front of you,
+  everybody sees it), TOOLS (health, weapons, money, repair, wanted level,
+  police), WORLD (time, weather) and BRING / KICK. The host is admin and
+  makes others admins with the ADMIN button.
+- T: chat (Enter to send, Esc to cancel). While you type, Tommy takes out his
+  phone and the others see it.
+- The game's replay keys (F1 to F3) are disabled.
 - F7: choose your outfit (Tommy's, story characters, any pedestrian).
   Left / Right to browse, Enter to keep, Backspace to cancel. It is kept for
   the next sessions; missions that dress Tommy replace it, as in single player.

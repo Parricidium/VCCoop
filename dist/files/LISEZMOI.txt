@@ -77,6 +77,14 @@ JOUER
 - Chaque joueur a sa couleur (bleu = hote, orange, vert, violet) : un point
   sur le radar et la carte, et son pseudo au-dessus de la tete
   (AfficherPseudos=0 dans vccoop.ini pour ne pas afficher les pseudos).
+- Touche F10 : menu en jeu, a la souris. Onglet JOUEURS : se teleporter pres
+  d'un joueur (tout le monde). Les admins ont aussi VEHICULES (le vehicule
+  apparait devant soi, tout le monde le voit), OUTILS (sante, armes, argent,
+  reparer, etoiles, police), MONDE (heure, meteo) et AMENER / EXPULSER.
+  L'hote est admin et nomme les autres avec le bouton ADMIN.
+- Touche T : tchat (Entree pour envoyer, Echap pour annuler). Pendant la
+  saisie, Tommy sort son telephone et les autres le voient.
+- Les touches de rejeu du jeu (F1 a F3) sont desactivees.
 - Touche F7 : choisir sa tenue (Tommy, personnages de l'histoire, n'importe
   quel passant). Gauche / Droite pour changer, Entree pour garder, Retour pour
   annuler. La tenue est gardee pour les parties suivantes ; les missions qui

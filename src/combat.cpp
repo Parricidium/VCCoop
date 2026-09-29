@@ -12,6 +12,7 @@
 #include "mirror.h"
 #include "saveshare.h"
 #include "camera.h"
+#include "panel.h"
 #include <string.h>
 
 using namespace game;
@@ -470,6 +471,7 @@ void CombatOnReliable(int from, const uint8_t *data, int len)
         if (g_cfg.logScripts) Log("combat : coup du joueur %d, %s", r.attacker, r.kind ? "a terre" : "encaisse");
         return;
     }
+    if (data[0] >= 30) { PanelOnReliable(from, data, len); return; }       // panel.cpp : tchat, admins
     if (data[0] >= 20) { SaveShareOnReliable(from, data, len); return; }   // saveshare.cpp
     if (data[0] == 19) { ObjSyncOnReliable(from, data, len); return; }      // objsync.cpp : decor renverse
     if (data[0] == RL_WANTED && len >= (int)sizeof(RlWanted)) {

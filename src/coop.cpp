@@ -4,6 +4,7 @@
 #include "net.h"
 #include "game.h"
 #include "vehicles.h"
+#include "panel.h"
 #include "entities.h"
 #include "mirror.h"
 #include "seats.h"
@@ -1314,7 +1315,7 @@ void InstallEnterHooks()
 static void PassengerKey()
 {
     static bool wasDown;
-    bool down = GameHasFocus() && (GetAsyncKeyState('G') & 0x8000);
+    bool down = GameHasFocus() && !PanelCapturesKeys() && (GetAsyncKeyState('G') & 0x8000);
     if (down && !wasDown) TogglePassenger();
     wasDown = down;
 }
@@ -1364,6 +1365,7 @@ void CoopFrame()
     if (inGame) { PassengerKey(); BoardingFrame(); }
     MouseFocusFrame();
     PlayersFrame(inGame);
+    PanelFrame(inGame);
     ShareWanted(inGame);
     if (inGame) { KeepAIOffPlayerCars(); HostPoliceChasesGuests(); GuestThreats(); }
     if (inGame) { CameraFrame(); PassengerShooting(); }

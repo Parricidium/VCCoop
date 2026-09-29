@@ -11,6 +11,7 @@
 #include "vccoop.h"
 #include "game.h"
 #include "camera.h"
+#include "panel.h"
 #include <math.h>
 #include <string.h>
 
@@ -83,6 +84,13 @@ static HRESULT __stdcall h_GetState(void *dev, DWORD size, void *data)
     }
     if (SUCCEEDED(hr) && data && (size == 16 || size == 20)) {
         uint8_t &rmb = ((uint8_t *)data)[13];
+        // Menu en jeu ouvert : la souris pilote son curseur, le jeu ne recoit rien (ni camera, ni tir).
+        if (PanelWantsMouse() && GameState() == GS_PLAYING) {
+            long *axes = (long *)data;
+            PanelMouse(axes[0], axes[1], axes[2], (((uint8_t *)data)[12] & 0x80) != 0);
+            memset(data, 0, size);
+            return hr;
+        }
         g_realRmb = (rmb & 0x80) != 0;
         void *me = GameState() == GS_PLAYING ? FindPlayerPed() : NULL;
         if (g_cfg.freeCam && me && InVehicle(me)) rmb = 0;
@@ -388,7 +396,7 @@ void CameraFrame()
 {
     // Touche de la premiere personne (en partie, jeu au premier plan, hors menus).
     static bool was;
-    bool down = g_cfg.fpsView && g_cfg.fpsKey && GameHasFocus() && GameState() == GS_PLAYING && !*(char *)0x869668 &&
+    bool down = g_cfg.fpsView && g_cfg.fpsKey && GameHasFocus() && !PanelCapturesKeys() && GameState() == GS_PLAYING && !*(char *)0x869668 &&
                 (GetAsyncKeyState(g_cfg.fpsKey) & 0x8000);
     static int test = -1;   // TestPremierePersonne=1 : active des l'arrivee (captures)
     if (test < 0) test = GetPrivateProfileIntA("VCCoop", "TestPremierePersonne", 0, IniPath());

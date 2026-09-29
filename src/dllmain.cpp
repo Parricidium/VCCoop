@@ -8,6 +8,7 @@
 #include "net.h"
 #include "anims.h"
 #include "vehicles.h"
+#include "panel.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -212,6 +213,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallAnimGuards();
     InstallAsiLoader();
     InstallPlayers();
+    InstallPanel();
     InstallCamera();
     return TRUE;
 }
