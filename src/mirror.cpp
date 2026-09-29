@@ -236,9 +236,13 @@ const OpSig *FindOp(uint16_t op)
 // ======================================================================= Hote : marqueurs actifs
 // Les marqueurs radar poses par les missions et pas encore retires sont gardes (la commande telle qu'envoyee),
 // pour les rejouer chez un invite qui arrive en cours de mission.
-struct ActiveBlip { uint32_t hostBlip; int len; uint8_t cmd[64]; };
+struct ActiveBlip { uint32_t hostBlip; uint16_t op; int len; uint8_t cmd[64]; };
 static ActiveBlip g_activeBlips[64];
 static int g_activeBlipCount;
+
+// Icones fixes de la carte : points de contact des missions (lettre du commanditaire) et icones d'endroits. Une mission
+// reussie ajoute souvent celui de la suivante dans son propre script : il doit survivre a la fin de la mission.
+static bool PersistentBlip(uint16_t op) { return op == 0x02A7 || op == 0x0570 || op == 0x02A8 || op == 0x04CE; }
 
 static bool CreatesBlip(uint16_t op)
 {
@@ -256,6 +260,7 @@ static void RememberActiveBlip(uint16_t op, const uint8_t *cmd, int len, uint32_
     if (!CreatesBlip(op) || len > 64 || g_activeBlipCount >= 64) return;
     ActiveBlip &b = g_activeBlips[g_activeBlipCount++];
     b.hostBlip = h;
+    b.op = op;
     b.len = len;
     memcpy(b.cmd, cmd, len);
 }
@@ -568,7 +573,12 @@ void MirrorMissionEnd()
     NetSendReliable(b, 4);
     // Le nettoyage de fin de mission du jeu retire les marqueurs et les minuteurs : un invite qui arrive apres n'a
     // rien a rejouer.
-    if (g_hostMission != 0) g_activeBlipCount = 0;   // INITIAL : ses marqueurs restent (boutiques...)
+    // INITIAL : ses marqueurs restent (boutiques...) ; sinon seules les icones fixes (contacts des missions suivantes).
+    if (g_hostMission != 0) {
+        int kept = 0;
+        for (int i = 0; i < g_activeBlipCount; i++) if (PersistentBlip(g_activeBlips[i].op)) g_activeBlips[kept++] = g_activeBlips[i];
+        g_activeBlipCount = kept;
+    }
     g_timerCount = 0;
     Log("miroir : fin de la mission %d envoyee (regroupement %d)", g_hostMission, b[1]);
 }
@@ -616,7 +626,7 @@ void MirrorOnTimers(const uint8_t *buf, int len)
 
 // ======================================================================= Invite : rejeu
 // Correspondances hote -> invite pour les marqueurs et objets crees par les commandes rejouees.
-struct HandlePair { uint32_t host, guest; };
+struct HandlePair { uint32_t host, guest; bool keep; };   // keep : icone fixe, gardee en fin de mission
 static HandlePair g_blips[128], g_objs[128], g_pickups[128], g_props[32];
 static int g_blipCount, g_objCount, g_pickupCount, g_propCount;
 
@@ -626,10 +636,10 @@ static bool MapGet(HandlePair *m, int n, uint32_t host, uint32_t &guest)
     return false;
 }
 
-static void MapSet(HandlePair *m, int &n, int cap, uint32_t host, uint32_t guest)
+static void MapSet(HandlePair *m, int &n, int cap, uint32_t host, uint32_t guest, bool keep = false)
 {
-    for (int i = 0; i < n; i++) if (m[i].host == host) { m[i].guest = guest; return; }
-    if (n < cap) m[n++] = { host, guest };
+    for (int i = 0; i < n; i++) if (m[i].host == host) { m[i].guest = guest; m[i].keep = keep; return; }
+    if (n < cap) m[n++] = { host, guest, keep };
 }
 
 static void MapDel(HandlePair *m, int &n, uint32_t host)
@@ -896,7 +906,10 @@ static bool Execute(const uint8_t *d, int len, bool force)
             RegisterPropertyPickup(g);
             continue;
         }
-        if (outs[i].kind == 'b') MapSet(g_blips, g_blipCount, 128, outs[i].host, g);
+        if (outs[i].kind == 'b') {
+            MapSet(g_blips, g_blipCount, 128, outs[i].host, g, PersistentBlip(op));
+            if (PersistentBlip(op)) Log("miroir : icone fixe %04X de l'hote (%08X), gardee apres la mission", op, g);
+        }
         else if (outs[i].kind == 'k') MapSet(g_pickups, g_pickupCount, 128, outs[i].host, g);
         else MapSet(g_objs, g_objCount, 128, outs[i].host, g);
     }
@@ -945,7 +958,7 @@ static void MissionEnd(bool gather, int mission)
     // principal de l'hote, qui n'est pas reproduit) : fondu d'entree, plus de bandes, controles, camera.
     int32_t fade[2] = { 500, 1 }, off[1] = { 0 }, control[2] = { 0, 1 }, slot1[1] = { 1 }, slot2[1] = { 2 };
     Local(0x016A, 2, fade);
-    Local(0x00BE, 0, NULL);        // CLEAR_PRINTS : sous-titres restes a l'ecran
+    Local(0x03EB, 0, NULL);        // CLEAR_SMALL_PRINTS : sous-titres restes a l'ecran (pas les grands messages : "Mission accomplie", "Mission echouee")
     Local(0x03E6, 0, NULL);        // CLEAR_HELP
     Local(0x040D, 1, slot1);       // CLEAR_MISSION_AUDIO 1 et 2
     Local(0x040D, 1, slot2);
@@ -962,8 +975,15 @@ static void MissionEnd(bool gather, int mission)
     if (mission != 0) {
         for (int i = 0; i < g_objCount; i++) { int32_t h[1] = { (int32_t)g_objs[i].guest }; Local(0x0108, 1, h); }
         g_objCount = 0;
-        for (int i = 0; i < g_blipCount; i++) { int32_t h[1] = { (int32_t)g_blips[i].guest }; Local(0x0164, 1, h); }
-        g_blipCount = 0;
+        // (sauf les icones fixes : points de contact des missions suivantes, ajoutes par la mission reussie)
+        int kept = 0;
+        for (int i = 0; i < g_blipCount; i++) {
+            if (g_blips[i].keep) { g_blips[kept++] = g_blips[i]; continue; }
+            int32_t h[1] = { (int32_t)g_blips[i].guest };
+            Local(0x0164, 1, h);
+        }
+        if (kept) Log("miroir : %d icones de contact gardees apres la mission", kept);
+        g_blipCount = kept;
         for (int i = 0; i < g_guestTimerCount; i++) { int32_t o[1] = { g_guestTimers[i].offset }; Local(g_guestTimers[i].clock ? 0x014F : 0x0151, 1, o); }
         g_guestTimerCount = 0;
     }
