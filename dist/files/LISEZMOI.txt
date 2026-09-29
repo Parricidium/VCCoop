@@ -31,6 +31,8 @@ LANCEUR
 - Heberger / Rejoindre (pseudo et adresse de l'hote tapes dans le lanceur) /
   Jouer (menu COOP du jeu). Le lanceur reste affiche jusqu'a l'apparition de
   la fenetre du jeu.
+- Langue : francais si Windows est en francais, sinon anglais. Pour forcer :
+  Langue=fr ou Langue=en dans la section [Lanceur] de vccoop-launcher.ini.
 - Fond : VCCoop\interface\launcher.png (1000x620, transparence prise en
   charge : la fenetre prend la forme de l'image).
 

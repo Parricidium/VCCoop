@@ -34,6 +34,7 @@ using std::max;
 using namespace Gdiplus;
 
 static const wchar_t *kRepoApi = L"https://api.github.com/repos/Parricidium/VCCoop/releases/latest";
+static const wchar_t *kStoreUrl = L"https://store.rockstargames.com/fr/game/buy-grand-theft-auto-the-trilogy";   // (meme lien que le README)
 static const float kImgW = 1000, kImgH = 620;   // mise en page (coordonnees de launcher.png)
 
 // ---------------------------------------------------------------- etat
@@ -475,19 +476,20 @@ static void StartUpdate()
 }
 
 // ---------------------------------------------------------------- boutons
-enum { B_HOST, B_JOIN, B_PLAY, B_EXE, B_CLOSE, B_MIN, B_COUNT };
+enum { B_HOST, B_JOIN, B_PLAY, B_EXE, B_BUY, B_CLOSE, B_MIN, B_COUNT };
 struct Button { RectF r; float hover; bool visible, enabled; };
 static Button g_btn[B_COUNT];
 static int g_hot = -1, g_pressed = -1;
 
 static void Layout()
 {
-    g_fields[0].r = RectF(76, 286, 304, 36); g_fields[0].maxLen = 23; g_fields[0].address = false;
-    g_fields[1].r = RectF(76, 352, 304, 36); g_fields[1].maxLen = 63; g_fields[1].address = true;
-    g_btn[B_HOST].r = RectF(76, 408, 148, 46);
-    g_btn[B_JOIN].r = RectF(232, 408, 148, 46);
-    g_btn[B_PLAY].r = RectF(76, 464, 304, 34);
-    g_btn[B_EXE].r = RectF(250, 502, 130, 20);
+    g_fields[0].r = RectF(76, 276, 304, 36); g_fields[0].maxLen = 23; g_fields[0].address = false;
+    g_fields[1].r = RectF(76, 338, 304, 36); g_fields[1].maxLen = 63; g_fields[1].address = true;
+    g_btn[B_HOST].r = RectF(76, 390, 148, 46);
+    g_btn[B_JOIN].r = RectF(232, 390, 148, 46);
+    g_btn[B_PLAY].r = RectF(76, 444, 304, 34);
+    g_btn[B_EXE].r = RectF(250, 484, 130, 20);
+    g_btn[B_BUY].r = RectF(236, 554, 144, 26);
     g_btn[B_CLOSE].r = RectF(938, 76, 28, 28);
     g_btn[B_MIN].r = RectF(904, 76, 28, 28);
 }
@@ -499,7 +501,7 @@ static void UpdateButtons()
     g_btn[B_HOST].visible = g_btn[B_JOIN].visible = g_btn[B_PLAY].visible = g_btn[B_EXE].visible = menu;
     g_btn[B_HOST].enabled = g_btn[B_JOIN].enabled = g_btn[B_PLAY].enabled = menu && exeOk && !busy && !g_localVer.empty();
     g_btn[B_EXE].enabled = menu && !busy;
-    g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = true;
+    g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = true;
 }
 
 // ---------------------------------------------------------------- dessin
@@ -645,8 +647,8 @@ static void DrawUI(Graphics &g)
         DrawBar(g, RectF(96, 390, 264, 6), -2);
         Text(g, T(L"La fen\u00EAtre du jeu va appara\u00EEtre.", L"The game window will appear shortly."), RectF(60, 410, 336, 24), 12.5f, FontStyleRegular, kGrey);
     } else {
-        Text(g, status, RectF(60, 214, 336, 22), 13, FontStyleBold, sc);
-        if (prog != -1.0f) DrawBar(g, RectF(96, 242, 264, 5), prog);
+        Text(g, status, RectF(60, 212, 336, 22), 13, FontStyleBold, sc);
+        if (prog != -1.0f) DrawBar(g, RectF(96, 238, 264, 5), prog);
         DrawField(g, 0, T(L"PSEUDO", L"NICKNAME"));
         DrawField(g, 1, T(L"ADRESSE DE L'H\u00D4TE", L"HOST ADDRESS"));
         DrawButton(g, B_HOST, T(L"H\u00C9BERGER", L"HOST"), true);
@@ -658,16 +660,36 @@ static void DrawUI(Graphics &g)
         if (g_exeKind == EXE_OK) { exeLine = L"gta-vc.exe 1.0 \u2713"; ec = Color(255, 38, 150, 96); }
         else if (g_exeKind == EXE_MISSING) { exeLine = T(L"gta-vc.exe introuvable", L"gta-vc.exe not found"); ec = Color(255, 214, 48, 72); }
         else { exeLine = T(L"exe pas en 1.0", L"exe is not 1.0"); ec = Color(255, 214, 48, 72); }
-        Text(g, exeLine, RectF(78, 502, 170, 20), 12, FontStyleBold, ec, StringAlignmentNear);
+        Text(g, exeLine, RectF(78, 484, 170, 20), 12, FontStyleBold, ec, StringAlignmentNear);
         Button &eb = g_btn[B_EXE];
         const wchar_t *el = g_exeKind == EXE_OK ? T(L"Changer d'exe", L"Change exe") : T(L"Choisir l'exe\u2026", L"Choose exe\u2026");
         Color lc = Mix(g_exeKind == EXE_OK ? kGrey : kPink, kPink, eb.hover);
         Text(g, el, eb.r, 12, g_exeKind == EXE_OK ? FontStyleUnderline : FontStyleBold | FontStyleUnderline, WithA(lc, eb.enabled ? 1.0f : 0.4f), StringAlignmentFar);
     }
     const Color lg(200, 128, 112, 130);
-    Text(g, T(L"Mod non officiel et non commercial.", L"Unofficial, non-commercial mod."), RectF(56, 527, 344, 14), 10, FontStyleRegular, lg);
-    Text(g, T(L"Non affili\u00E9 \u00E0 Rockstar Games ni \u00E0 Take-Two.", L"Not affiliated with Rockstar Games or Take-Two."), RectF(56, 540, 344, 14), 10, FontStyleRegular, lg);
-    Text(g, T(L"N\u00E9cessite une copie l\u00E9gale de GTA: Vice City.", L"Requires a legal copy of GTA: Vice City."), RectF(56, 553, 344, 14), 10, FontStyleRegular, lg);
+    Text(g, T(L"Mod non officiel et non commercial.", L"Unofficial, non-commercial mod."), RectF(56, 510, 344, 14), 10, FontStyleRegular, lg);
+    Text(g, T(L"Non affili\u00E9 \u00E0 Rockstar Games ni \u00E0 Take-Two.", L"Not affiliated with Rockstar Games or Take-Two."), RectF(56, 523, 344, 14), 10, FontStyleRegular, lg);
+    Text(g, T(L"N\u00E9cessite une copie l\u00E9gale de GTA: Vice City.", L"Requires a legal copy of GTA: Vice City."), RectF(56, 536, 344, 14), 10, FontStyleRegular, lg);
+    // Acheter le jeu : pastille sombre avec un panier, vers la boutique Rockstar
+    {
+        Button &b = g_btn[B_BUY];
+        Text(g, T(L"Achetez GTA: Vice City :", L"Buy GTA: Vice City:"), RectF(76, b.r.Y, b.r.X - 76 - 8, b.r.Height), 12, FontStyleBold, kInk, StringAlignmentFar);
+        GraphicsPath p;
+        RoundRect(p, b.r, b.r.Height / 2);
+        SolidBrush fill(Mix(Color(235, 52, 40, 62), kPink, b.hover));
+        g.FillPath(&fill, &p);
+        Pen cart(Color(255, 255, 255, 255), 1.6f);
+        cart.SetLineJoin(LineJoinRound);
+        cart.SetStartCap(LineCapRound);
+        cart.SetEndCap(LineCapRound);
+        float x = b.r.X + 13, y = b.r.Y + 7;
+        PointF basket[] = { PointF(x - 2, y), PointF(x + 1, y), PointF(x + 3.5f, y + 9), PointF(x + 12, y + 9), PointF(x + 14, y + 3), PointF(x + 2.2f, y + 3) };
+        g.DrawLines(&cart, basket, 6);
+        SolidBrush white(Color(255, 255, 255, 255));
+        g.FillEllipse(&white, x + 3.2f, y + 10.4f, 3.2f, 3.2f);
+        g.FillEllipse(&white, x + 9.8f, y + 10.4f, 3.2f, 3.2f);
+        Text(g, L"Rockstar Store", RectF(b.r.X + 30, b.r.Y, b.r.Width - 36, b.r.Height), 12, FontStyleBold, Color(255, 255, 255, 255), StringAlignmentNear);
+    }
 }
 
 static void RenderTo(Bitmap &target, float scale)
@@ -785,6 +807,7 @@ static void OnButton(int id)
     case B_EXE: ChooseExe(); break;
     case B_CLOSE: g_state = ST_CLOSING; break;
     case B_MIN: ShowWindow(g_wnd, SW_MINIMIZE); break;
+    case B_BUY: ShellExecuteW(g_wnd, L"open", kStoreUrl, NULL, NULL, SW_SHOWNORMAL); break;
     }
 }
 
@@ -964,6 +987,11 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     g_dir = DirOf(g_self);
     g_iniLauncher = g_dir + L"vccoop-launcher.ini";
     DeleteFileW((g_self + L".old").c_str());   // reste d'une mise a jour du lanceur
+    // Langue : francais si Windows est en francais, anglais pour toute autre langue ; Langue=fr|en pour forcer.
+    wchar_t lang[8] = L"";
+    GetPrivateProfileStringW(L"Lanceur", L"Langue", L"", lang, 8, g_iniLauncher.c_str());
+    if (!_wcsicmp(lang, L"fr")) g_fr = true;
+    else if (!_wcsicmp(lang, L"en")) g_fr = false;
 
     int argc = 0;
     wchar_t **argv = CommandLineToArgvW(GetCommandLineW(), &argc);
