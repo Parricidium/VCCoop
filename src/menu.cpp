@@ -14,6 +14,7 @@
 #include "net.h"
 #include "game.h"
 #include "saveshare.h"
+#include "panel.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -121,6 +122,8 @@ static void SaveIni()
     if (!WritePrivateProfileStringA("VCCoop", "FiltrageAnisotrope", g_cfg.aniso ? "1" : "0", ini))
         Log("reglages : ecriture impossible dans %s (erreur %lu)", ini, GetLastError());
 }
+
+void MenuSaveIni() { SaveIni(); }   // panel.cpp : onglet Hote du menu en jeu
 
 // --- Textes ---
 static wchar_t g_text[56][80];
@@ -684,6 +687,7 @@ void MenuFrame()
 static WNDPROC o_WndProc;
 static LRESULT CALLBACK h_WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (g_edit == EDIT_NONE && PanelWndProc(msg, wp, lp)) return 0;   // menu en jeu, tchat (panel.cpp)
     if (g_edit != EDIT_NONE) {
         if (msg == WM_CHAR) {
             size_t n = strlen(g_editBuf);

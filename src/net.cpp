@@ -316,11 +316,32 @@ static void Disconnect(int i)
     if (!g_cfg.host && i == 0) { g_localId = -1; g_session = NewSession(); RlReset(g_rl[0]); }
 }
 
+// Hote : invites expulses (menu en jeu) : refuses jusqu'a la fin de la session (adresse et port).
+static sockaddr_in g_banned[8];
+static int g_bannedCount;
+
+void NetKick(int id)
+{
+    if (!g_cfg.host || id <= 0 || id >= MAX_PLAYERS || !g_players[id].connected) return;
+    MsgFull f = { MSG_FULL, 3, NET_VERSION };
+    for (int k = 0; k < 3; k++) SendTo(g_peerAddr[id], &f, sizeof(f));
+    if (g_bannedCount < 8) g_banned[g_bannedCount++] = g_peerAddr[id];
+    Log("reseau : %s (joueur %d) expulse", g_players[id].state.name, id);
+    if (g_onNotice) g_onNotice("a ete expulse", "was kicked", id);
+    Disconnect(id);
+    MsgBye b = { MSG_BYE, (uint8_t)id };
+    for (int i = 1; i < MAX_PLAYERS; i++)
+        if (i != id && g_players[i].connected) SendTo(g_peerAddr[i], &b, sizeof(b));
+}
+
 static void HostReceive(const uint8_t *buf, int len, const sockaddr_in &from)
 {
     int id = -1;
     for (int i = 1; i < MAX_PLAYERS; i++)
         if (g_players[i].connected && SameAddr(g_peerAddr[i], from)) id = i;
+    if (id < 0 && buf[0] == MSG_HELLO)
+        for (int k = 0; k < g_bannedCount; k++)
+            if (SameAddr(g_banned[k], from)) { MsgFull f = { MSG_FULL, 3, NET_VERSION }; SendTo(from, &f, sizeof(f)); return; }
 
     if (buf[0] == MSG_HELLO && len >= 2 && len < (int)sizeof(MsgHello)) {   // version plus ancienne (message plus court)
         MsgFull f = { MSG_FULL, 2, NET_VERSION };
@@ -441,6 +462,14 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         static uint32_t lastLog;
         const MsgFull *f = (const MsgFull *)buf;
         bool version = len >= (int)sizeof(MsgFull) && f->reason == 2;
+        if (len >= 2 && f->reason == 3) {   // expulse par l'hote (menu en jeu)
+            if (GetTickCount() - lastLog > 5000) {
+                lastLog = GetTickCount();
+                Log("reseau : expulse par l'hote");
+                if (g_onNotice) g_onNotice("vous a expulse de la partie", "kicked you from the game", 0);
+            }
+            break;
+        }
         if (GetTickCount() - lastLog > 5000) {
             lastLog = GetTickCount();
             if (version) Log("reseau : l'hote refuse : version differente (la sienne %d, la notre %d)", f->hostVersion, NET_VERSION);

@@ -6,6 +6,7 @@
 #include "game.h"
 #include "entities.h"
 #include "mirror.h"
+#include "panel.h"
 #include "players.h"
 #include "camera.h"
 #include <math.h>
@@ -372,7 +373,7 @@ void PlayersFrame(bool inGame)
         return;
     }
     static bool wF7, wLeft, wRight, wEnter, wBack;
-    bool focus = GameHasFocus();
+    bool focus = GameHasFocus() && !PanelCapturesKeys();
     bool f7 = focus && KeyEdge(VK_F7, wF7);
     if (!g_menuOpen) {
         if (f7 && !MenuActive()) OpenMenu();
@@ -477,7 +478,7 @@ static void RdvKey(bool inGame)
     if (!inGame || g_localId < 0) { for (auto &r : g_rdv) { r.active = false; r.blip = -1; } return; }
     for (int i = 0; i < MAX_PLAYERS; i++)   // joueur parti : son repere aussi
         if (i != g_localId && g_rdv[i].active && !g_players[i].connected) ApplyRdv(i, false, g_rdv[i].pos);
-    bool b = GameHasFocus() && !g_menuOpen && KeyEdge('B', wasB);
+    bool b = GameHasFocus() && !g_menuOpen && !PanelCapturesKeys() && KeyEdge('B', wasB);
     static bool autoDone;   // Autotest=rdv : en pose un 20 s apres l'arrivee
     static uint32_t autoAt;
     if (_stricmp(g_cfg.autotest, "rdv") == 0 && !autoDone) {
@@ -508,7 +509,7 @@ static void RdvKey(bool inGame)
 static void DrawPlayerList()
 {
     bool forced = _stricmp(g_cfg.autotest, "liste") == 0;   // autotest : toujours affichee
-    if (!forced && (!GameHasFocus() || !(GetAsyncKeyState(VK_TAB) & 0x8000) || g_menuOpen)) return;
+    if (!forced && (!GameHasFocus() || PanelCapturesKeys() || !(GetAsyncKeyState(VK_TAB) & 0x8000) || g_menuOpen)) return;
     bool fr = *(int *)(0x869630 + 0x50) == 1;
     void *me = FindPlayerPed();
     float y = ScreenH() * 0.22f, step = ScreenH() * 0.045f;
@@ -569,6 +570,7 @@ static void __cdecl h_Render2dStuff()
     if (GameState() == GS_PLAYING && FindPlayerPed()) { DrawNametags(); DrawSkinMenu(); DrawNotice(); DrawPlayerList();
         if (FreeAimActive()) { FontSetup(1.0f); FontColor(0xFFFFFFE0); FontPrint(ScreenW() * 0.5f, ScreenH() * 0.5f - ScreenH() * 0.03f, L"+"); } }
     ((void(__cdecl *)())0x4A6190)();
+    PanelDraw();   // tchat et menu en jeu, par-dessus l'interface du jeu
 }
 
 void InstallPlayers()
