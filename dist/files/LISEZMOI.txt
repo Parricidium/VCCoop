@@ -22,9 +22,22 @@ INSTALLATION
    Pseudo, adresse de l'hote, port et tenue sont gardes dans
    vccoop-joueur.ini : une mise a jour du mod ne les efface plus.
 
+LANCEUR
+-------
+- VCCoop.exe (dans le dossier du jeu) : verifie que gta-vc.exe est le 1.0
+  (les exe Steam, GOG et 1.1 sont refuses ; "Changer d'exe" pour en choisir
+  un autre), cherche une nouvelle version sur GitHub a chaque demarrage et
+  l'installe tout seul (reglages de vccoop.ini et vccoop-joueur.ini gardes).
+- Heberger / Rejoindre (pseudo et adresse de l'hote tapes dans le lanceur) /
+  Jouer (menu COOP du jeu). Le lanceur reste affiche jusqu'a l'apparition de
+  la fenetre du jeu.
+- Fond : VCCoop\interface\launcher.png (1000x620, transparence prise en
+  charge : la fenetre prend la forme de l'image).
+
 JOUER
 -----
-- Lancer le jeu normalement (gta-vc.exe). Dans le menu principal : COOP.
+- Lancer VCCoop.exe, ou le jeu normalement (gta-vc.exe). Dans le menu
+  principal : COOP.
 - L'hote choisit "Creer une partie", puis confirme la nouvelle partie.
 - Les autres mettent leur "Pseudo", puis Rejoindre > "Adresse" (IP de
   l'hote : Entree, taper ou coller l'adresse avec Ctrl+V, Entree) >

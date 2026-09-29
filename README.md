@@ -59,8 +59,15 @@ other players by themselves.
 4. Set your nickname: COOP menu > **Nickname** (or in `vccoop.ini`). Nickname, host address, port and outfit
    are kept in `vccoop-joueur.ini` (not in the package): updating the mod no longer resets them.
 
-**Updating**: unzip the new version over the old one. Everybody must run the same version (the
-network protocol is checked when joining).
+**Launcher**: start `VCCoop.exe` (in the game folder). It checks that `gta-vc.exe` is the 1.0 (the Steam,
+GOG and 1.1 exes are refused; "Change exe" picks another one), looks for a new version on GitHub **every time
+it starts** and installs it by itself (your `vccoop.ini` settings and `vccoop-joueur.ini` are kept), then
+**Host** / **Join** (nickname and host address typed in the launcher) / **Play** (the game's COOP menu).
+It stays on screen until the game window shows up. Its background is `VCCoop/interface/launcher.png`
+(1000×620, transparency supported: the window takes the image's shape).
+
+**Updating**: the launcher does it; by hand, unzip the new version over the old one. Everybody must run
+the same version (the network protocol is checked when joining).
 
 Saves and settings of the co-op copy stay in the game folder (`SauvegardesLocales=1`), apart from your
 solo game.
@@ -302,7 +309,14 @@ dossier sont chargés par le jeu et envoyés tout seuls aux autres joueurs.
    dossier du jeu pour la coop). Le mod est un `dinput8.dll` : rien d'autre n'est modifié.
 4. Mettre son pseudo : menu COOP > **Pseudo** (ou dans `vccoop.ini`).
 
-**Mise à jour** : décompresser la nouvelle version par-dessus. Tout le monde doit avoir la même
+**Lanceur** : lancer `VCCoop.exe` (dans le dossier du jeu). Il vérifie que `gta-vc.exe` est bien le 1.0 (les
+exe Steam, GOG et 1.1 sont refusés ; « Changer d'exe » en choisit un autre), cherche une nouvelle version sur
+GitHub **à chaque démarrage** et l'installe tout seul (réglages de `vccoop.ini` et `vccoop-joueur.ini`
+gardés), puis **Héberger** / **Rejoindre** (pseudo et adresse de l'hôte tapés dans le lanceur) / **Jouer**
+(menu COOP du jeu). Il reste affiché jusqu'à l'apparition de la fenêtre du jeu. Son fond est
+`VCCoop/interface/launcher.png` (1000×620, transparence prise en charge : la fenêtre prend la forme de l'image).
+
+**Mise à jour** : le lanceur s'en charge ; à la main, décompresser la nouvelle version par-dessus. Tout le monde doit avoir la même
 version (vérifiée à la connexion). Les sauvegardes et réglages de la copie coop restent dans le
 dossier du jeu (`SauvegardesLocales=1`), à part du solo. Le pseudo, l'adresse de l'hôte, le port et la tenue
 sont gardés dans `vccoop-joueur.ini` (absent du paquet) : une mise à jour ne les efface pas.
