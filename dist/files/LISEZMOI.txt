@@ -38,6 +38,12 @@ LANCEUR
   3D qui tourne (a faire pivoter a la souris) et les portraits de toutes les
   tenues. Dans le salon, chacun apparait avec le portrait de sa tenue. Les
   modeles sont lus dans les fichiers de ton jeu (rien n'est fourni).
+- MODS (hote) : les mods de VCCoop\mods, chacun avec un apercu 3D (vehicule,
+  personnage, objet) et un interrupteur. Desactive = range dans
+  VCCoop\mods-off (le jeu et le salon ne l'utilisent plus). Salon ouvert :
+  le fermer pour changer les mods.
+- Theme clair ou sombre : bouton lune / soleil en haut du panneau (par
+  defaut celui de Windows ; Theme=clair|sombre dans vccoop-launcher.ini).
 - Si l'hote joue deja (pas de salon), "Rejoindre en jeu" entre dans sa
   partie comme avant. "Jouer (menu COOP)" lance le jeu sans salon.
 - Windows peut demander d'autoriser VCCoop.exe sur le reseau : accepter

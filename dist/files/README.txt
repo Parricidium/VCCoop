@@ -35,6 +35,11 @@ LAUNCHER
   turning 3D preview (drag it with the mouse) and portraits of every outfit.
   In the lobby, everyone shows up with their outfit's portrait. The models
   are read from your own game files (nothing is shipped).
+- MODS (host): the mods in VCCoop\mods, each with a 3D preview (vehicle,
+  character, object) and a switch. Disabled = moved to VCCoop\mods-off (the
+  game and the lobby stop using it). Close the lobby to change mods.
+- Light or dark theme: moon / sun button at the top of the panel (Windows'
+  theme by default; Theme=clair|sombre in vccoop-launcher.ini).
 - If the host is already playing (no lobby), "Join in game" enters their
   session as before. "Play (COOP menu)" starts the game without a lobby.
 - Windows may ask to allow VCCoop.exe on the network: accept (the host needs

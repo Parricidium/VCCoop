@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.29o"
+#define VCCOOP_VERSION "2026.09.29p"
 struct Config {
     bool windowed;
     bool borderless;
@@ -98,6 +98,7 @@ void ObjSyncOnReliable(int from, const uint8_t *data, int len);
 void InstallObjSync();             // objsync.cpp : decor casse partage (crochets ObjectDamage / vitres)
 bool GuestMayStartMission();
 void PuppetPassThrough(int player, uint32_t ms);   // coop.cpp : Tommy d'un joueur traversable un moment (percute)   // script.cpp : invite au volant d'un vehicule de mission secondaire, ou achat d'immeuble
+bool MissionUnderway();    // hote : sa mission (hors INITIAL) ; invite : celle de l'hote ou sa mission secondaire
 bool HostOnMission();      // invite : l'hote joue une mission (mirror.cpp) : pas de mission secondaire ici en meme temps
 bool GuestSideMission();   // invite : il joue une mission secondaire (taxi, ambulance...) chez lui
 bool IsPropertyPickup(uint32_t handle);   // script.cpp : icone d'immeuble creee par le script principal
