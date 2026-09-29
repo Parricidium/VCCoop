@@ -31,6 +31,10 @@ LAUNCHER
   (ready, ping), the host's shared mods downloaded before the session with
   everyone's %, "New game" or "Load" one of the host's saves. Once everyone
   is ready, "Start" launches everyone's game straight into the session.
+- OUTFIT: the outfit you will wear in game (same list as F7), with a
+  turning 3D preview (drag it with the mouse) and portraits of every outfit.
+  In the lobby, everyone shows up with their outfit's portrait. The models
+  are read from your own game files (nothing is shipped).
 - If the host is already playing (no lobby), "Join in game" enters their
   session as before. "Play (COOP menu)" starts the game without a lobby.
 - Windows may ask to allow VCCoop.exe on the network: accept (the host needs
