@@ -29,6 +29,10 @@ LAUNCHER
 - Host / Join (nickname and host address typed in the launcher) / Play (the
   game's COOP menu). The launcher stays on screen until the game window
   shows up.
+- VIDEO / RENDERING / EFFECTS / CO-OP tabs: the vccoop.ini settings (the
+  same as the game's COOP menu), applied the next time the game starts.
+  RENDERING and EFFECTS only show with the Direct3D 9 renderer. Settings
+  tagged HOST count for whoever hosts, GUEST for whoever joins.
 - Language: French when Windows is in French, English otherwise. To force
   it: Langue=fr or Langue=en in the [Lanceur] section of vccoop-launcher.ini.
 - Background: VCCoop\interface\launcher.png (1000x620, transparency

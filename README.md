@@ -63,6 +63,8 @@ other players by themselves.
 GOG and 1.1 exes are refused; "Change exe" picks another one), looks for a new version on GitHub **every time
 it starts** and installs it by itself (your `vccoop.ini` settings and `vccoop-joueur.ini` are kept), then
 **Host** / **Join** (nickname and host address typed in the launcher) / **Play** (the game's COOP menu).
+Its **Video / Rendering / Effects / Co-op** tabs change the `vccoop.ini` settings (the same as the
+game's COOP menu; Rendering and Effects only with Direct3D 9, host settings tagged HOST).
 It stays on screen until the game window shows up. English unless Windows is in French
 (`Langue=fr|en` under `[Lanceur]` in `vccoop-launcher.ini` to force it). Its background is `VCCoop/interface/launcher.png`
 (1000×620, transparency supported: the window takes the image's shape).
@@ -314,7 +316,9 @@ dossier sont chargés par le jeu et envoyés tout seuls aux autres joueurs.
 exe Steam, GOG et 1.1 sont refusés ; « Changer d'exe » en choisit un autre), cherche une nouvelle version sur
 GitHub **à chaque démarrage** et l'installe tout seul (réglages de `vccoop.ini` et `vccoop-joueur.ini`
 gardés), puis **Héberger** / **Rejoindre** (pseudo et adresse de l'hôte tapés dans le lanceur) / **Jouer**
-(menu COOP du jeu). Il reste affiché jusqu'à l'apparition de la fenêtre du jeu. En français si Windows est en
+(menu COOP du jeu). Ses onglets **Vidéo / Rendu / Effets / Coop** modifient les réglages de `vccoop.ini` (les mêmes que le
+menu COOP du jeu ; Rendu et Effets seulement en Direct3D 9, réglages d'hôte marqués HÔTE).
+Il reste affiché jusqu'à l'apparition de la fenêtre du jeu. En français si Windows est en
 français, sinon en anglais (`Langue=fr|en` dans `[Lanceur]` de `vccoop-launcher.ini` pour forcer). Son fond est
 `VCCoop/interface/launcher.png` (1000×620, transparence prise en charge : la fenêtre prend la forme de l'image).
 

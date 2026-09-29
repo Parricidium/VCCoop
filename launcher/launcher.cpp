@@ -632,6 +632,287 @@ static void DrawBar(Graphics &g, RectF r, float p)
     g.ResetClip();
 }
 
+
+// ---------------------------------------------------------------- options (vccoop.ini du jeu)
+// Les memes cles que le menu COOP du jeu (menu.cpp SaveIni) et que dllmain.cpp LoadConfig, memes valeurs par defaut ;
+// ecrites tout de suite, prises au prochain lancement. Onglets RENDU et EFFETS : seulement avec Rendu=9 (Direct3D 9).
+enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_COUNT };
+enum { O_TOGGLE, O_CHOICE };
+enum { W_ALL, W_HOST, W_GUEST };
+struct Opt {
+    int tab; const char *key; int def; int kind; std::vector<int> vals;
+    const wchar_t *fr, *en;
+    std::vector<const wchar_t *> labFr, labEn;   // vide : la valeur + suffixe
+    const wchar_t *suffix; int who;
+    const wchar_t *dFr, *dEn;
+};
+static std::vector<Opt> g_opts;
+static int g_tab = -1, g_optHot = -1, g_optPart = 0, g_tabHot = -1;
+static float g_scroll[TAB_COUNT];
+static RectF g_tabR[TAB_COUNT];
+static const RectF kOptPanel(440, 116, 512, 472), kOptList(452, 128, 488, 396);
+static const float kRowH = 34;
+
+static std::vector<int> Range(int a, int b, int step) { std::vector<int> v; for (int i = a; i <= b; i += step) v.push_back(i); return v; }
+
+static void BuildOptions()
+{
+    auto T2 = [](int tab, const char *key, int def, const wchar_t *fr, const wchar_t *en, const wchar_t *dFr, const wchar_t *dEn, int who = W_ALL) {
+        Opt o; o.tab = tab; o.key = key; o.def = def; o.kind = O_TOGGLE; o.vals = { 0, 1 }; o.fr = fr; o.en = en; o.suffix = L""; o.who = who; o.dFr = dFr; o.dEn = dEn;
+        g_opts.push_back(o);
+    };
+    auto C = [](int tab, const char *key, int def, std::vector<int> vals, const wchar_t *fr, const wchar_t *en, std::vector<const wchar_t *> lf,
+                std::vector<const wchar_t *> le, const wchar_t *suffix, const wchar_t *dFr, const wchar_t *dEn, int who = W_ALL) {
+        Opt o; o.tab = tab; o.key = key; o.def = def; o.kind = O_CHOICE; o.vals = vals; o.fr = fr; o.en = en; o.labFr = lf; o.labEn = le;
+        o.suffix = suffix; o.who = who; o.dFr = dFr; o.dEn = dEn;
+        g_opts.push_back(o);
+    };
+    // VIDEO
+    C(TAB_VIDEO, "Rendu", 9, { 9, 8 }, L"Moteur de rendu", L"Renderer", { L"Direct3D 9", L"Direct3D 8" }, { L"Direct3D 9", L"Direct3D 8" }, L"",
+      L"Direct3D 9 : rendu moderne (ombres, lumi\u00E8res, effets). Direct3D 8 : rendu d'origine, en cas de souci.",
+      L"Direct3D 9: modern rendering (shadows, lights, effects). Direct3D 8: original rendering, if something goes wrong.");
+    C(TAB_VIDEO, "Fenetre", 1, { 2, 1, 0 }, L"Affichage", L"Display", { L"Plein \u00E9cran fen\u00EAtr\u00E9", L"Fen\u00EAtre", L"Plein \u00E9cran" },
+      { L"Borderless", L"Windowed", L"Fullscreen" }, L"",
+      L"Plein \u00E9cran fen\u00EAtr\u00E9 (conseill\u00E9) : \u00E0 la r\u00E9solution du bureau. Fen\u00EAtre : 1280x720.",
+      L"Borderless (recommended): desktop resolution. Windowed: 1280x720.");
+    T2(TAB_VIDEO, "GrandEcran", 1, L"Grand \u00E9cran", L"Widescreen", L"Image et interface au vrai format de l'\u00E9cran (16:9, 21:9, 32:9) au lieu du 4:3 \u00E9tir\u00E9.",
+       L"Picture and HUD at the screen's real aspect ratio (16:9, 21:9, 32:9) instead of stretched 4:3.");
+    C(TAB_VIDEO, "ImagesParSeconde", 30, { 30, 45, 60, 90, 120, 144 }, L"Images par seconde", L"Frame rate", {}, {}, L" i/s",
+      L"30 = jeu d'origine (conseill\u00E9). Au-dessus, bogues du jeu d'origine (par ex. monter dans les v\u00E9hicules \u00E0 60).",
+      L"30 = original game (recommended). Above it, original game bugs (e.g. entering vehicles at 60).");
+    C(TAB_VIDEO, "DistanceAffichage", 200, Range(100, 400, 25), L"Distance d'affichage", L"Draw distance", {}, {}, L" %",
+      L"D\u00E9tails, passants et v\u00E9hicules plus loin. 100 % = jeu d'origine.", L"Details, pedestrians and vehicles further away. 100% = original game.");
+    C(TAB_VIDEO, "Anticrenelage", 4, { 0, 2, 4, 8 }, L"Anticr\u00E9nelage", L"Anti-aliasing", { L"Non", L"2x", L"4x", L"8x" }, { L"Off", L"2x", L"4x", L"8x" }, L"",
+      L"Bords des objets lisses (MSAA).", L"Smooth object edges (MSAA).");
+    T2(TAB_VIDEO, "FiltrageAnisotrope", 1, L"Filtrage anisotrope", L"Anisotropic filtering", L"Textures nettes au loin (16x, trilin\u00E9aire).", L"Sharp textures in the distance (16x, trilinear).");
+    T2(TAB_VIDEO, "SansIntro", 1, L"Passer les vid\u00E9os", L"Skip intro videos", L"Pas de vid\u00E9os Rockstar au d\u00E9marrage.", L"No Rockstar videos at startup.");
+    T2(TAB_VIDEO, "VuePremierePersonne", 1, L"Vue \u00E0 la 1re personne (F6)", L"First-person view (F6)", L"F6 passe en vue depuis la t\u00EAte de Tommy, \u00E0 pied et en v\u00E9hicule.",
+       L"F6 switches to a view from Tommy's head, on foot and in vehicles.");
+    T2(TAB_VIDEO, "CameraLibre", 1, L"Cam\u00E9ra libre", L"Free camera", L"Cam\u00E9ra \u00E0 la souris autour du v\u00E9hicule, vis\u00E9e au clic droit (comme GTA V).",
+       L"Mouse camera around the vehicle, aim with right click (like GTA V).");
+    C(TAB_VIDEO, "SensibiliteCamera", 100, Range(25, 300, 25), L"Sensibilit\u00E9 de la cam\u00E9ra", L"Camera sensitivity", {}, {}, L" %",
+      L"Vitesse de la cam\u00E9ra libre \u00E0 la souris.", L"Speed of the free mouse camera.");
+    T2(TAB_VIDEO, "AfficherPseudos", 1, L"Pseudos des joueurs", L"Player names", L"Pseudo des autres joueurs au-dessus de leur t\u00EAte.", L"Other players' names above their heads.");
+    T2(TAB_VIDEO, "CorpsMous", 1, L"Corps mous", L"Ragdolls", L"Un personnage tu\u00E9 ou percut\u00E9 s'effondre et roule comme un vrai corps.",
+       L"A killed or run-over character collapses and tumbles like a real body.");
+    T2(TAB_VIDEO, "ChargerASI", 1, L"Mods .asi", L".asi mods", L"Charge les mods .asi du dossier du jeu, de scripts et de plugins.", L"Loads .asi mods from the game, scripts and plugins folders.");
+    // RENDU MODERNE
+    T2(TAB_RENDER, "OmbresSoleil", 1, L"Ombres du soleil", L"Sun shadows", L"B\u00E2timents, palmiers, v\u00E9hicules et personnages projettent une ombre qui suit le soleil.",
+       L"Buildings, palm trees, vehicles and characters cast shadows that follow the sun.");
+    C(TAB_RENDER, "OmbresResolution", 4096, { 2048, 4096, 8192 }, L"Qualit\u00E9 des ombres", L"Shadow quality", { L"Moyenne", L"Haute", L"Ultra" },
+      { L"Medium", L"High", L"Ultra" }, L"", L"Ultra : carte graphique r\u00E9cente.", L"Ultra: recent graphics card.");
+    T2(TAB_RENDER, "EauModerne", 1, L"Eau moderne", L"Modern water", L"Turquoise selon la profondeur, fond visible, vagues et \u00E9cume sur les rives.",
+       L"Turquoise by depth, visible sea floor, waves and foam on the shores.");
+    T2(TAB_RENDER, "RefletsEau", 1, L"Reflets sur l'eau", L"Water reflections", L"Quais, bateaux, palmiers et immeubles se refl\u00E8tent dans l'eau.",
+       L"Docks, boats, palm trees and buildings reflect in the water.");
+    T2(TAB_RENDER, "LumieresDynamiques", 1, L"Lumi\u00E8res dynamiques", L"Dynamic lights", L"Lampadaires, n\u00E9ons, phares, explosions et tirs \u00E9clairent le d\u00E9cor.",
+       L"Street lamps, neons, headlights, explosions and gunfire light up the scene.");
+    C(TAB_RENDER, "OmbresLumieres", 4, Range(0, 4, 1), L"Ombres des lumi\u00E8res", L"Light shadows", {}, {}, L"",
+      L"Nombre de lumi\u00E8res proches (phares, lampadaires) qui projettent une ombre.", L"Number of nearby lights (headlights, street lamps) casting shadows.");
+    T2(TAB_RENDER, "OmbresLune", 1, L"Ombres de la lune", L"Moon shadows", L"La lune (0 h \u00E0 6 h) projette des ombres plus faibles.", L"The moon (midnight to 6 am) casts fainter shadows.");
+    T2(TAB_RENDER, "OcclusionAmbiante", 1, L"Occlusion ambiante", L"Ambient occlusion", L"Coins, pieds des murs et dessous des voitures un peu assombris.",
+       L"Corners, wall bases and car undersides slightly darkened.");
+    // EFFETS
+    T2(TAB_FX, "SMAA", 1, L"SMAA", L"SMAA", L"Bords en escalier liss\u00E9s sur toute l'image.", L"Jagged edges smoothed over the whole picture.");
+    T2(TAB_FX, "Eclat", 1, L"\u00C9clat", L"Bloom", L"N\u00E9ons, soleil et phares d\u00E9bordent en lumi\u00E8re douce.", L"Neons, sun and headlights glow softly.");
+    C(TAB_FX, "Etalonnage", 1, { 0, 1, 2 }, L"\u00C9talonnage", L"Color grading", { L"Original", L"Vice", L"Film" }, { L"Original", L"Vice", L"Film" }, L"",
+      L"Vice : couleurs \u00AB Miami 80 \u00BB. Film : contraste de cin\u00E9ma.", L"Vice: \"Miami 80s\" colors. Film: cinema contrast.");
+    C(TAB_FX, "Nettete", 40, Range(0, 100, 10), L"Nettet\u00E9", L"Sharpening", {}, {}, L" %", L"Renforce les d\u00E9tails de l'image.", L"Brings out picture detail.");
+    T2(TAB_FX, "LampadairesEclairent", 1, L"R\u00E9verb\u00E8res et n\u00E9ons", L"Street lamps and neons", L"Ils \u00E9clairent vraiment la rue la nuit ; phare d'Ocean Beach tournant.",
+       L"They really light the street at night; rotating Ocean Beach lighthouse.");
+    T2(TAB_FX, "ParticulesDouces", 1, L"Particules douces", L"Soft particles", L"Fum\u00E9e et explosions sans coupure nette contre le d\u00E9cor.", L"Smoke and explosions without hard edges against the scene.");
+    T2(TAB_FX, "RoutesMouillees", 1, L"Routes mouill\u00E9es", L"Wet roads", L"Reflets des n\u00E9ons et des phares, flaques sous la pluie ; sols brillants.",
+       L"Neon and headlight reflections, puddles in the rain; shiny floors.");
+    T2(TAB_FX, "RayonsSoleil", 1, L"Rayons de soleil", L"Sun rays", L"Rayons du soleil \u00E0 travers le d\u00E9cor.", L"Sun rays through the scenery.");
+    T2(TAB_FX, "VegetationVent", 1, L"Palmiers au vent", L"Palm trees in the wind", L"Palmiers et arbres bougent avec le vent.", L"Palm trees and trees sway in the wind.");
+    T2(TAB_FX, "FaisceauxPhares", 1, L"Faisceaux des phares", L"Headlight beams", L"Faisceaux visibles dans la pluie et le brouillard.", L"Beams visible in rain and fog.");
+    T2(TAB_FX, "Brume", 1, L"Brume", L"Haze", L"Brume au loin qui suit l'heure.", L"Distant haze that follows the time of day.");
+    T2(TAB_FX, "RefletsVoitures", 1, L"Reflets des voitures", L"Car reflections", L"La ville se refl\u00E8te sur les carrosseries (pas sur les pneus).", L"The city reflects on car bodies (not on tyres).");
+    T2(TAB_FX, "LumiereIndirecte", 1, L"Lumi\u00E8re indirecte", L"Indirect light", L"Les surfaces color\u00E9es renvoient leur couleur autour d'elles.", L"Colored surfaces bounce their color around.");
+    // COOP
+    T2(TAB_COOP, "TirAmi", 1, L"Tir ami", L"Friendly fire", L"Les joueurs peuvent se blesser entre eux (coups, balles, voiture).", L"Players can hurt each other (punches, bullets, cars).", W_HOST);
+    T2(TAB_COOP, "ArgentPartage", 1, L"Argent partag\u00E9", L"Shared money", L"L'argent des missions va aussi aux invit\u00E9s.", L"Mission money also goes to guests.", W_HOST);
+    T2(TAB_COOP, "RecherchePartagee", 0, L"\u00C9toiles communes", L"Shared wanted level", L"Tous les joueurs partagent les m\u00EAmes \u00E9toiles de police.", L"All players share the same wanted stars.", W_HOST);
+    T2(TAB_COOP, "PoliceHote", 1, L"Police de l'h\u00F4te", L"Host's police", L"Pr\u00E8s de l'h\u00F4te, seule sa police existe et elle poursuit aussi les invit\u00E9s recherch\u00E9s.",
+       L"Near the host, only their police exists and it also chases wanted guests.", W_HOST);
+    C(TAB_COOP, "ZonePopulation", 150, Range(100, 200, 10), L"Zone de population", L"Population range", {}, {}, L" %",
+      L"Passants et voitures naissent plus loin et restent tant qu'on est dans la zone.", L"Pedestrians and cars spawn further away and stay while you are in range.", W_HOST);
+    C(TAB_COOP, "DensitePopulation", 150, Range(50, 300, 25), L"Densit\u00E9 de population", L"Population density", {}, {}, L" %",
+      L"Nombre de passants et de voitures en m\u00EAme temps. 100 % = jeu d'origine.", L"Number of pedestrians and cars at once. 100% = original game.", W_HOST);
+    T2(TAB_COOP, "ModsPartages", 1, L"Mods partag\u00E9s", L"Shared mods", L"Les fichiers de VCCoop\\mods remplacent ceux du jeu et sont envoy\u00E9s aux invit\u00E9s.",
+       L"Files in VCCoop\\mods replace the game's and are sent to guests.");
+    T2(TAB_COOP, "GarderArmes", 1, L"Garder ses armes", L"Keep weapons", L"Apr\u00E8s une mort ou une arrestation, l'invit\u00E9 garde ses armes et son argent.",
+       L"After dying or being busted, the guest keeps weapons and money.", W_GUEST);
+    T2(TAB_COOP, "ReapparitionHote", 0, L"R\u00E9appara\u00EEtre pr\u00E8s de l'h\u00F4te", L"Respawn near the host", L"Au lieu de l'h\u00F4pital (d\u00E9conseill\u00E9).",
+       L"Instead of the hospital (not recommended).", W_GUEST);
+}
+
+static std::string GameIni() { return Narrow(g_gameDir + L"vccoop.ini"); }
+static int OptGet(const Opt &o) { return GetPrivateProfileIntA("VCCoop", o.key, o.def, GameIni().c_str()); }
+static void OptSet(const Opt &o, int v) { char b[16]; wsprintfA(b, "%d", v); WritePrivateProfileStringA("VCCoop", o.key, b, GameIni().c_str()); }
+static bool Modern() { return g_gameDir.empty() || GetPrivateProfileIntA("VCCoop", "Rendu", 9, GameIni().c_str()) == 9; }
+static bool TabVisible(int t) { return (t != TAB_RENDER && t != TAB_FX) || Modern(); }
+static const wchar_t *TabName(int t)
+{
+    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP" };
+    return g_fr ? fr[t] : en[t];
+}
+static void LayoutTabs()
+{
+    float x = 440;
+    for (int t = 0; t < TAB_COUNT; t++) {
+        if (!TabVisible(t)) { g_tabR[t] = RectF(0, 0, 0, 0); continue; }
+        float w = 22 + 8.2f * (float)wcslen(TabName(t));
+        g_tabR[t] = RectF(x, 78, w, 26);
+        x += w + 6;
+    }
+    if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = TAB_VIDEO;
+}
+static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t) r.push_back(i); return r; }
+static float MaxScroll(int t) { return max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
+
+static int ValueIndex(const Opt &o, int v)
+{
+    for (int i = 0; i < (int)o.vals.size(); i++) if (o.vals[i] == v) return i;
+    for (int i = 0; i < (int)o.vals.size(); i++) if (o.vals[i] > v) return i;   // valeur hors liste : la suivante
+    return (int)o.vals.size() - 1;
+}
+static std::wstring ValueText(const Opt &o, int v)
+{
+    int i = ValueIndex(o, v);
+    const std::vector<const wchar_t *> &lab = g_fr ? o.labFr : o.labEn;
+    if (!lab.empty()) return lab[i];
+    wchar_t b[32];
+    swprintf_s(b, L"%d%s", v, (!wcscmp(o.suffix, L" i/s") && !g_fr) ? L" fps" : o.suffix);
+    return b;
+}
+static void OptStep(int idx, int dir)
+{
+    const Opt &o = g_opts[idx];
+    int v = OptGet(o);
+    if (o.kind == O_TOGGLE) { OptSet(o, v ? 0 : 1); return; }
+    int i = ValueIndex(o, v);
+    if (o.vals[i] != v && dir > 0) i--;   // hors liste : un cran vers le haut = la valeur de la liste juste au-dessus
+    i = (i + dir + (int)o.vals.size()) % (int)o.vals.size();
+    OptSet(o, o.vals[i]);
+    if (!strcmp(o.key, "Rendu")) LayoutTabs();
+}
+
+static float MeasureW(Graphics &g, const std::wstring &s, float px, int style)
+{
+    FontFamily fam(L"Segoe UI");
+    Font font(&fam, px, style, UnitPixel);
+    RectF box;
+    g.MeasureString(s.c_str(), -1, &font, PointF(0, 0), &box);
+    return box.Width;
+}
+
+static void DrawTabs(Graphics &g)
+{
+    if (g_gameDir.empty()) return;
+    for (int t = 0; t < TAB_COUNT; t++) {
+        if (!TabVisible(t)) continue;
+        RectF r = g_tabR[t];
+        GraphicsPath p;
+        RoundRect(p, r, r.Height / 2);
+        bool on = g_tab == t, hot = g_tabHot == t;
+        if (on) { LinearGradientBrush lg(r, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &p); }
+        else { SolidBrush b(hot ? Color(240, 255, 255, 255) : Color(185, 255, 255, 255)); g.FillPath(&b, &p); }
+        Text(g, TabName(t), r, 11.5f, FontStyleBold, on ? Color(255, 255, 255, 255) : Mix(kInk, kPink, hot ? 1.0f : 0.0f));
+    }
+}
+
+static void DrawOptions(Graphics &g)
+{
+    if (g_tab < 0 || g_gameDir.empty()) return;
+    GraphicsPath pp;
+    RoundRect(pp, kOptPanel, 18);
+    SolidBrush bg(Color(250, 252, 249, 251));
+    g.FillPath(&bg, &pp);
+    Pen border(Color(150, 255, 255, 255), 1.5f);
+    g.DrawPath(&border, &pp);
+
+    std::vector<int> rows = TabRows(g_tab);
+    float sc = g_scroll[g_tab];
+    g.SetClip(kOptList);
+    for (int k = 0; k < (int)rows.size(); k++) {
+        const Opt &o = g_opts[rows[k]];
+        RectF r(kOptList.X, kOptList.Y + k * kRowH - sc, kOptList.Width - 10, kRowH);
+        if (r.Y + r.Height < kOptList.Y || r.Y > kOptList.Y + kOptList.Height) continue;
+        bool hot = g_optHot == rows[k];
+        if (hot) { GraphicsPath hp; RoundRect(hp, RectF(r.X, r.Y + 2, r.Width, r.Height - 4), 9); SolidBrush hb(Color(255, 255, 236, 244)); g.FillPath(&hb, &hp); }
+        std::wstring label = g_fr ? o.fr : o.en;
+        Text(g, label, RectF(r.X + 12, r.Y, 280, r.Height), 13.5f, FontStyleRegular, kInk, StringAlignmentNear);
+        if (o.who != W_ALL) {   // pastille HOTE / INVITE
+            float lw = MeasureW(g, label, 13.5f, FontStyleRegular);
+            const wchar_t *bt = o.who == W_HOST ? T(L"H\u00D4TE", L"HOST") : T(L"INVIT\u00C9", L"GUEST");
+            RectF br(r.X + 12 + lw + 6, r.Y + 10, 12 + 6.2f * (float)wcslen(bt), 15);
+            GraphicsPath bp; RoundRect(bp, br, 7.5f);
+            SolidBrush bb(o.who == W_HOST ? Color(40, 255, 79, 139) : Color(40, 90, 110, 200));
+            g.FillPath(&bb, &bp);
+            Text(g, bt, br, 9, FontStyleBold, o.who == W_HOST ? kPink : Color(255, 80, 96, 180));
+        }
+        int v = OptGet(o);
+        if (o.kind == O_TOGGLE) {
+            RectF tr(r.X + r.Width - 54, r.Y + 7, 42, 20);
+            GraphicsPath tp; RoundRect(tp, tr, 10);
+            if (v) { LinearGradientBrush lg(tr, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &tp); }
+            else { SolidBrush ob(Color(255, 222, 210, 218)); g.FillPath(&ob, &tp); }
+            SolidBrush knob(Color(255, 255, 255, 255));
+            g.FillEllipse(&knob, v ? tr.X + 24 : tr.X + 2, tr.Y + 2, 16.0f, 16.0f);
+        } else {
+            RectF cr(r.X + r.Width - 190, r.Y + 5, 178, 24);
+            GraphicsPath cp; RoundRect(cp, cr, 12);
+            SolidBrush cb(Color(255, 255, 255, 255)); g.FillPath(&cb, &cp);
+            Pen cpen(Color(255, 240, 196, 214), 1.2f); g.DrawPath(&cpen, &cp);
+            Color al = (hot && g_optPart < 0) ? kPink : Color(200, 255, 79, 139), ar = (hot && g_optPart > 0) ? kPink : Color(200, 255, 79, 139);
+            Text(g, L"\u2039", RectF(cr.X + 4, cr.Y - 2, 18, cr.Height), 18, FontStyleBold, al);
+            Text(g, L"\u203A", RectF(cr.X + cr.Width - 22, cr.Y - 2, 18, cr.Height), 18, FontStyleBold, ar);
+            Text(g, ValueText(o, v), RectF(cr.X + 20, cr.Y, cr.Width - 40, cr.Height), 12.5f, FontStyleBold, kInk);
+        }
+    }
+    g.ResetClip();
+    float ms = MaxScroll(g_tab);
+    if (ms > 0) {   // barre de defilement
+        float h = kOptList.Height * kOptList.Height / (kOptList.Height + ms), y = kOptList.Y + (kOptList.Height - h) * sc / ms;
+        GraphicsPath sp; RoundRect(sp, RectF(kOptList.X + kOptList.Width - 5, y, 4, h), 2);
+        SolidBrush sb(Color(120, 255, 79, 139)); g.FillPath(&sb, &sp);
+    }
+    // description de la ligne survolee
+    Pen sep(Color(255, 240, 214, 226), 1);
+    g.DrawLine(&sep, kOptPanel.X + 18, 532.0f, kOptPanel.X + kOptPanel.Width - 18, 532.0f);
+    std::wstring d = g_optHot >= 0 ? (g_fr ? g_opts[g_optHot].dFr : g_opts[g_optHot].dEn)
+                                   : T(L"Pris au prochain lancement du jeu. Le menu COOP du jeu modifie les m\u00EAmes r\u00E9glages.",
+                                       L"Applied the next time the game starts. The game's COOP menu changes the same settings.");
+    FontFamily fam(L"Segoe UI");
+    Font font(&fam, 12, FontStyleRegular, UnitPixel);
+    StringFormat sf;
+    sf.SetLineAlignment(StringAlignmentCenter);
+    sf.SetTrimming(StringTrimmingEllipsisWord);
+    SolidBrush db(kGrey);
+    g.DrawString(d.c_str(), -1, &font, RectF(kOptPanel.X + 20, 536, kOptPanel.Width - 40, 44), &sf, &db);
+}
+
+// Survol : ligne d'option et cote du selecteur (-1 gauche, +1 droite, 0 libelle)
+static void HitOption(float x, float y, int *row, int *part)
+{
+    *row = -1; *part = 0;
+    if (g_tab < 0 || !kOptList.Contains(x, y)) return;
+    std::vector<int> rows = TabRows(g_tab);
+    int k = (int)((y - kOptList.Y + g_scroll[g_tab]) / kRowH);
+    if (k < 0 || k >= (int)rows.size()) return;
+    *row = rows[k];
+    const Opt &o = g_opts[*row];
+    float right = kOptList.X + kOptList.Width - 10;
+    if (o.kind == O_CHOICE && x >= right - 190) *part = x < right - 190 + 89 ? -1 : 1;
+}
+static int HitTab(float x, float y)
+{
+    if (g_state != ST_IDLE || g_gameDir.empty()) return -1;
+    for (int t = 0; t < TAB_COUNT; t++) if (TabVisible(t) && g_tabR[t].Contains(x, y)) return t;
+    return -1;
+}
+
 static void DrawUI(Graphics &g)
 {
     UpdateButtons();
@@ -664,6 +945,8 @@ static void DrawUI(Graphics &g)
         DrawBar(g, RectF(96, 390, 264, 6), -2);
         Text(g, T(L"La fen\u00EAtre du jeu va appara\u00EEtre.", L"The game window will appear shortly."), RectF(60, 410, 336, 24), 12.5f, FontStyleRegular, kGrey);
     } else {
+        DrawTabs(g);
+        DrawOptions(g);
         Text(g, status, RectF(60, 212, 336, 22), 13, FontStyleBold, sc);
         if (prog != -1.0f) DrawBar(g, RectF(96, 238, 264, 5), prog);
         DrawField(g, 0, T(L"PSEUDO", L"NICKNAME"));
@@ -765,6 +1048,7 @@ static void ChooseExe()
     ExeKind k = CheckExe(file);
     if (k != EXE_OK) { BadExeMessage(k); return; }
     SetExe(file);
+    LayoutTabs();
     WritePrivateProfileStringW(L"Lanceur", L"Exe", file, g_iniLauncher.c_str());
     StartUpdate();
 }
@@ -912,12 +1196,23 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     case WM_MOUSEMOVE: {
         float x = (short)LOWORD(lp) / g_scale, y = (short)HIWORD(lp) / g_scale;
         g_hot = HitButton(x, y);
+        g_tabHot = HitTab(x, y);
+        HitOption(x, y, &g_optHot, &g_optPart);
         TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
         TrackMouseEvent(&tme);
-        SetCursor(LoadCursor(NULL, (g_hot >= 0 && g_btn[g_hot].enabled) ? IDC_HAND : HitField(x, y) >= 0 ? IDC_IBEAM : IDC_ARROW));
+        SetCursor(LoadCursor(NULL, ((g_hot >= 0 && g_btn[g_hot].enabled) || g_tabHot >= 0 || g_optHot >= 0) ? IDC_HAND : HitField(x, y) >= 0 ? IDC_IBEAM : IDC_ARROW));
         return 0;
     }
-    case WM_MOUSELEAVE: g_hot = -1; return 0;
+    case WM_MOUSELEAVE: g_hot = -1; g_tabHot = -1; g_optHot = -1; return 0;
+    case WM_MOUSEWHEEL:
+        if (g_tab >= 0) {
+            float step = -(short)HIWORD(wp) / 120.0f * kRowH * 1.5f;
+            g_scroll[g_tab] = min(max(g_scroll[g_tab] + step, 0.0f), MaxScroll(g_tab));
+            POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };
+            ScreenToClient(h, &pt);
+            HitOption(pt.x / g_scale, pt.y / g_scale, &g_optHot, &g_optPart);
+        }
+        return 0;
     case WM_SETCURSOR: return TRUE;
     case WM_LBUTTONDOWN: {
         float x = (short)LOWORD(lp) / g_scale, y = (short)HIWORD(lp) / g_scale;
@@ -925,6 +1220,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (b >= 0) { g_pressed = b; SetCapture(h); return 0; }
         if (f >= 0) { g_focus = f; g_time = 0; return 0; }
         g_focus = -1;
+        int t = HitTab(x, y);
+        if (t >= 0) { g_tab = g_tab == t ? -1 : t; g_optHot = -1; return 0; }   // un 2e clic referme
+        int row, part;
+        HitOption(x, y, &row, &part);
+        if (row >= 0) { OptStep(row, part < 0 ? -1 : 1); return 0; }
+        if (g_tab >= 0 && kOptPanel.Contains(x, y)) return 0;
         ReleaseCapture();
         SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);   // glisser la fenetre
         return 0;
@@ -1037,12 +1338,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     ULONG_PTR gtok;
     GdiplusStartup(&gtok, &gin, NULL);
     Layout();
+    BuildOptions();
 
     wchar_t saved[MAX_PATH] = L"";
     GetPrivateProfileStringW(L"Lanceur", L"Exe", L"", saved, MAX_PATH, g_iniLauncher.c_str());
     std::wstring start = (saved[0] && FileExists(saved)) ? saved : g_dir + L"gta-vc.exe";
     SetExe(start);
     LoadBackground();
+    LayoutTabs();
     if (g_exeKind == EXE_MISSING) SetStatus(K_ERR, T(L"Choisis ton gta-vc.exe (version 1.0)", L"Choose your gta-vc.exe (version 1.0)"));
     else if (g_exeKind != EXE_OK) SetStatus(K_ERR, T(L"Ce gta-vc.exe n'est pas la version 1.0", L"This gta-vc.exe is not version 1.0"));
     else SetStatus(K_NORMAL, L"VCCoop %s", g_localVer.empty() ? L"" : g_localVer.c_str());
@@ -1058,6 +1361,24 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         return 0;
     }
 
+    // /testoptions <journal> : fait avancer quelques options (test de l'ecriture dans vccoop.ini)
+    if (argc >= 3 && !_wcsicmp(argv[1], L"/testoptions")) {
+        FILE *f = _wfopen(argv[2], L"w, ccs=UTF-8");
+        auto find = [](const char *k) { for (int i = 0; i < (int)g_opts.size(); i++) if (!strcmp(g_opts[i].key, k)) return i; return -1; };
+        const char *keys[] = { "DistanceAffichage", "Rendu", "Anticrenelage", "SMAA", "Fenetre" };
+        for (const char *k : keys) {
+            int i = find(k), a = OptGet(g_opts[i]);
+            OptStep(i, 1);
+            int b = OptGet(g_opts[i]);
+            OptStep(i, -1);
+            if (f) fwprintf(f, L"%S : %d -> %d -> %d ; onglet rendu visible=%d\n", k, a, b, OptGet(g_opts[i]), (int)TabVisible(TAB_RENDER));
+        }
+        if (f) fclose(f);
+        delete g_bg;
+        GdiplusShutdown(gtok);
+        return 0;
+    }
+
     // Capture d'un etat, sans fenetre ni reseau (verification du rendu)
     if (argc >= 4 && !_wcsicmp(argv[1], L"/capture")) {
         std::wstring st = argv[3];
@@ -1065,6 +1386,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         g_time = 0.3f;
         if (st == L"attente") { g_state = ST_LAUNCH; g_launchInfo = L"Tommy h\u00E9berge la partie"; g_time = 1.3f; }
         else if (st == L"sansexe") { g_exeKind = EXE_STEAM; g_localVer.clear(); SetStatus(K_ERR, T(L"Ce gta-vc.exe n'est pas la version 1.0", L"This gta-vc.exe is not version 1.0")); }
+        else if (st == L"options" || st == L"coop") { g_tab = st == L"coop" ? TAB_COOP : TAB_VIDEO; g_optHot = g_tab == TAB_COOP ? TabRows(TAB_COOP)[0] : TabRows(TAB_VIDEO)[4]; g_optPart = 1; g_tabHot = TAB_FX; }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }
         else { g_localVer = g_localVer.empty() ? L"2026.09.29h" : g_localVer; SetStatus(K_OK, T(L"VCCoop %s \u00B7 \u00E0 jour", L"VCCoop %s \u00B7 up to date"), g_localVer.c_str()); g_hot = B_HOST; g_btn[B_HOST].hover = 1; }
         int rc = 1;
