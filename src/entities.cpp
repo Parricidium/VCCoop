@@ -269,6 +269,21 @@ static void UpdateGhost(Ghost &g)
             return;
         }
     }
+    // Passager a la mauvaise place parce que la sienne est prise par NOUS (on s'y est assis avant qu'il arrive chez nous) :
+    // chez l'hote, c'est l'inverse (lui d'abord, notre double a cote). On echange : il prend sa place, nous la sienne,
+    // comme chez l'hote (JD, 30/09, voiture a 4 places apres la cinematique du yacht).
+    if (cur && cur == want && m.seat > 0 && SeatOf(cur, ped) > 0 && SeatOf(cur, ped) != m.seat) {
+        void *me = FindPlayerPed();
+        int mine = me && InVehicle(me) && PedVehicle(me) == cur ? SeatOf(cur, me) : -1;
+        if (mine == m.seat) {
+            int his = SeatOf(cur, ped);
+            WarpOutOfVehicle(ped, NULL);
+            WarpOutOfVehicle(me, NULL);
+            bool a = WarpIntoSeat(ped, cur, m.seat), b = WarpIntoSeat(me, cur, his);
+            Log("entites : %08X prend sa place %d dans la voiture, nous la %d (comme chez l'hote)%s", g.handle, m.seat, his, a && b ? "" : " (echec)");
+            if (!b) WarpIntoSeat(me, cur, 1);
+        }
+    }
     if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (m.seat == 0))) {
         Vec3 at = { m.pos[0], m.pos[1], m.pos[2] };
         WarpOutOfVehicle(ped, &at);

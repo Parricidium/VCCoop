@@ -175,6 +175,8 @@ static void SendVehicle(NetVehicle &e)
     m.vclass = (uint8_t)VehClass(v);
     m.color1 = Field<uint8_t>(v, 0x1A0);
     m.color2 = Field<uint8_t>(v, 0x1A1);
+    m.extras[0] = Field<int8_t>(v, 0x1A2);
+    m.extras[1] = Field<int8_t>(v, 0x1A3);
     m.driver = 0xFF;
     void *drv = VehDriver(v);
     if (drv && drv == FindPlayerPed()) m.driver = (uint8_t)g_localId;
@@ -224,11 +226,18 @@ static void *CreateCopy(const MsgVehicle &m)
     }
     void *v = VehicleAlloc();
     if (!v) { Log("vehicules : plus de place pour une copie"); return NULL; }
+    // Memes pieces en option que l'original (capote, galerie, pare-buffle... tirees au hasard par chaque jeu :
+    // l'hote et l'invite ne voyaient pas la meme voiture). CVehicleModelInfo::ms_compsToUse (0x699538), comme
+    // SET_CAR_MODEL_COMPONENTS : lu une fois par la creation du modele, -1 = aucune piece.
+    *(int8_t *)0x699538 = m.extras[0];
+    *(int8_t *)0x699539 = m.extras[1];
     switch (m.vclass) {
     case VCLASS_BOAT: BoatCtor(v, m.model, VEHICLE_MISSION); break;
     case VCLASS_BIKE: BikeCtor(v, m.model, VEHICLE_MISSION); break;
     default: AutomobileCtor(v, m.model, VEHICLE_MISSION); break;
     }
+    *(int8_t *)0x699538 = -2;   // "au hasard" : un modele sans pieces en option ne l'a pas consomme (0x57A7D8)
+    *(int8_t *)0x699539 = -2;
     Field<uint8_t>(v, 0x1A0) = m.color1;
     Field<uint8_t>(v, 0x1A1) = m.color2;
     Field<Vec3>(v, 0x04) = { m.right[0], m.right[1], m.right[2] };
@@ -240,8 +249,8 @@ static void *CreateCopy(const MsgVehicle &m)
     Field<uint8_t>(v, 0x53) |= 0x08;   // bCollisionProof : ses degats sont ceux du proprietaire (SyncDamage)
     SetCopyFlags(v, true);
     WorldAdd(v);
-    Log("vehicules : copie de %08X (modele %d, classe %d, couleurs %d/%d -> %d/%d) creee", m.id, m.model, m.vclass,
-        m.color1, m.color2, Field<uint8_t>(v, 0x1A0), Field<uint8_t>(v, 0x1A1));
+    Log("vehicules : copie de %08X (modele %d, classe %d, couleurs %d/%d -> %d/%d, pieces %d/%d -> %d/%d) creee", m.id, m.model, m.vclass,
+        m.color1, m.color2, Field<uint8_t>(v, 0x1A0), Field<uint8_t>(v, 0x1A1), m.extras[0], m.extras[1], Field<int8_t>(v, 0x1A2), Field<int8_t>(v, 0x1A3));
     return v;
 }
 
@@ -314,7 +323,13 @@ static void ApplyState(NetVehicle &e)
     void *me0 = FindPlayerPed();
     // (Seulement juste apres un tir a balles du joueur local : un feu local sur la copie, une explosion rejouee la
     // font aussi baisser, et ces degats-la existent deja chez le proprietaire ; sans ce filtre sa voiture se vidait.)
-    if (me0 && e.appliedHealth > 0.0f && local < e.appliedHealth - 0.5f && EntityStatus(v) != STATUS_WRECKED && LocalBulletRecently()) {
+    // Coups au corps a corps (batte, poings...) aussi : la voiture a abimer de "Jury Fury" ne bougeait pas chez l'hote
+    // quand l'invite la frappait (JD, 30/09). Etat 16 / 17 (attaque / combat) du joueur, a moins de 8 m.
+    static uint32_t lastMelee;
+    if (me0 && (PedState(me0) == 16 || PedState(me0) == 17)) lastMelee = GetTickCount();
+    bool melee = lastMelee && GetTickCount() - lastMelee < 1500 && me0 &&
+                 (Pos(v).x - Pos(me0).x) * (Pos(v).x - Pos(me0).x) + (Pos(v).y - Pos(me0).y) * (Pos(v).y - Pos(me0).y) < 8.0f * 8.0f;
+    if (me0 && e.appliedHealth > 0.0f && local < e.appliedHealth - 0.5f && EntityStatus(v) != STATUS_WRECKED && (LocalBulletRecently() || melee)) {
         float dx = Pos(v).x - Pos(me0).x, dy = Pos(v).y - Pos(me0).y;
         if (dx * dx + dy * dy < 60.0f * 60.0f) SendVehicleDamage(m.owner, m.id, e.appliedHealth - local);
     }
