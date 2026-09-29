@@ -177,6 +177,85 @@ void AutotestFrame()
         }
         return;
     }
+    // Autotest=ragdoll : (hote) tue d'un coup un passant proche (pousse en l'air), puis fonce en voiture sur un
+    // autre ; corps mous chez lui et, chez l'invite (rejoindre), la meme pose recue.
+    if (_stricmp(g_cfg.autotest, "ragdoll") == 0) {
+        static void *car, *victim;
+        static uint32_t launchAt;
+        uint32_t t = frame - controlSince;
+        void *me = FindPlayerPed();
+        if (!g_cfg.host) {   // invite : camera fixe derriere l'hote, dans l'axe de son regard (la meme scene)
+            const MsgState &hs = g_players[0].state;
+            if (t >= 250 && t % 60 == 10 && g_players[0].connected) {
+                float fx = -sinf(hs.heading), fy = cosf(hs.heading);
+                float cam[6] = { hs.pos[0] - fx * 3.5f, hs.pos[1] - fy * 3.5f, hs.pos[2] + 1.5f, 0, 0, 0 };
+                float at[3] = { hs.pos[0] + fx * 9.0f, hs.pos[1] + fy * 9.0f, hs.pos[2] - 0.5f };
+                MirrorLocal(0x015F, 6, (const int32_t *)cam);
+                int32_t pt[4]; memcpy(pt, at, 12); pt[3] = 2;
+                MirrorLocal(0x0160, 4, pt);
+            }
+            return;
+        }
+        auto nearestCiv = [&](void *skip) -> void * {
+            Pool *pp = PedPool();
+            void *best = NULL;
+            float bd = 40.0f * 40.0f;
+            for (int i = 0; i < pp->size; i++) {
+                if (pp->flags[i] & 0x80) continue;
+                void *p = pp->objects + i * PED_POOL_ENTRY;
+                if (p == me || p == skip || IsPuppet(p) || IsGhostPed(p) || InVehicle(p) || Health(p) <= 0.0f || CharCreatedBy(p) != 1) continue;
+                if (PedType(p) != 4 && PedType(p) != 5) continue;
+                float dx = Pos(p).x - Pos(me).x, dy = Pos(p).y - Pos(me).y, d = dx * dx + dy * dy;
+                if (d > 9.0f && d < bd) { bd = d; best = p; }
+            }
+            return best;
+        };
+        static void *first;
+        // Devant la camera (TheCamera, matrice en 0x7E4688 : avant +0x10, position +0x30), a hauteur de l'hote.
+        Vec3 cf = *(Vec3 *)(0x7E4688 + 0x10), cp = *(Vec3 *)(0x7E4688 + 0x30);
+        float cl = sqrtf(cf.x * cf.x + cf.y * cf.y); if (cl < 0.1f) cl = 1.0f;
+        float hx = cf.x / cl, hy = cf.y / cl, hh = atan2f(-hx, hy);
+        Vec3 base = { cp.x + hx * 3.0f, cp.y + hy * 3.0f, Pos(me).z };
+        if (t == 200) { int32_t hm[2] = { 12, 0 }; MirrorLocal(0x00C0, 2, hm); }
+        if (t == 280) {
+            first = nearestCiv(NULL);
+            if (first) { Pos(first) = { base.x + hx * 9.0f - hy * 1.5f, base.y + hy * 9.0f + hx * 1.5f, base.z }; MoveSpeed(first) = { 0, 0, 0 }; }
+        }
+        if (t == 300) {
+            if (first && Health(first) > 0.0f) {
+                float dx = Pos(first).x - Pos(me).x, dy = Pos(first).y - Pos(me).y, l = sqrtf(dx * dx + dy * dy);
+                ((bool(__thiscall *)(void *, void *, int, float, int, uint8_t))0x525B20)(first, me, 0, 1000.0f, 3, 0);
+                Log("autotest : ragdoll, passant %08X tue a %.0f m (etat %d)", PedHandle(first), l, PedState(first));
+            } else Log("autotest : ragdoll, aucun passant");
+        }
+        static bool launched;
+        if (t >= 600 && !launched) {
+            if (!HasModelLoaded(130)) { RequestModel(130, 1); return; }
+            victim = nearestCiv(first);
+            if (victim) {
+                RegisterReference(victim, &victim);
+                // Le passant a 7 m devant la camera ; la voiture arrive de sa droite (traverse l'image).
+                Pos(victim) = { base.x + hx * 9.0f + hy * 0.5f, base.y + hy * 9.0f - hx * 0.5f, base.z };
+                MoveSpeed(victim) = { 0, 0, 0 };
+                void *v = VehicleAlloc();
+                AutomobileCtor(v, 130, 1);
+                Pos(v) = { Pos(victim).x + hx * 14.0f, Pos(victim).y + hy * 14.0f, Pos(victim).z + 0.3f };   // du fond, vers nous
+                SetHeadingMatrix(v, hh + 3.14159f);
+                SetEntityStatus(v, STATUS_ABANDONED);
+                WorldAdd(v);
+                car = v; RegisterReference(v, &car);
+                launchAt = frame;
+                launched = true;
+                Log("autotest : ragdoll, voiture lancee sur %08X", PedHandle(victim));
+            }
+        }
+        if (car && victim && frame - launchAt >= 20 && frame - launchAt < 120) {
+            float dx = Pos(victim).x - Pos(car).x, dy = Pos(victim).y - Pos(car).y, l = sqrtf(dx * dx + dy * dy);
+            if (l > 0.5f && (frame - launchAt) % 10 == 0) Log("autotest : ragdoll, voiture a %.1f m de la victime (etat %d, sante %.0f)", l, PedState(victim), Health(victim));
+            if (l > 1.5f && PedState(victim) != 42 && PedState(victim) < 54) MoveSpeed(car) = { dx / l * 0.35f, dy / l * 0.35f, MoveSpeed(car).z };
+        }
+        return;
+    }
     // Autotest=casse : (hote) casse l'objet cassable (carton, poubelle...) et la vitre les plus proches, par les
     // fonctions du jeu (ObjectDamage / WindowRespondsToCollision) ; l'invite (rejoindre) doit les voir casses aussi.
     if (_stricmp(g_cfg.autotest, "casse") == 0) {
