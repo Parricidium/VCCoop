@@ -36,6 +36,11 @@ static void LoadConfig()
     g_cfg.windowed = GetPrivateProfileIntA("VCCoop", "Fenetre", 1, ini) != 0;
     g_cfg.winX = GetPrivateProfileIntA("VCCoop", "FenetreX", 40, ini);
     g_cfg.winY = GetPrivateProfileIntA("VCCoop", "FenetreY", 40, ini);
+    {
+        char sz[32];
+        GetPrivateProfileStringA("VCCoop", "TailleFenetre", "1280x720", sz, sizeof(sz), ini);
+        if (sscanf(sz, "%dx%d", &g_cfg.winW, &g_cfg.winH) != 2 || g_cfg.winW < 640 || g_cfg.winH < 480) { g_cfg.winW = 1280; g_cfg.winH = 720; }
+    }
     g_cfg.background = GetPrivateProfileIntA("VCCoop", "ArrierePlan", 0, ini) != 0;
     g_cfg.skipIntro = GetPrivateProfileIntA("VCCoop", "SansIntro", 1, ini) != 0;
     g_cfg.localUserFiles = GetPrivateProfileIntA("VCCoop", "SauvegardesLocales", 1, ini) != 0;

@@ -4,6 +4,7 @@
 Add-Type -AssemblyName System.Drawing
 $ui = Join-Path (Split-Path $PSScriptRoot) 'dist\files\VCCoop\interface'
 $W = 1000; $H = 620
+$S = 2   # fonds en double resolution (ecrans a 150-200 % et captures) ; le lanceur les dessine en 1000x620
 $card = New-Object System.Drawing.RectangleF 20, 60, 960, 540
 $panel = New-Object System.Drawing.RectangleF 48, 88, 360, 500
 
@@ -33,8 +34,9 @@ function RoundPath([System.Drawing.RectangleF]$r, [float]$rad) {
 foreach ($dark in $false, $true) {
     $top = if ($dark) { @(40, 26, 62) } else { @(255, 222, 236) }
     $bot = if ($dark) { @(70, 30, 62) } else { @(255, 178, 158) }
-    $bmp = New-Object System.Drawing.Bitmap $W, $H, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $bmp = New-Object System.Drawing.Bitmap ($W * $S), ($H * $S), ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.ScaleTransform($S, $S)
     $g.SmoothingMode = 'AntiAlias'; $g.InterpolationMode = 'HighQualityBicubic'; $g.PixelOffsetMode = 'HighQuality'
     $g.Clear([System.Drawing.Color]::Transparent)
 
@@ -91,7 +93,7 @@ foreach ($dark in $false, $true) {
     $small = New-Object System.Drawing.Bitmap 45, 60
     $gs = [System.Drawing.Graphics]::FromImage($small)
     $gs.InterpolationMode = 'HighQualityBilinear'
-    $gs.DrawImage($bmp, (New-Object System.Drawing.RectangleF 0, 0, 45, 60), $panel, [System.Drawing.GraphicsUnit]::Pixel)
+    $gs.DrawImage($bmp, (New-Object System.Drawing.RectangleF 0, 0, 45, 60), (New-Object System.Drawing.RectangleF ($panel.X * $S), ($panel.Y * $S), ($panel.Width * $S), ($panel.Height * $S)), [System.Drawing.GraphicsUnit]::Pixel)
     $gs.Dispose()
     $g.SetClip($panelPath)
     $g.InterpolationMode = 'HighQualityBicubic'

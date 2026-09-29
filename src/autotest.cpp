@@ -74,10 +74,46 @@ void AutotestFrame()
         int w = GetPrivateProfileIntA("VCCoop", "TestMeteo", -1, IniPath());
         if (!weatherSet && w >= 0 && frame - controlSince > 20) { weatherSet = true; int32_t a[1] = { w }; MirrorLocal(0x01B6, 1, a); Log("autotest : meteo %d", w); }
     }
+    // Prises de vue (ini) : TestSansTexte=1 efface aides et sous-titres ; TestCamera=avant,droite,haut,avant,droite,haut :
+    // camera fixe placee et pointee par rapport au joueur (son repere au moment de la premiere pose).
+    {
+        if (frame % 4 == 0 && GetPrivateProfileIntA("VCCoop", "TestSansTexte", 0, IniPath())) { MirrorLocal(0x03E6, 0, NULL); MirrorLocal(0x00BE, 0, NULL); }
+        static bool camRead, camOn;
+        static float cam[6], base[4];
+        if (!camRead) {
+            camRead = true;
+            char v[128];
+            GetPrivateProfileStringA("VCCoop", "TestCamera", "", v, sizeof(v), IniPath());
+            camOn = v[0] && sscanf(v, "%f,%f,%f,%f,%f,%f", &cam[0], &cam[1], &cam[2], &cam[3], &cam[4], &cam[5]) == 6;
+            GetPrivateProfileStringA("VCCoop", "TestCameraAbs", "", v, sizeof(v), IniPath());   // x,y,z,cible x,y,z (monde)
+            if (v[0] && sscanf(v, "%f,%f,%f,%f,%f,%f", &cam[0], &cam[1], &cam[2], &cam[3], &cam[4], &cam[5]) == 6) { camOn = true; base[3] = -1; }
+        }
+        uint32_t t = frame - controlSince;
+        if (camOn && base[3] < 0 && t >= 150 && t % 45 == 0) {   // camera absolue
+            float c[6] = { cam[0], cam[1], cam[2], 0, 0, 0 };
+            MirrorLocal(0x015F, 6, (const int32_t *)c);
+            int32_t pt[4]; memcpy(pt, &cam[3], 12); pt[3] = 2;
+            MirrorLocal(0x0160, 4, pt);
+        } else if (camOn && t >= 150 && t % 45 == 0) {
+            void *me = FindPlayerPed();
+            if (!base[3]) { base[0] = Pos(me).x; base[1] = Pos(me).y; base[2] = Pos(me).z; base[3] = Heading(me) + 1000.0f; }
+            float h = base[3] - 1000.0f, fx = -sinf(h), fy = cosf(h), rx = cosf(h), ry = sinf(h);
+            float c[6] = { base[0] + fx * cam[0] + rx * cam[1], base[1] + fy * cam[0] + ry * cam[1], base[2] + cam[2], 0, 0, 0 };
+            MirrorLocal(0x015F, 6, (const int32_t *)c);
+            float at[3] = { base[0] + fx * cam[3] + rx * cam[4], base[1] + fy * cam[3] + ry * cam[4], base[2] + cam[5] };
+            int32_t pt[4]; memcpy(pt, at, 12); pt[3] = 2;
+            MirrorLocal(0x0160, 4, pt);
+        }
+    }
     bool farJoin = _stricmp(g_cfg.autotest, "loin") == 0;   // comme rejoindre, mais 160 m devant l'hote (hors de sa zone)
     if (farJoin || _stricmp(g_cfg.autotest, "rejoindre") == 0) {
         static bool done;
         const NetPlayer &host = g_players[g_localId == 0 ? 1 : 0];   // l'hote va aupres du joueur 1
+        // Prises de vue (TestEcart) : on se replace tant que l'hote s'eloigne (il peut etre teleporte apres nous).
+        if (done && frame % 30 == 0 && host.connected && GetPrivateProfileIntA("VCCoop", "TestSuivre", 0, IniPath())) {
+            float dx = Pos(FindPlayerPed()).x - host.state.pos[0], dy = Pos(FindPlayerPed()).y - host.state.pos[1];
+            if (dx * dx + dy * dy > 15.0f * 15.0f) done = false;
+        }
         if (!done && frame - controlSince > 60 && g_localId >= 0 && host.connected && host.state.inGame) {
             done = true;
             void *ped = FindPlayerPed();
@@ -85,10 +121,14 @@ void AutotestFrame()
             // 8 m devant l'hote et 2,5 m sur sa droite (avant = (-sin h, cos h), droite = (cos h, sin h)) :
             // dans le champ de sa camera sans etre cache par son corps.
             float hh = host.state.heading, fx = -sinf(hh), fy = cosf(hh), rx = cosf(hh), ry = sinf(hh);
-            float ahead = farJoin ? 160.0f : 8.0f;
-            p = { host.state.pos[0] + fx * ahead + rx * 2.5f, host.state.pos[1] + fy * ahead + ry * 2.5f, host.state.pos[2] + (farJoin ? 3.0f : 0.5f) };
+            float ahead = farJoin ? 160.0f : 8.0f, side = 2.5f;
+            char ec[64];   // TestEcart=devant,cote (prises de vue)
+            GetPrivateProfileStringA("VCCoop", "TestEcart", "", ec, sizeof(ec), IniPath());
+            float turn = 180.0f;
+            if (ec[0]) sscanf(ec, "%f,%f,%f", &ahead, &side, &turn);
+            p = { host.state.pos[0] + fx * ahead + rx * side, host.state.pos[1] + fy * ahead + ry * side, host.state.pos[2] + (farJoin ? 3.0f : 0.5f) };
             MoveSpeed(ped) = { 0, 0, 0 };
-            float h = hh + 3.14159f;
+            float h = hh + turn * 0.0174533f;
             SetHeadingMatrix(ped, h);
             Heading(ped) = HeadingGoal(ped) = h;
             Log("autotest : teleporte pres de l'hote (%.1f %.1f %.1f)", p.x, p.y, p.z);

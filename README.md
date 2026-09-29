@@ -14,6 +14,10 @@
   <a href="https://github.com/Parricidium/VCCoop/releases/latest"><img src="https://img.shields.io/github/v/release/Parricidium/VCCoop?label=Download&style=for-the-badge" alt="Download the latest release"></a>
 </p>
 
+<p align="center">
+  <img src="docs/img/jeu-nuit-duo.jpg" width="100%" alt="Two players in front of the Ocean View hotel at night">
+</p>
+
 # VCCoop — the Vice City story in co-op, 2 to 4 players
 
 A co-op mod for **Grand Theft Auto: Vice City** (PC, version 1.0). One player hosts and plays the
@@ -29,12 +33,73 @@ other players by themselves.
 
 *[Version française plus bas.](#version-française)*
 
+## Screenshots
+
+### The launcher
+
+`VCCoop.exe` updates the mod by itself from this page, checks your game version, and runs the **lobby**: players,
+ready state, ping, shared mods downloaded with everyone's progress, new game or load, then everyone's game starts
+straight into the session.
+
+<p align="center">
+  <img src="docs/img/lanceur-salon.png" width="100%" alt="Launcher lobby (dark theme)">
+</p>
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/lanceur-tenue.png" alt="Outfit tab: turning 3D preview and portraits"></td>
+    <td width="50%"><img src="docs/img/lanceur-mods.png" alt="Mods tab: 3D preview of each shared mod"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Outfit</b>: your in-game outfit, turning 3D preview read from your own game files</td>
+    <td align="center"><b>Mods</b> (host): turn each shared mod on or off, with a 3D preview</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/lanceur-options.png" alt="Video, rendering, effects and co-op options"></td>
+    <td width="50%"><img src="docs/img/lanceur-sombre.png" alt="Dark theme, English"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Options</b>: video, modern rendering, effects, co-op</td>
+    <td align="center">Light or dark theme, French or English</td>
+  </tr>
+</table>
+
+### In game
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/jeu-duo-jour.jpg" alt="Two players on Ocean Drive"></td>
+    <td width="50%"><img src="docs/img/jeu-nuit-duo.jpg" alt="Neon night on Ocean Drive"></td>
+  </tr>
+  <tr>
+    <td align="center">Co-op: every player keeps their outfit and name tag</td>
+    <td align="center">Neons, street lamps and headlights that really light the street</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/jeu-pluie.jpg" alt="Rain at night, wet road"></td>
+    <td width="50%"><img src="docs/img/jeu-phare.jpg" alt="Ocean Beach lighthouse at night"></td>
+  </tr>
+  <tr>
+    <td align="center">Wet roads reflecting the neons in the rain</td>
+    <td align="center">Ocean Beach lighthouse: a real rotating light</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/jeu-mer.jpg" alt="Modern water at noon"></td>
+    <td width="50%"><img src="docs/img/jeu-menu.jpg" alt="COOP menu with a custom interface"></td>
+  </tr>
+  <tr>
+    <td align="center">Modern water, sun shadows, bloom and colour grading</td>
+    <td align="center">The COOP menu, with your own menu images</td>
+  </tr>
+</table>
+
 > You need your own copy of GTA Vice City (Steam, downgraded to 1.0). No game data is provided here.
 
 ---
 
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Download and install](#download-and-install)
 - [Playing](#playing)
 - [Features](#features)
@@ -305,6 +370,48 @@ menus personnalisés, et **mods partagés** : des modèles de voitures ou de bâ
 dossier sont chargés par le jeu et envoyés tout seuls aux autres joueurs.
 
 > Il faut posséder une copie légitime de GTA Vice City (rétrogradée en 1.0) : [l'acheter sur le Rockstar Store](https://store.rockstargames.com/fr/game/buy-grand-theft-auto-the-trilogy) (aussi sur Steam). Aucun fichier du jeu n'est fourni.
+
+## Captures
+
+### Le lanceur
+
+`VCCoop.exe` met le mod à jour tout seul depuis cette page, vérifie la version du jeu et ouvre le **salon** :
+joueurs, prêt ou pas, ping, mods partagés téléchargés avec le % de chacun, nouvelle partie ou chargement, puis le
+jeu de chacun démarre directement en partie.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/lanceur-tenue.png" alt="Onglet Tenue"></td>
+    <td width="50%"><img src="docs/img/lanceur-mods.png" alt="Onglet Mods"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Tenue</b> : ta tenue en jeu, aperçu 3D qui tourne (lu dans les fichiers de ton jeu)</td>
+    <td align="center"><b>Mods</b> (hôte) : chaque mod partagé activé ou non, avec aperçu 3D</td>
+  </tr>
+</table>
+
+### En jeu
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/img/jeu-duo-jour.jpg" alt="Deux joueurs sur Ocean Drive"></td>
+    <td width="50%"><img src="docs/img/jeu-pluie.jpg" alt="Pluie de nuit"></td>
+  </tr>
+  <tr>
+    <td align="center">Coop : chaque joueur garde sa tenue et son pseudo</td>
+    <td align="center">Routes mouillées qui reflètent les néons sous la pluie</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/img/jeu-phare.jpg" alt="Phare d'Ocean Beach"></td>
+    <td width="50%"><img src="docs/img/jeu-mer.jpg" alt="Eau moderne"></td>
+  </tr>
+  <tr>
+    <td align="center">Phare d'Ocean Beach : une vraie lumière tournante</td>
+    <td align="center">Eau moderne, ombres du soleil, éclat et étalonnage</td>
+  </tr>
+</table>
+
+*(Toutes les captures sont plus haut, dans la partie anglaise.)*
 
 ## Téléchargement et installation
 

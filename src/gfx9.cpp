@@ -1658,6 +1658,24 @@ static void PrepareLightShadows(Vec3 cam)
 static M4 g_lastVP;          // camera de la derniere image (rayons de soleil, dans le post-traitement)
 static bool g_carMaskReady;
 static Vec3 g_lastCam;
+static uint32_t g_lastVPAt;
+// Projection a l'ecran avec la vraie camera de la derniere image (pseudos des joueurs) : celle du jeu
+// (CSprite::CalcScreenCoors) garde la camera habituelle quand un script impose une camera fixe.
+bool Gfx9Project(float x, float y, float z, float *sx, float *sy, float *dist)
+{
+    if (!g_lastVPAt || GetTickCount() - g_lastVPAt > 250) return false;
+    float cl[4];
+    for (int j = 0; j < 4; j++) cl[j] = x * g_lastVP.m[j] + y * g_lastVP.m[4 + j] + z * g_lastVP.m[8 + j] + g_lastVP.m[12 + j];
+    if (cl[3] < 0.3f) return false;
+    float u = cl[0] / cl[3], v = cl[1] / cl[3];
+    if (u < -1.1f || u > 1.1f || v < -1.1f || v > 1.1f) return false;
+    int w = *(int *)0x9B48DC, h = *(int *)0x9B48E0;
+    *sx = (u * 0.5f + 0.5f) * w;
+    *sy = (0.5f - v * 0.5f) * h;
+    float dx = x - g_lastCam.x, dy = y - g_lastCam.y, dz = z - g_lastCam.z;
+    *dist = sqrtf(dx * dx + dy * dy + dz * dz);
+    return true;
+}
 static float WeatherF(uintptr_t a) { float v = *(float *)a; return v == v && v > 0 ? (v > 1.5f ? 1.5f : v) : 0.0f; }
 static float SunsetK()
 {
@@ -2054,6 +2072,7 @@ static void Apply()
     AmbiencePasses(vp, cam, oldRt, oldDs, lights);
     g_lastVP = vp;
     g_lastCam = cam;
+    g_lastVPAt = GetTickCount();
 
     // Retour a l'etat du jeu.
     g_dev->SetTexture(0, NULL);

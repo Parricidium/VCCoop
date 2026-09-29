@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.29r"
+#define VCCOOP_VERSION "2026.09.29s"
 struct Config {
     bool windowed;
     bool borderless;
@@ -17,6 +17,7 @@ struct Config {
     char address[64];   // invite : adresse de l'hote
     int port;
     bool autoStart;
+    int winW, winH;         // TailleFenetre=LxH (Fenetre=1) : 1280x720 par defaut
     int startSlot;          // -vccoop-partie (salon du lanceur) : 0 = nouvelle partie, 1..8 = charger cet emplacement, -1 = rien
     bool netAuto;
     int testMenu;
