@@ -26,9 +26,16 @@ LAUNCHER
   Steam, GOG and 1.1 exes are refused; "Change exe" picks another one), looks
   for a new version on GitHub every time it starts and installs it by itself
   (vccoop.ini settings and vccoop-joueur.ini are kept).
-- Host / Join (nickname and host address typed in the launcher) / Play (the
-  game's COOP menu). The launcher stays on screen until the game window
-  shows up.
+- LOBBY: "Host" opens a lobby (on the game port, 7790 by default) and shows
+  the address to give your friends; they click "Join" with it. Player list
+  (ready, ping), the host's shared mods downloaded before the session with
+  everyone's %, "New game" or "Load" one of the host's saves. Once everyone
+  is ready, "Start" launches everyone's game straight into the session.
+- If the host is already playing (no lobby), "Join in game" enters their
+  session as before. "Play (COOP menu)" starts the game without a lobby.
+- Windows may ask to allow VCCoop.exe on the network: accept (the host needs
+  it to receive friends).
+- The launcher stays on screen until the game window shows up.
 - VIDEO / RENDERING / EFFECTS / CO-OP tabs: the vccoop.ini settings (the
   same as the game's COOP menu), applied the next time the game starts.
   RENDERING and EFFECTS only show with the Direct3D 9 renderer. Settings

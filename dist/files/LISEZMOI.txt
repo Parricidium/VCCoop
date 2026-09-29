@@ -28,9 +28,17 @@ LANCEUR
   (les exe Steam, GOG et 1.1 sont refuses ; "Changer d'exe" pour en choisir
   un autre), cherche une nouvelle version sur GitHub a chaque demarrage et
   l'installe tout seul (reglages de vccoop.ini et vccoop-joueur.ini gardes).
-- Heberger / Rejoindre (pseudo et adresse de l'hote tapes dans le lanceur) /
-  Jouer (menu COOP du jeu). Le lanceur reste affiche jusqu'a l'apparition de
-  la fenetre du jeu.
+- SALON : "Heberger" ouvre un salon (sur le port du jeu, 7790 par defaut) et
+  affiche l'adresse a donner aux amis ; ils cliquent sur "Rejoindre" avec
+  cette adresse. Liste des joueurs (pret, ping), mods partages de l'hote
+  telecharges avant la partie avec le % de chacun, choix "Nouvelle partie"
+  ou "Charger" une sauvegarde de l'hote. Quand tout le monde est pret,
+  "Lancer" demarre le jeu de chacun, directement en partie.
+- Si l'hote joue deja (pas de salon), "Rejoindre en jeu" entre dans sa
+  partie comme avant. "Jouer (menu COOP)" lance le jeu sans salon.
+- Windows peut demander d'autoriser VCCoop.exe sur le reseau : accepter
+  (l'hote en a besoin pour recevoir ses amis).
+- Le lanceur reste affiche jusqu'a l'apparition de la fenetre du jeu.
 - Onglets VIDEO / RENDU / EFFETS / COOP : les reglages de vccoop.ini (les
   memes que le menu COOP du jeu), pris au prochain lancement. RENDU et EFFETS
   n'apparaissent qu'avec le moteur Direct3D 9. Les reglages marques HOTE

@@ -154,8 +154,23 @@ static void GuestLoad()
     }
 }
 
+// Hote lance par le salon du lanceur (-vccoop-partie <emplacement>) : au menu principal, comme un joueur qui choisit
+// Charger : l'ecran "chargement en cours" (12) verifie l'emplacement et charge ; HostWatchLoad envoie la sauvegarde.
+static void HostAutoLoad()
+{
+    static uint32_t atMenu;
+    if (g_cfg.startSlot < 1 || GameState() != GS_FRONTEND || !MenuActive()) { atMenu = 0; return; }
+    if (!atMenu) { atMenu = GetTickCount(); return; }
+    if (GetTickCount() - atMenu < 1500) return;
+    CurrSaveSlot() = g_cfg.startSlot - 1;
+    PopulateSlotInfo();
+    MenuRequestPage(12);
+    Log("sauvegarde : salon du lanceur, chargement de l'emplacement %d", g_cfg.startSlot);
+    g_cfg.startSlot = -1;
+}
+
 void SaveShareFrame()
 {
-    if (g_cfg.host) HostWatchLoad();
+    if (g_cfg.host) { HostAutoLoad(); HostWatchLoad(); }
     else GuestLoad();
 }

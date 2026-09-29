@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.29l"
+#define VCCOOP_VERSION "2026.09.29m"
 struct Config {
     bool windowed;
     bool borderless;
@@ -17,6 +17,7 @@ struct Config {
     char address[64];   // invite : adresse de l'hote
     int port;
     bool autoStart;
+    int startSlot;          // -vccoop-partie (salon du lanceur) : 0 = nouvelle partie, 1..8 = charger cet emplacement, -1 = rien
     bool netAuto;
     int testMenu;
     char testMenuPlan[16];   // test : "creer" / "rejoindre" depuis l'ecran COOP       // test : ecran de menu a ouvrir au demarrage       // reseau demarre d'office (ligne de commande -vccoop, ou Reseau=1) ; sinon par le menu COOP

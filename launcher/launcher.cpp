@@ -16,6 +16,8 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <algorithm>
 using std::min;
@@ -25,6 +27,7 @@ using std::max;
 #include <winhttp.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <string>
 #include <vector>
 #include <atomic>
@@ -68,6 +71,18 @@ static int g_launchMode;
 static std::wstring g_launchInfo;
 
 #define WM_APP_RELAUNCH (WM_APP + 1)
+#define WM_APP_GO (WM_APP + 2)          // invite : l'hote a lance la partie
+#define WM_APP_LOBBYEND (WM_APP + 3)    // invite : salon ferme ou refuse (wParam : 1 = refuse)
+
+// Salon : etat partage entre la fenetre et les fils reseau (sous g_lcs)
+enum { LB_NONE, LB_HOST, LB_CONNECTING, LB_GUEST };
+struct LobbyPeer { int id; std::string name, skin; bool ready; int mods; int ping; };   // mods : -1 sans objet, 0..100, -2 erreur
+static std::atomic<int> g_lobby(LB_NONE);
+static CRITICAL_SECTION g_lcs;
+static std::vector<LobbyPeer> g_peers;
+static int g_myId, g_lobbyChoice;                  // choix de l'hote : 0 = nouvelle partie, sinon index dans g_saves + 1
+static std::string g_lobbyChoiceLabel;              // invite : sauvegarde choisie par l'hote ("" = nouvelle partie)
+static std::atomic<int> g_myMods(-1);
 
 static std::wstring g_testLog;          // /testfenetre : fenetre hors ecran, sans activation, journal puis sortie
 static int g_ulwOk = -1, g_frames;
@@ -517,6 +532,13 @@ static void UpdateButtons()
     for (int i = 0; i < B_COUNT; i++) g_btn[i].visible = true;
     g_btn[B_HOST].visible = g_btn[B_JOIN].visible = g_btn[B_PLAY].visible = g_btn[B_EXE].visible = menu;
     g_btn[B_HOST].enabled = g_btn[B_JOIN].enabled = g_btn[B_PLAY].enabled = menu && exeOk && !busy && !g_localVer.empty();
+    if (g_lobby != LB_NONE) {
+        extern bool LobbyCanStart();
+        g_btn[B_PLAY].visible = false;
+        g_btn[B_EXE].enabled = false;
+        g_btn[B_JOIN].enabled = menu;
+        g_btn[B_HOST].enabled = menu && (g_lobby == LB_HOST ? LobbyCanStart() : g_lobby == LB_GUEST);
+    }
     g_btn[B_EXE].enabled = menu && !busy;
     g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = true;
 }
@@ -636,7 +658,9 @@ static void DrawBar(Graphics &g, RectF r, float p)
 // ---------------------------------------------------------------- options (vccoop.ini du jeu)
 // Les memes cles que le menu COOP du jeu (menu.cpp SaveIni) et que dllmain.cpp LoadConfig, memes valeurs par defaut ;
 // ecrites tout de suite, prises au prochain lancement. Onglets RENDU et EFFETS : seulement avec Rendu=9 (Direct3D 9).
-enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_COUNT };
+enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_COUNT };
+static void DrawLobby(Graphics &g);
+static bool LobbyClick(float x, float y);
 enum { O_TOGGLE, O_CHOICE };
 enum { W_ALL, W_HOST, W_GUEST };
 struct Opt {
@@ -751,25 +775,30 @@ static std::string GameIni() { return Narrow(g_gameDir + L"vccoop.ini"); }
 static int OptGet(const Opt &o) { return GetPrivateProfileIntA("VCCoop", o.key, o.def, GameIni().c_str()); }
 static void OptSet(const Opt &o, int v) { char b[16]; wsprintfA(b, "%d", v); WritePrivateProfileStringA("VCCoop", o.key, b, GameIni().c_str()); }
 static bool Modern() { return g_gameDir.empty() || GetPrivateProfileIntA("VCCoop", "Rendu", 9, GameIni().c_str()) == 9; }
-static bool TabVisible(int t) { return (t != TAB_RENDER && t != TAB_FX) || Modern(); }
+static bool TabVisible(int t)
+{
+    if (t == TAB_LOBBY) return g_lobby != LB_NONE;
+    return (t != TAB_RENDER && t != TAB_FX) || Modern();
+}
 static const wchar_t *TabName(int t)
 {
-    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP" };
+    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON" }, *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY" };
     return g_fr ? fr[t] : en[t];
 }
 static void LayoutTabs()
 {
     float x = 440;
-    for (int t = 0; t < TAB_COUNT; t++) {
+    static const int order[] = { TAB_LOBBY, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP };
+    for (int t : order) {
         if (!TabVisible(t)) { g_tabR[t] = RectF(0, 0, 0, 0); continue; }
         float w = 22 + 8.2f * (float)wcslen(TabName(t));
         g_tabR[t] = RectF(x, 78, w, 26);
         x += w + 6;
     }
-    if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = TAB_VIDEO;
+    if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = -1;
 }
 static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t) r.push_back(i); return r; }
-static float MaxScroll(int t) { return max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
+static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
 
 static int ValueIndex(const Opt &o, int v)
 {
@@ -825,6 +854,7 @@ static void DrawTabs(Graphics &g)
 static void DrawOptions(Graphics &g)
 {
     if (g_tab < 0 || g_gameDir.empty()) return;
+    if (g_tab == TAB_LOBBY) { DrawLobby(g); return; }
     GraphicsPath pp;
     RoundRect(pp, kOptPanel, 18);
     SolidBrush bg(Color(250, 252, 249, 251));
@@ -897,7 +927,7 @@ static void DrawOptions(Graphics &g)
 static void HitOption(float x, float y, int *row, int *part)
 {
     *row = -1; *part = 0;
-    if (g_tab < 0 || !kOptList.Contains(x, y)) return;
+    if (g_tab < 0 || g_tab == TAB_LOBBY || !kOptList.Contains(x, y)) return;
     std::vector<int> rows = TabRows(g_tab);
     int k = (int)((y - kOptList.Y + g_scroll[g_tab]) / kRowH);
     if (k < 0 || k >= (int)rows.size()) return;
@@ -951,8 +981,14 @@ static void DrawUI(Graphics &g)
         if (prog != -1.0f) DrawBar(g, RectF(96, 238, 264, 5), prog);
         DrawField(g, 0, T(L"PSEUDO", L"NICKNAME"));
         DrawField(g, 1, T(L"ADRESSE DE L'H\u00D4TE", L"HOST ADDRESS"));
-        DrawButton(g, B_HOST, T(L"H\u00C9BERGER", L"HOST"), true);
-        DrawButton(g, B_JOIN, T(L"REJOINDRE", L"JOIN"), false);
+        extern bool LobbyMeReady();
+        extern bool g_joinFallback;
+        const wchar_t *hostLabel = T(L"H\u00C9BERGER", L"HOST"), *joinLabel = g_joinFallback ? T(L"REJOINDRE EN JEU", L"JOIN IN GAME") : T(L"REJOINDRE", L"JOIN");
+        if (g_lobby == LB_HOST) { hostLabel = T(L"LANCER", L"START"); joinLabel = T(L"FERMER LE SALON", L"CLOSE LOBBY"); }
+        else if (g_lobby == LB_GUEST) { hostLabel = LobbyMeReady() ? T(L"PR\u00CAT \u2713", L"READY \u2713") : T(L"PR\u00CAT ?", L"READY?"); joinLabel = T(L"QUITTER", L"LEAVE"); }
+        else if (g_lobby == LB_CONNECTING) { hostLabel = T(L"CONNEXION\u2026", L"CONNECTING\u2026"); joinLabel = T(L"ANNULER", L"CANCEL"); }
+        DrawButton(g, B_HOST, hostLabel, true);
+        DrawButton(g, B_JOIN, joinLabel, false);
         DrawButton(g, B_PLAY, T(L"JOUER (MENU COOP)", L"PLAY (COOP MENU)"), false);
         // exe cible
         std::wstring exeLine;
@@ -1062,7 +1098,7 @@ static BOOL CALLBACK FindGameWindow(HWND h, LPARAM lp)
     return TRUE;
 }
 
-static void Launch(int mode)
+static void Launch(int mode, const std::wstring &extra = L"")
 {
     if (g_exeKind != EXE_OK || g_busy) return;
     std::wstring addr = Trim(g_fields[1].text);
@@ -1075,6 +1111,7 @@ static void Launch(int mode)
     std::wstring args;
     if (mode == 1) args = L"-vccoop hote";
     else if (mode == 2) args = L"-vccoop invite " + addr;
+    if (!extra.empty()) args += L" " + extra;
     // Lance comme un double-clic dans l'explorateur : les modes de compatibilite de l'exe (Windows XP, "executer en
     // tant qu'administrateur") exigent parfois l'administrateur ; CreateProcess echoue alors (erreur 740), ShellExecuteEx
     // affiche la demande de Windows.
@@ -1107,11 +1144,770 @@ static void Launch(int mode)
     g_state = ST_LAUNCH;
 }
 
+
+// ---------------------------------------------------------------- salon
+// Le lanceur de l'hote ouvre un salon en TCP sur le port du jeu (celui de vccoop-joueur.ini / vccoop.ini). Chaque
+// connexion commence par 4 octets :
+//  - "VCL1" : salon. Messages [u16 longueur][u8 type][...] : HELLO (version, pseudo, tenue) -> WELCOME (numero) ou
+//    REJECT (raison) ; STATE (joueurs : pret, % des mods, ping ; choix de partie) ; READY ; PROGRESS ; PING / PONG ;
+//    GO (l'hote lance : chaque lanceur demarre son jeu, l'hote avec -vccoop-partie, les invites avec -vccoop invite).
+//  - "VCM1" : mods partages, meme protocole que le mod en jeu (mods.cpp) : manifeste (chemin, taille, empreinte FNV-1a)
+//    puis "GET " par fichier. L'invite telecharge dans son VCCoop\mods avant le lancement ; son % part a l'hote, qui le
+//    montre a tous.
+// Le lanceur ferme le port juste avant de lancer le jeu (qui ouvre les memes).
+enum { LB_PROTO = 1, M_HELLO = 1, M_WELCOME, M_REJECT, M_STATE, M_READY, M_PROGRESS, M_GO, M_PING, M_PONG, M_CHOICE_UNUSED };
+struct SaveInfo { int slot; std::string label; };
+static std::vector<SaveInfo> g_saves;
+static SOCKET g_listen = INVALID_SOCKET, g_guestSock = INVALID_SOCKET;
+struct Conn { SOCKET s; int id; DWORD pingAt; };
+static std::vector<Conn> g_conns;                   // hote : invites du salon (sous g_lcs)
+static std::atomic<bool> g_meReady(false), g_goSent(false);
+bool g_joinFallback;                                 // invite : pas de salon chez l'hote -> "Rejoindre en jeu"
+static std::wstring g_lobbyAddr;
+static int g_lobbyPort = 7790;
+static std::wstring g_testSalon;                     // /testsalon hote|invite <journal>
+static std::wstring g_testSalonLog;
+
+static void TestLog(const char *fmt, ...)
+{
+    if (g_testSalonLog.empty()) return;
+    char b[512];
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnprintf_s(b, _countof(b), _TRUNCATE, fmt, ap);
+    va_end(ap);
+    FILE *f = _wfopen(g_testSalonLog.c_str(), L"a");
+    if (f) { fprintf(f, "[%lu] %s\n", GetTickCount(), b); fclose(f); }
+}
+
+struct Wr {
+    std::string d;
+    void u8(int v) { d += (char)(uint8_t)v; }
+    void u16(int v) { uint16_t x = (uint16_t)v; d.append((const char *)&x, 2); }
+    void u32(uint32_t v) { d.append((const char *)&v, 4); }
+    void str(const std::string &s) { size_t n = min<size_t>(s.size(), 255); u8((int)n); d.append(s.data(), n); }
+};
+struct Rd {
+    const std::string &d; size_t p = 0; bool ok = true;
+    Rd(const std::string &x) : d(x) {}
+    int u8() { if (p + 1 > d.size()) { ok = false; return 0; } return (uint8_t)d[p++]; }
+    int u16() { if (p + 2 > d.size()) { ok = false; return 0; } uint16_t x; memcpy(&x, d.data() + p, 2); p += 2; return x; }
+    uint32_t u32() { if (p + 4 > d.size()) { ok = false; return 0; } uint32_t x; memcpy(&x, d.data() + p, 4); p += 4; return x; }
+    std::string str() { int n = u8(); if (!ok || p + n > d.size()) { ok = false; return ""; } std::string s = d.substr(p, n); p += n; return s; }
+};
+
+static bool SendAllS(SOCKET s, const void *d, int n)
+{
+    const char *p = (const char *)d;
+    while (n > 0) { int r = send(s, p, n, 0); if (r <= 0) return false; p += r; n -= r; }
+    return true;
+}
+static bool RecvAllS(SOCKET s, void *d, int n)
+{
+    char *p = (char *)d;
+    while (n > 0) { int r = recv(s, p, n, 0); if (r <= 0) return false; p += r; n -= r; }
+    return true;
+}
+static bool SendMsg(SOCKET s, const Wr &w)
+{
+    uint16_t n = (uint16_t)w.d.size();
+    return SendAllS(s, &n, 2) && SendAllS(s, w.d.data(), n);
+}
+static bool RecvMsg(SOCKET s, std::string &out)
+{
+    uint16_t n;
+    if (!RecvAllS(s, &n, 2)) return false;
+    out.resize(n);
+    return n == 0 || RecvAllS(s, &out[0], n);
+}
+
+static int LobbyPort()
+{
+    std::string pj = Narrow(PlayerIni()), main = Narrow(g_gameDir + L"vccoop.ini");
+    int port = GetPrivateProfileIntA("VCCoop", "Port", 7790, main.c_str());
+    return GetPrivateProfileIntA("VCCoop", "Port", port, pj.c_str());
+}
+static std::string MySkin()
+{
+    char v[64];
+    std::string pj = Narrow(PlayerIni()), main = Narrow(g_gameDir + L"vccoop.ini");
+    GetPrivateProfileStringA("VCCoop", "Tenue", "", v, sizeof(v), main.c_str());
+    GetPrivateProfileStringA("VCCoop", "Tenue", v, v, sizeof(v), pj.c_str());
+    return v;
+}
+static std::string MyName() { std::wstring n = Trim(g_fields[0].text); return Narrow(n.empty() ? L"Tommy" : n); }
+static bool SharedModsOn() { return GetPrivateProfileIntA("VCCoop", "ModsPartages", 1, Narrow(g_gameDir + L"vccoop.ini").c_str()) != 0; }
+
+// --- sauvegardes (hote) : <jeu>\GTA Vice City User Files (SauvegardesLocales=1) ou Mes documents\GTA Vice City User Files
+static void ReadSaves()
+{
+    g_saves.clear();
+    std::wstring dir;
+    if (GetPrivateProfileIntA("VCCoop", "SauvegardesLocales", 1, Narrow(g_gameDir + L"vccoop.ini").c_str())) dir = g_gameDir + L"GTA Vice City User Files\\";
+    else {
+        wchar_t docs[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathW(NULL, CSIDL_PERSONAL, NULL, 0, docs))) dir = std::wstring(docs) + L"\\GTA Vice City User Files\\";
+    }
+    for (int slot = 1; slot <= 8; slot++) {
+        std::vector<unsigned char> d;
+        wchar_t name[32];
+        swprintf_s(name, L"GTAVCsf%d.b", slot);
+        if (!ReadAll(dir + name, d) || d.size() < 0x44) continue;
+        std::wstring title((const wchar_t *)(d.data() + 4), 24);   // nom de la sauvegarde (24 caracteres larges)
+        title = title.c_str();
+        const SYSTEMTIME *st = (const SYSTEMTIME *)(d.data() + 0x34);
+        wchar_t lab[128];
+        swprintf_s(lab, L"%d \u00B7 %s \u00B7 %02d/%02d %02d:%02d", slot, Trim(title).c_str(), st->wDay, st->wMonth, st->wHour, st->wMinute);
+        g_saves.push_back({ slot, Narrow(lab, CP_UTF8) });
+    }
+}
+static std::string ChosenSave()   // sauvegarde choisie ("" = nouvelle partie)
+{
+    if (g_lobby == LB_GUEST) return g_lobbyChoiceLabel;
+    if (g_lobbyChoice <= 0 || g_lobbyChoice > (int)g_saves.size()) return "";
+    return g_saves[g_lobbyChoice - 1].label;
+}
+static std::string ChoiceLabel()   // dans la langue de chacun
+{
+    std::string save = ChosenSave();
+    if (save.empty()) return Narrow(T(L"Nouvelle partie", L"New game"), CP_UTF8);
+    return Narrow(T(L"Charger ", L"Load "), CP_UTF8) + save;
+}
+
+// --- mods (meme empreinte que mods.cpp)
+struct ModFile { std::string rel; uint32_t size, hash; };
+static std::string ModsDirA() { return Narrow(g_gameDir) + "VCCoop\\mods\\"; }
+static bool HashFileA(const std::string &path, uint32_t &size, uint32_t &hash)
+{
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    static uint8_t buf[65536];
+    uint32_t h = 2166136261u, n = 0;
+    size_t r;
+    while ((r = fread(buf, 1, sizeof(buf), f)) > 0) { for (size_t i = 0; i < r; i++) { h ^= buf[i]; h *= 16777619u; } n += (uint32_t)r; }
+    fclose(f);
+    size = n; hash = h;
+    return true;
+}
+static void ScanMods(const std::string &dir, const std::string &rel, std::vector<ModFile> &out)
+{
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA((dir + "*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+        std::string r = rel + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { ScanMods(dir + fd.cFileName + "\\", r + "\\", out); continue; }
+        size_t n = strlen(fd.cFileName);
+        if (n > 5 && !_stricmp(fd.cFileName + n - 5, ".part")) continue;
+        ModFile m;
+        m.rel = r;
+        if (r.size() < 200 && HashFileA(dir + fd.cFileName, m.size, m.hash) && m.size < 64u * 1024 * 1024) out.push_back(m);
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+}
+static bool SafeRelA(const std::string &r)
+{
+    if (r.empty() || r.size() > 200 || r[0] == '\\' || r[0] == '/' || r.find(':') != std::string::npos || r.find("..") != std::string::npos) return false;
+    for (char c : r) if ((unsigned char)c < 32) return false;
+    return true;
+}
+static std::vector<ModFile> g_hostMods;   // hote : manifeste servi
+static void ServeMods(SOCKET s)
+{
+    std::vector<ModFile> list;
+    EnterCriticalSection(&g_lcs);
+    list = g_hostMods;
+    LeaveCriticalSection(&g_lcs);
+    uint32_t count = (uint32_t)list.size();
+    SendAllS(s, &count, 4);
+    for (auto &m : list) {
+        uint16_t len = (uint16_t)m.rel.size();
+        SendAllS(s, &len, 2); SendAllS(s, m.rel.data(), len); SendAllS(s, &m.size, 4); SendAllS(s, &m.hash, 4);
+    }
+    std::vector<uint8_t> buf(65536);
+    for (;;) {
+        char cmd[4];
+        if (!RecvAllS(s, cmd, 4) || memcmp(cmd, "GET ", 4)) break;
+        uint16_t len;
+        if (!RecvAllS(s, &len, 2) || len > 200) break;
+        std::string rel(len, 0);
+        if (!RecvAllS(s, &rel[0], len) || !SafeRelA(rel)) break;
+        bool listed = false;
+        for (auto &m : list) if (m.rel == rel) listed = true;   // seulement les fichiers du manifeste
+        FILE *f = listed ? fopen((ModsDirA() + rel).c_str(), "rb") : NULL;
+        uint32_t size = 0;
+        if (f) { fseek(f, 0, SEEK_END); size = (uint32_t)ftell(f); fseek(f, 0, SEEK_SET); }
+        if (!SendAllS(s, &size, 4)) { if (f) fclose(f); break; }
+        bool ok = true;
+        if (f) {
+            size_t r;
+            while (ok && (r = fread(buf.data(), 1, buf.size(), f)) > 0) ok = SendAllS(s, buf.data(), (int)r);
+            fclose(f);
+        }
+        if (!ok) break;
+    }
+}
+
+// --- hote
+static void BroadcastState()
+{
+    Wr w;
+    w.u8(M_STATE);
+    EnterCriticalSection(&g_lcs);
+    w.u8((int)g_peers.size());
+    for (auto &p : g_peers) { w.u8(p.id); w.str(p.name); w.str(p.skin); w.u8(p.ready); w.u8(p.mods + 2); w.u16(min(p.ping, 9999)); }
+    w.str(ChosenSave());
+    for (auto &c : g_conns) SendMsg(c.s, w);
+    LeaveCriticalSection(&g_lcs);
+}
+static LobbyPeer *PeerById(int id) { for (auto &p : g_peers) if (p.id == id) return &p; return NULL; }
+static void DropConn(SOCKET s)
+{
+    EnterCriticalSection(&g_lcs);
+    bool listed = false;
+    for (size_t i = 0; i < g_conns.size(); i++)
+        if (g_conns[i].s == s) {
+            listed = true;
+            int id = g_conns[i].id;
+            g_conns.erase(g_conns.begin() + i);
+            for (size_t k = 0; k < g_peers.size(); k++) if (g_peers[k].id == id) { TestLog("salon : %s part", g_peers[k].name.c_str()); g_peers.erase(g_peers.begin() + k); break; }
+            break;
+        }
+    LeaveCriticalSection(&g_lcs);
+    (void)listed;
+    closesocket(s);
+}
+static void LobbySession(SOCKET s)
+{
+    std::string m;
+    if (!RecvMsg(s, m)) { closesocket(s); return; }
+    Rd r(m);
+    int type = r.u8(), proto = r.u8();
+    std::string ver = r.str(), name = r.str(), skin = r.str();
+    auto reject = [&](const std::string &why) { Wr w; w.u8(M_REJECT); w.str(why); SendMsg(s, w); closesocket(s); };
+    if (!r.ok || type != M_HELLO || proto != LB_PROTO) { reject("proto"); return; }
+    std::string mine = Narrow(g_localVer, CP_UTF8);
+    if (ver != mine) { reject("version " + mine); return; }
+    if (g_goSent || g_lobby != LB_HOST) { reject("started"); return; }
+    int id = -1;
+    EnterCriticalSection(&g_lcs);
+    for (int k = 1; k < 4 && id < 0; k++) if (!PeerById(k)) id = k;
+    if (id > 0) {
+        g_peers.push_back({ id, name, skin, false, SharedModsOn() ? 0 : -1, 0 });
+        g_conns.push_back({ s, id, 0 });
+    }
+    LeaveCriticalSection(&g_lcs);
+    if (id < 0) { reject("full"); return; }
+    { Wr w; w.u8(M_WELCOME); w.u8(id); SendMsg(s, w); }
+    TestLog("salon : %s arrive (joueur %d)", name.c_str(), id);
+    BroadcastState();
+    DWORD to = 60000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof(to));
+    while (RecvMsg(s, m)) {
+        Rd q(m);
+        int t = q.u8();
+        EnterCriticalSection(&g_lcs);
+        LobbyPeer *p = PeerById(id);
+        if (p && t == M_READY) { p->ready = q.u8() != 0; TestLog("salon : joueur %d pret=%d", id, (int)p->ready); }
+        else if (p && t == M_PROGRESS) { int v = q.u8(); p->mods = v == 255 ? -2 : v; }
+        else if (p && t == M_PONG) { uint32_t sent = q.u32(); p->ping = (int)(GetTickCount() - sent); }
+        LeaveCriticalSection(&g_lcs);
+        if (t == M_READY || t == M_PROGRESS) BroadcastState();
+    }
+    DropConn(s);   // (ferme la socket)
+    BroadcastState();
+}
+static DWORD WINAPI ConnThread(void *param)
+{
+    SOCKET s = (SOCKET)param;
+    DWORD to = 30000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof(to));
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&to, sizeof(to));
+    char magic[4];
+    if (RecvAllS(s, magic, 4)) {
+        if (!memcmp(magic, "VCM1", 4)) { ServeMods(s); closesocket(s); return 0; }
+        if (!memcmp(magic, "VCL1", 4)) {
+            DWORD sto = 3000;   // salon : un invite bloque ne fige pas la fenetre (envois sous g_lcs)
+            setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&sto, sizeof(sto));
+            LobbySession(s);   // (ferme la socket)
+            return 0;
+        }
+    }
+    closesocket(s);
+    return 0;
+}
+static DWORD WINAPI AcceptThread(void *)
+{
+    for (;;) {
+        SOCKET c = accept(g_listen, NULL, NULL);
+        if (c == INVALID_SOCKET) break;
+        HANDLE t = CreateThread(NULL, 0, ConnThread, (void *)c, 0, NULL);
+        if (t) CloseHandle(t); else closesocket(c);
+    }
+    return 0;
+}
+static std::wstring LocalAddresses()
+{
+    char host[256];
+    std::wstring out;
+    if (gethostname(host, sizeof(host)) != 0) return out;
+    addrinfo hints = {}, *res = NULL;
+    hints.ai_family = AF_INET;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0) return out;
+    int n = 0;
+    for (addrinfo *a = res; a && n < 3; a = a->ai_next) {
+        char ip[64];
+        inet_ntop(AF_INET, &((sockaddr_in *)a->ai_addr)->sin_addr, ip, sizeof(ip));
+        if (!strncmp(ip, "127.", 4)) continue;
+        if (!out.empty()) out += L" \u00B7 ";
+        out += Widen(ip);
+        n++;
+    }
+    freeaddrinfo(res);
+    return out;
+}
+static std::wstring g_myAddresses;
+
+static void LobbyHost()
+{
+    SavePlayer();
+    g_lobbyPort = LobbyPort();
+    g_listen = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in a = {};
+    a.sin_family = AF_INET;
+    a.sin_addr.s_addr = INADDR_ANY;
+    a.sin_port = htons((u_short)g_lobbyPort);
+    if (bind(g_listen, (sockaddr *)&a, sizeof(a)) != 0 || listen(g_listen, 8) != 0) {
+        int e = WSAGetLastError();
+        closesocket(g_listen);
+        g_listen = INVALID_SOCKET;
+        SetStatus(K_ERR, T(L"Port %d occup\u00E9 (le jeu tourne d\u00E9j\u00E0 ? erreur %d)", L"Port %d in use (is the game already running? error %d)"), g_lobbyPort, e);
+        return;
+    }
+    std::vector<ModFile> mods;
+    if (SharedModsOn()) ScanMods(ModsDirA(), "", mods);
+    ReadSaves();
+    EnterCriticalSection(&g_lcs);
+    g_hostMods = mods;
+    g_peers.clear();
+    g_conns.clear();
+    g_peers.push_back({ 0, MyName(), MySkin(), true, -1, 0 });
+    g_lobbyChoice = 0;
+    LeaveCriticalSection(&g_lcs);
+    g_goSent = false;
+    g_myId = 0;
+    g_myAddresses = LocalAddresses();
+    g_lobby = LB_HOST;
+    g_tab = TAB_LOBBY;
+    LayoutTabs();
+    HANDLE t = CreateThread(NULL, 0, AcceptThread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+    SetStatus(K_OK, T(L"Salon ouvert \u00B7 port %d", L"Lobby open \u00B7 port %d"), g_lobbyPort);
+    TestLog("salon : ouvert sur le port %d, %d mods, %d sauvegardes", g_lobbyPort, (int)mods.size(), (int)g_saves.size());
+}
+
+bool LobbyCanStart()
+{
+    if (g_lobby != LB_HOST || g_goSent) return false;
+    bool ok = true;
+    EnterCriticalSection(&g_lcs);
+    for (auto &p : g_peers) if (p.id != 0 && (!p.ready || (p.mods != -1 && p.mods != 100))) ok = false;
+    LeaveCriticalSection(&g_lcs);
+    return ok;
+}
+bool LobbyMeReady() { return g_meReady; }
+
+static void LobbyClose()
+{
+    int was = g_lobby.exchange(LB_NONE);
+    if (g_listen != INVALID_SOCKET) { closesocket(g_listen); g_listen = INVALID_SOCKET; }
+    EnterCriticalSection(&g_lcs);
+    for (auto &c : g_conns) shutdown(c.s, SD_BOTH);   // les fils des sessions ferment leurs sockets
+    g_conns.clear();
+    g_peers.clear();
+    if (g_guestSock != INVALID_SOCKET) shutdown(g_guestSock, SD_BOTH);   // GuestThread la ferme
+    LeaveCriticalSection(&g_lcs);
+    g_meReady = false;
+    g_myMods = -1;
+    if (g_tab == TAB_LOBBY) g_tab = -1;
+    LayoutTabs();
+    (void)was;
+}
+
+static void HostStart()
+{
+    if (!LobbyCanStart()) return;
+    int slot = (g_lobbyChoice > 0 && g_lobbyChoice <= (int)g_saves.size()) ? g_saves[g_lobbyChoice - 1].slot : 0;
+    g_goSent = true;
+    Wr w;
+    w.u8(M_GO);
+    w.u8(slot);
+    EnterCriticalSection(&g_lcs);
+    for (auto &c : g_conns) SendMsg(c.s, w);
+    LeaveCriticalSection(&g_lcs);
+    TestLog("salon : GO (emplacement %d)", slot);
+    // Les invites ferment les premiers en recevant GO : leurs connexions quittent la liste. On attend (1,5 s au plus)
+    // pour que ce soit eux qui gardent le TIME_WAIT, et que le serveur de mods du jeu de l'hote retrouve son port.
+    for (int i = 0; i < 30; i++) {
+        EnterCriticalSection(&g_lcs);
+        bool empty = g_conns.empty();
+        LeaveCriticalSection(&g_lcs);
+        if (empty) break;
+        Sleep(50);
+    }
+    LobbyClose();
+    wchar_t extra[32];
+    if (slot > 0) swprintf_s(extra, L"-vccoop-partie %d", slot); else wcscpy_s(extra, L"-vccoop-partie nouvelle");
+    Launch(1, extra);
+}
+
+// --- invite
+static void GuestSend(const Wr &w)
+{
+    EnterCriticalSection(&g_lcs);
+    if (g_guestSock != INVALID_SOCKET) SendMsg(g_guestSock, w);
+    LeaveCriticalSection(&g_lcs);
+}
+static void SendProgress(int pct)
+{
+    g_myMods = pct;
+    Wr w; w.u8(M_PROGRESS); w.u8(pct < 0 ? 255 : pct);
+    GuestSend(w);
+}
+static SOCKET ConnectTo(const std::wstring &addr, int port, int timeoutMs)
+{
+    addrinfo hints = {}, *res = NULL;
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(Narrow(addr).c_str(), NULL, &hints, &res) != 0 || !res) return INVALID_SOCKET;
+    sockaddr_in a = *(sockaddr_in *)res->ai_addr;
+    freeaddrinfo(res);
+    a.sin_port = htons((u_short)port);
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    u_long nb = 1;
+    ioctlsocket(s, FIONBIO, &nb);
+    connect(s, (sockaddr *)&a, sizeof(a));
+    fd_set wr, ex;
+    FD_ZERO(&wr); FD_SET(s, &wr);
+    FD_ZERO(&ex); FD_SET(s, &ex);
+    timeval tv = { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
+    int err = 0, len = sizeof(err);
+    if (select(0, NULL, &wr, &ex, &tv) <= 0 || !FD_ISSET(s, &wr) || getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&err, &len) != 0 || err) { closesocket(s); return INVALID_SOCKET; }
+    nb = 0;
+    ioctlsocket(s, FIONBIO, &nb);
+    DWORD to = 30000;
+    setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, (const char *)&to, sizeof(to));
+    return s;
+}
+static DWORD WINAPI ModsDownloadThread(void *)
+{
+    if (!SharedModsOn()) { SendProgress(-1); return 0; }
+    SOCKET s = ConnectTo(g_lobbyAddr, g_lobbyPort, 5000);
+    DWORD to = 30000;
+    if (s != INVALID_SOCKET) setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof(to));
+    uint32_t count = 0;
+    std::vector<ModFile> list, want;
+    bool ok = s != INVALID_SOCKET && SendAllS(s, "VCM1", 4) && RecvAllS(s, &count, 4) && count <= 4096;
+    for (uint32_t i = 0; ok && i < count; i++) {
+        uint16_t len;
+        ModFile m;
+        ok = RecvAllS(s, &len, 2) && len <= 200;
+        if (!ok) break;
+        m.rel.resize(len);
+        ok = RecvAllS(s, &m.rel[0], len) && RecvAllS(s, &m.size, 4) && RecvAllS(s, &m.hash, 4);
+        if (ok && SafeRelA(m.rel)) list.push_back(m);
+    }
+    if (!ok) { if (s != INVALID_SOCKET) closesocket(s); SendProgress(-2); TestLog("mods : echec du manifeste"); return 0; }
+    std::vector<ModFile> local;
+    ScanMods(ModsDirA(), "", local);
+    uint64_t total = 0, done = 0;
+    for (auto &m : list) {
+        bool have = false;
+        for (auto &l : local) if (l.rel == m.rel && l.hash == m.hash && l.size == m.size) have = true;
+        if (!have) { want.push_back(m); total += m.size; }
+    }
+    TestLog("mods : manifeste %u fichiers, %d a telecharger (%llu octets)", count, (int)want.size(), total);
+    SendProgress(want.empty() ? 100 : 0);
+    std::vector<uint8_t> buf(65536);
+    int lastPct = 0;
+    DWORD lastSend = GetTickCount();
+    for (auto &m : want) {
+        uint16_t len = (uint16_t)m.rel.size();
+        uint32_t size;
+        if (!SendAllS(s, "GET ", 4) || !SendAllS(s, &len, 2) || !SendAllS(s, m.rel.data(), len) || !RecvAllS(s, &size, 4)) { ok = false; break; }
+        std::string path = ModsDirA() + m.rel;
+        for (size_t i = 1; i < path.size(); i++) if (path[i] == '\\') CreateDirectoryA(path.substr(0, i).c_str(), NULL);
+        FILE *f = fopen((path + ".part").c_str(), "wb");
+        uint32_t left = size;
+        while (ok && left > 0) {
+            int n = left > buf.size() ? (int)buf.size() : (int)left;
+            ok = RecvAllS(s, buf.data(), n);
+            if (ok && f) fwrite(buf.data(), 1, n, f);
+            left -= n;
+            done += n;
+            int pct = total ? (int)(done * 100 / total) : 100;
+            if (pct >= 100) pct = 99;
+            if (pct != lastPct && GetTickCount() - lastSend > 150) { SendProgress(pct); lastPct = pct; lastSend = GetTickCount(); }
+        }
+        if (f) fclose(f);
+        if (!ok || !f) { DeleteFileA((path + ".part").c_str()); ok = false; break; }
+        DeleteFileA(path.c_str());
+        MoveFileA((path + ".part").c_str(), path.c_str());
+    }
+    SendAllS(s, "END ", 4);
+    closesocket(s);
+    SendProgress(ok ? 100 : -2);
+    TestLog("mods : %s (%llu/%llu octets)", ok ? "a jour" : "ECHEC", done, total);
+    return 0;
+}
+static DWORD WINAPI GuestThread(void *)
+{
+    SOCKET s = ConnectTo(g_lobbyAddr, g_lobbyPort, 5000);
+    if (s == INVALID_SOCKET) { TestLog("salon : pas de salon chez l'hote"); PostMessageW(g_wnd, WM_APP_LOBBYEND, 2, 0); return 0; }
+    Wr hello;
+    hello.u8(M_HELLO); hello.u8(LB_PROTO); hello.str(Narrow(g_localVer, CP_UTF8)); hello.str(MyName()); hello.str(MySkin());
+    std::string m;
+    if (!SendAllS(s, "VCL1", 4) || !SendMsg(s, hello) || !RecvMsg(s, m)) { closesocket(s); PostMessageW(g_wnd, WM_APP_LOBBYEND, 2, 0); return 0; }
+    Rd r(m);
+    int t = r.u8();
+    if (t == M_REJECT) {
+        static std::string why;
+        why = r.str();
+        closesocket(s);
+        TestLog("salon : refuse (%s)", why.c_str());
+        PostMessageW(g_wnd, WM_APP_LOBBYEND, 1, (LPARAM)why.c_str());
+        return 0;
+    }
+    if (t != M_WELCOME) { closesocket(s); PostMessageW(g_wnd, WM_APP_LOBBYEND, 2, 0); return 0; }
+    g_myId = r.u8();
+    EnterCriticalSection(&g_lcs);
+    g_guestSock = s;
+    LeaveCriticalSection(&g_lcs);
+    g_lobby = LB_GUEST;
+    SetStatus(K_OK, T(L"Dans le salon de %s", L"In %s's lobby"), g_lobbyAddr.c_str());
+    TestLog("salon : entre (joueur %d)", g_myId);
+    HANDLE mt = CreateThread(NULL, 0, ModsDownloadThread, NULL, 0, NULL);
+    if (mt) CloseHandle(mt);
+    DWORD to = 60000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char *)&to, sizeof(to));
+    bool go = false;
+    while (!go && RecvMsg(s, m)) {
+        Rd q(m);
+        int type = q.u8();
+        if (type == M_STATE) {
+            int n = q.u8();
+            std::vector<LobbyPeer> peers;
+            for (int i = 0; i < n; i++) {
+                LobbyPeer p;
+                p.id = q.u8(); p.name = q.str(); p.skin = q.str(); p.ready = q.u8() != 0; p.mods = q.u8() - 2; p.ping = q.u16();
+                peers.push_back(p);
+            }
+            std::string label = q.str();
+            if (q.ok) { EnterCriticalSection(&g_lcs); g_peers = peers; g_lobbyChoiceLabel = label; LeaveCriticalSection(&g_lcs); }
+        } else if (type == M_PING) {
+            Wr w; w.u8(M_PONG); w.u32(q.u32());
+            GuestSend(w);
+        } else if (type == M_GO) {
+            go = true;
+            TestLog("salon : GO recu");
+            PostMessageW(g_wnd, WM_APP_GO, q.u8(), 0);
+        }
+    }
+    EnterCriticalSection(&g_lcs);
+    g_guestSock = INVALID_SOCKET;
+    LeaveCriticalSection(&g_lcs);
+    closesocket(s);
+    if (!go) PostMessageW(g_wnd, WM_APP_LOBBYEND, 0, 0);
+    return 0;
+}
+static void LobbyJoin()
+{
+    std::wstring addr = Trim(g_fields[1].text);
+    if (addr.empty()) { SetStatus(K_ERR, T(L"Entre l'adresse de l'h\u00F4te", L"Enter the host address")); g_focus = 1; return; }
+    size_t colon = addr.find(L':');   // adresse:port accepte
+    g_lobbyPort = LobbyPort();
+    g_lobbyAddr = addr;
+    if (colon != std::wstring::npos) { g_lobbyAddr = addr.substr(0, colon); g_lobbyPort = _wtoi(addr.c_str() + colon + 1); }
+    SavePlayer();
+    g_meReady = false;
+    g_myMods = -1;
+    EnterCriticalSection(&g_lcs);
+    g_peers.clear();
+    g_lobbyChoiceLabel.clear();
+    LeaveCriticalSection(&g_lcs);
+    g_lobby = LB_CONNECTING;
+    g_tab = TAB_LOBBY;
+    LayoutTabs();
+    SetStatus(K_NORMAL, T(L"Connexion au salon de %s\u2026", L"Connecting to %s's lobby\u2026"), g_lobbyAddr.c_str());
+    HANDLE t = CreateThread(NULL, 0, GuestThread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+}
+static void GuestToggleReady()
+{
+    g_meReady = !g_meReady;
+    Wr w; w.u8(M_READY); w.u8(g_meReady ? 1 : 0);
+    GuestSend(w);
+}
+
+// Toutes les 2 s, l'hote mesure le ping de chacun.
+static void LobbyTick()
+{
+    static DWORD last;
+    DWORD now = GetTickCount();
+    if (g_lobby != LB_HOST || now - last < 2000) return;
+    last = now;
+    Wr w; w.u8(M_PING); w.u32(now);
+    EnterCriticalSection(&g_lcs);
+    for (auto &c : g_conns) SendMsg(c.s, w);
+    LeaveCriticalSection(&g_lcs);
+    BroadcastState();
+}
+
+// --- dessin du salon (panneau de droite)
+static const Color kPlayerCol[4] = { Color(255, 70, 130, 230), Color(255, 255, 150, 50), Color(255, 60, 180, 90), Color(255, 160, 90, 210) };
+static const RectF kChoiceR(456, 452, 480, 30);
+
+static void DrawLobby(Graphics &g)
+{
+    GraphicsPath pp;
+    RoundRect(pp, kOptPanel, 18);
+    SolidBrush bg(Color(250, 252, 249, 251));
+    g.FillPath(&bg, &pp);
+    Pen border(Color(150, 255, 255, 255), 1.5f);
+    g.DrawPath(&border, &pp);
+
+    std::vector<LobbyPeer> peers;
+    std::string choice;
+    EnterCriticalSection(&g_lcs);
+    peers = g_peers;
+    choice = ChoiceLabel();
+    LeaveCriticalSection(&g_lcs);
+    int lobby = g_lobby;
+
+    wchar_t head[96];
+    swprintf_s(head, T(L"%d / 4 joueurs", L"%d / 4 players"), (int)peers.size());
+    Text(g, T(L"SALON", L"LOBBY"), RectF(460, 126, 200, 26), 17, FontStyleBold, kInk, StringAlignmentNear);
+    Text(g, head, RectF(700, 126, 232, 26), 13, FontStyleBold, kGrey, StringAlignmentFar);
+    std::wstring sub;
+    if (lobby == LB_HOST) sub = std::wstring(T(L"Adresse \u00E0 donner : ", L"Address to share: ")) + (g_myAddresses.empty() ? L"?" : g_myAddresses) + L" \u00B7 port " + std::to_wstring(g_lobbyPort);
+    else sub = std::wstring(T(L"H\u00F4te : ", L"Host: ")) + g_lobbyAddr + L":" + std::to_wstring(g_lobbyPort);
+    Text(g, sub, RectF(460, 150, 476, 20), 11.5f, FontStyleRegular, kGrey, StringAlignmentNear);
+
+    if (lobby == LB_CONNECTING) {
+        Text(g, T(L"Connexion au salon\u2026", L"Connecting to the lobby\u2026"), RectF(460, 280, 476, 30), 16, FontStyleBold, kInk);
+        DrawBar(g, RectF(560, 320, 276, 5), -2);
+    }
+    for (int i = 0; i < 4 && lobby != LB_CONNECTING; i++) {
+        RectF r(456, 178 + i * 64.0f, 480, 56);
+        GraphicsPath rp;
+        RoundRect(rp, r, 12);
+        if (i >= (int)peers.size()) {
+            Pen dash(Color(255, 236, 214, 224), 1.4f);
+            dash.SetDashStyle(DashStyleDash);
+            g.DrawPath(&dash, &rp);
+            Text(g, T(L"En attente d'un joueur\u2026", L"Waiting for a player\u2026"), r, 12.5f, FontStyleRegular, Color(255, 200, 186, 196));
+            continue;
+        }
+        const LobbyPeer &p = peers[i];
+        bool me = p.id == g_myId;
+        SolidBrush rb(me ? Color(255, 255, 240, 246) : Color(255, 255, 255, 255));
+        g.FillPath(&rb, &rp);
+        Pen rpen(me ? Color(255, 255, 170, 200) : Color(255, 240, 226, 232), 1.2f);
+        g.DrawPath(&rpen, &rp);
+        // pastille (portrait du skin a l'etape 3) : couleur du joueur en jeu et initiale
+        SolidBrush av(kPlayerCol[p.id & 3]);
+        g.FillEllipse(&av, r.X + 10, r.Y + 8, 40.0f, 40.0f);
+        std::wstring nm = Widen(p.name, CP_UTF8);
+        Text(g, nm.empty() ? L"?" : nm.substr(0, 1), RectF(r.X + 10, r.Y + 8, 40, 40), 18, FontStyleBold, Color(255, 255, 255, 255));
+        Text(g, nm, RectF(r.X + 60, r.Y + 7, 220, 22), 15, FontStyleBold, kInk, StringAlignmentNear);
+        std::wstring line;
+        if (p.id == 0) line = T(L"H\u00F4te", L"Host");
+        else line = p.ready ? T(L"Pr\u00EAt \u2713", L"Ready \u2713") : T(L"Pas pr\u00EAt", L"Not ready");
+        Text(g, line, RectF(r.X + 60, r.Y + 29, 90, 20), 12, FontStyleBold, p.id == 0 ? kPink : p.ready ? Color(255, 38, 150, 96) : kGrey, StringAlignmentNear);
+        // mods
+        if (p.id != 0) {
+            std::wstring ml;
+            if (p.mods == -1) ml = T(L"Mods : non", L"Mods: off");
+            else if (p.mods == -2) ml = T(L"Mods : \u00E9chec", L"Mods: failed");
+            else if (p.mods >= 100) ml = T(L"Mods \u00E0 jour", L"Mods up to date");
+            else { wchar_t b[48]; swprintf_s(b, T(L"Mods %d %%", L"Mods %d%%"), p.mods); ml = b; }
+            Text(g, ml, RectF(r.X + 160, r.Y + 29, 110, 20), 12, FontStyleRegular, p.mods == -2 ? Color(255, 214, 48, 72) : kGrey, StringAlignmentNear);
+            if (p.mods >= 0 && p.mods < 100) DrawBar(g, RectF(r.X + 270, r.Y + 37, 90, 5), p.mods / 100.0f);
+        }
+        if (p.id != 0 || lobby == LB_GUEST) {
+            wchar_t pb[32];
+            swprintf_s(pb, L"%d ms", p.ping);
+            if (p.id != 0) Text(g, pb, RectF(r.X + r.Width - 90, r.Y + 8, 78, 40), 12, FontStyleRegular, kGrey, StringAlignmentFar);
+        }
+    }
+    // partie
+    Text(g, T(L"PARTIE", L"GAME"), RectF(460, 432, 200, 18), 10.5f, FontStyleBold, kGrey, StringAlignmentNear);
+    GraphicsPath cp;
+    RoundRect(cp, kChoiceR, 15);
+    SolidBrush cb(Color(255, 255, 255, 255));
+    g.FillPath(&cb, &cp);
+    Pen cpen(Color(255, 240, 196, 214), 1.2f);
+    g.DrawPath(&cpen, &cp);
+    bool host = lobby == LB_HOST;
+    if (host && (int)g_saves.size() > 0) {
+        Text(g, L"\u2039", RectF(kChoiceR.X + 6, kChoiceR.Y - 2, 20, kChoiceR.Height), 20, FontStyleBold, kPink);
+        Text(g, L"\u203A", RectF(kChoiceR.X + kChoiceR.Width - 26, kChoiceR.Y - 2, 20, kChoiceR.Height), 20, FontStyleBold, kPink);
+    }
+    Text(g, choice.empty() ? L"\u2026" : Widen(choice, CP_UTF8), RectF(kChoiceR.X + 28, kChoiceR.Y, kChoiceR.Width - 56, kChoiceR.Height), 13, FontStyleBold, kInk);
+    // mods de l'hote / les miens
+    std::wstring info;
+    if (host) {
+        EnterCriticalSection(&g_lcs);
+        size_t n = g_hostMods.size();
+        uint64_t bytes = 0;
+        for (auto &m : g_hostMods) bytes += m.size;
+        LeaveCriticalSection(&g_lcs);
+        wchar_t b[128];
+        if (!SharedModsOn()) wcscpy_s(b, T(L"Mods partag\u00E9s d\u00E9sactiv\u00E9s", L"Shared mods disabled"));
+        else swprintf_s(b, T(L"Mods partag\u00E9s : %d fichiers (%.1f Mo)", L"Shared mods: %d files (%.1f MB)"), (int)n, bytes / 1048576.0);
+        info = b;
+    }
+    Text(g, info, RectF(460, 490, 476, 20), 12, FontStyleRegular, kGrey, StringAlignmentNear);
+    Pen sep(Color(255, 240, 214, 226), 1);
+    g.DrawLine(&sep, kOptPanel.X + 18, 532.0f, kOptPanel.X + kOptPanel.Width - 18, 532.0f);
+    const wchar_t *hint = host ? T(L"Quand tout le monde est pr\u00EAt et a les mods, \u00AB Lancer \u00BB d\u00E9marre le jeu de chacun, directement en partie.",
+                                   L"Once everyone is ready and has the mods, \"Start\" launches everyone's game, straight into the session.")
+                               : T(L"Clique sur \u00AB Pr\u00EAt \u00BB. Ton jeu d\u00E9marre tout seul quand l'h\u00F4te lance la partie.",
+                                   L"Click \"Ready\". Your game starts by itself when the host starts the session.");
+    FontFamily fam(L"Segoe UI");
+    Font font(&fam, 12, FontStyleRegular, UnitPixel);
+    StringFormat sf;
+    sf.SetLineAlignment(StringAlignmentCenter);
+    SolidBrush db(kGrey);
+    g.DrawString(hint, -1, &font, RectF(kOptPanel.X + 20, 536, kOptPanel.Width - 40, 44), &sf, &db);
+}
+
+static bool LobbyClick(float x, float y)
+{
+    if (g_lobby != LB_HOST || !kChoiceR.Contains(x, y) || g_saves.empty()) return kOptPanel.Contains(x, y);
+    int n = (int)g_saves.size() + 1;
+    int dir = x < kChoiceR.X + kChoiceR.Width / 2 ? -1 : 1;
+    EnterCriticalSection(&g_lcs);
+    g_lobbyChoice = (g_lobbyChoice + dir + n) % n;
+    LeaveCriticalSection(&g_lcs);
+    BroadcastState();
+    return true;
+}
+
 static void OnButton(int id)
 {
     switch (id) {
-    case B_HOST: Launch(1); break;
-    case B_JOIN: Launch(2); break;
+    case B_HOST:
+        if (g_lobby == LB_HOST) HostStart();
+        else if (g_lobby == LB_GUEST) GuestToggleReady();
+        else if (g_lobby == LB_NONE) LobbyHost();
+        break;
+    case B_JOIN:
+        if (g_lobby != LB_NONE) { LobbyClose(); SetStatus(K_NORMAL, L"VCCoop %s", g_localVer.c_str()); }
+        else if (g_joinFallback) { g_joinFallback = false; Launch(2); }
+        else LobbyJoin();
+        break;
     case B_PLAY: Launch(0); break;
     case B_EXE: ChooseExe(); break;
     case B_CLOSE: g_state = ST_CLOSING; break;
@@ -1122,6 +1918,7 @@ static void OnButton(int id)
 
 static void Tick()
 {
+    LobbyTick();
     static DWORD last = GetTickCount();
     DWORD now = GetTickCount();
     float dt = min((now - last) / 1000.0f, 0.1f);
@@ -1160,7 +1957,7 @@ static int HitButton(float x, float y)
 }
 static int HitField(float x, float y)
 {
-    if (g_state != ST_IDLE) return -1;
+    if (g_state != ST_IDLE || g_lobby != LB_NONE) return -1;
     for (int i = 0; i < 2; i++) if (g_fields[i].r.Contains(x, y)) return i;
     return -1;
 }
@@ -1173,6 +1970,30 @@ static void TypeChar(wchar_t ch)
     if (f.address) { if (!(iswalnum(ch) && ch < 128) && ch != L'.' && ch != L':' && ch != L'-' && ch != L'_') return; }
     else if (ch < 32 || ch > 126) return;   // police du jeu : ASCII
     f.text += ch;
+}
+
+// /testsalon hote|invite : l'hote ouvre le salon et lance des que tout le monde est pret ; l'invite rejoint, attend
+// ses mods, se met pret. Abandon au bout de 90 s.
+static void TestSalonStep()
+{
+    static DWORD start = GetTickCount(), allReadySince;
+    DWORD t = GetTickCount() - start;
+    if (g_state != ST_IDLE) return;
+    if (t > 90000) { TestLog("test : abandon (90 s)"); DestroyWindow(g_wnd); return; }
+    if (g_busy) return;
+    if (g_testSalon == L"hote") {
+        if (g_lobby == LB_NONE && t > 1500) { LobbyHost(); if (!g_saves.empty()) g_lobbyChoice = 1; }   // teste aussi le chargement
+        EnterCriticalSection(&g_lcs);
+        size_t n = g_peers.size();
+        LeaveCriticalSection(&g_lcs);
+        bool can = n >= 2 && LobbyCanStart();
+        if (!can) allReadySince = 0;
+        else if (!allReadySince) allReadySince = GetTickCount();
+        else if (GetTickCount() - allReadySince > 2000) HostStart();
+    } else {
+        if (g_lobby == LB_NONE && t > 3000 && !g_joinFallback) LobbyJoin();
+        if (g_lobby == LB_GUEST && g_myMods == 100 && !g_meReady) { TestLog("test : mods a jour, pret"); GuestToggleReady(); }
+    }
 }
 
 static void WriteTestLog(HWND h)
@@ -1190,6 +2011,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
     switch (m) {
     case WM_TIMER:
         if (wp == 3) { KillTimer(h, 3); Launch(g_testLaunch); return 0; }
+        if (wp == 4) { TestSalonStep(); return 0; }
         if (wp == 2) { WriteTestLog(h); DestroyWindow(h); return 0; }
         Tick();
         return 0;
@@ -1225,6 +2047,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         int row, part;
         HitOption(x, y, &row, &part);
         if (row >= 0) { OptStep(row, part < 0 ? -1 : 1); return 0; }
+        if (g_tab == TAB_LOBBY && LobbyClick(x, y)) return 0;
         if (g_tab >= 0 && kOptPanel.Contains(x, y)) return 0;
         ReleaseCapture();
         SendMessageW(h, WM_NCLBUTTONDOWN, HTCAPTION, 0);   // glisser la fenetre
@@ -1252,6 +2075,24 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         else if (wp == 27) g_focus = -1;
         else if (wp >= 32) TypeChar((wchar_t)wp);
         g_time = 0.2f;
+        return 0;
+    case WM_APP_GO:
+        LobbyClose();
+        Launch(2);
+        return 0;
+    case WM_APP_LOBBYEND:
+        if (g_lobby == LB_NONE) return 0;
+        LobbyClose();
+        if (wp == 1) {
+            std::string why = lp ? (const char *)lp : "";
+            if (!why.compare(0, 8, "version ")) SetStatus(K_ERR, T(L"Version différente de l'hôte (%S)", L"Different version from the host (%S)"), why.c_str() + 8);
+            else if (why == "full") SetStatus(K_ERR, T(L"Salon complet (4 joueurs)", L"Lobby is full (4 players)"));
+            else if (why == "started") { SetStatus(K_WARN, T(L"Partie déjà lancée : « Rejoindre en jeu »", L"Session already started: \"Join in game\"")); g_joinFallback = true; }
+            else SetStatus(K_ERR, T(L"Refusé par l'hôte", L"Refused by the host"));
+        } else if (wp == 2) {
+            SetStatus(K_WARN, T(L"Pas de salon chez l'hôte : « Rejoindre en jeu » s'il joue déjà", L"No lobby at the host: \"Join in game\" if they are already playing"));
+            g_joinFallback = true;
+        } else SetStatus(K_WARN, T(L"L'hôte a fermé le salon", L"The host closed the lobby"));
         return 0;
     case WM_APP_RELAUNCH: {
         STARTUPINFOW si = { sizeof(si) };
@@ -1312,6 +2153,9 @@ static void LoadBackground()
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
 {
     InitializeCriticalSection(&g_cs);
+    InitializeCriticalSection(&g_lcs);
+    WSADATA wsa;
+    WSAStartup(MAKEWORD(2, 2), &wsa);
     g_fr = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_FRENCH;
     wchar_t self[MAX_PATH];
     GetModuleFileNameW(NULL, self, MAX_PATH);
@@ -1332,6 +2176,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         if (!_wcsicmp(argv[i], L"/lang")) g_fr = !_wcsicmp(argv[i + 1], L"fr");
         if (!_wcsicmp(argv[i], L"/testfenetre")) g_testLog = argv[i + 1];
         if (!_wcsicmp(argv[i], L"/testlancer") && i + 2 < argc) { g_testLaunch = _wtoi(argv[i + 1]); g_testLog = argv[i + 2]; }
+        if (!_wcsicmp(argv[i], L"/testsalon") && i + 2 < argc) { g_testSalon = argv[i + 1]; g_testSalonLog = argv[i + 2]; g_testLog = g_testSalonLog + L".fin"; g_testLaunch = 99; }
     }
 
     GdiplusStartupInput gin;
@@ -1387,6 +2232,24 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         if (st == L"attente") { g_state = ST_LAUNCH; g_launchInfo = L"Tommy h\u00E9berge la partie"; g_time = 1.3f; }
         else if (st == L"sansexe") { g_exeKind = EXE_STEAM; g_localVer.clear(); SetStatus(K_ERR, T(L"Ce gta-vc.exe n'est pas la version 1.0", L"This gta-vc.exe is not version 1.0")); }
         else if (st == L"options" || st == L"coop") { g_tab = st == L"coop" ? TAB_COOP : TAB_VIDEO; g_optHot = g_tab == TAB_COOP ? TabRows(TAB_COOP)[0] : TabRows(TAB_VIDEO)[4]; g_optPart = 1; g_tabHot = TAB_FX; }
+        else if (st == L"salon" || st == L"saloninvite") {
+            bool host = st == L"salon";
+            g_lobby = host ? LB_HOST : LB_GUEST;
+            g_myId = host ? 0 : 2;
+            g_lobbyPort = 7790;
+            g_lobbyAddr = L"26.12.34.56";
+            g_myAddresses = L"192.168.1.20 \u00B7 26.12.34.56";
+            g_saves = { { 1, "1 \xC2\xB7 AU DEBUT... \xC2\xB7 25/09 21:51" } };
+            g_lobbyChoice = 1;
+            g_lobbyChoiceLabel = "1 \xC2\xB7 AU DEBUT... \xC2\xB7 25/09 21:51";
+            g_peers = { { 0, "JD", "", true, -1, 0 }, { 1, "GG", "", true, 100, 34 }, { 2, "Sam", "", false, 42, 61 } };
+            g_meReady = false;
+            g_tab = TAB_LOBBY;
+            LayoutTabs();
+            SetStatus(K_OK, host ? T(L"Salon ouvert \u00B7 port %d", L"Lobby open \u00B7 port %d") : T(L"Dans le salon de %s", L"In %s's lobby"), host ? L"7790" : L"26.12.34.56");
+            if (host) SetStatus(K_OK, T(L"Salon ouvert \u00B7 port 7790", L"Lobby open \u00B7 port 7790"));
+            g_localVer = L"2026.09.29m";
+        }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }
         else { g_localVer = g_localVer.empty() ? L"2026.09.29h" : g_localVer; SetStatus(K_OK, T(L"VCCoop %s \u00B7 \u00E0 jour", L"VCCoop %s \u00B7 up to date"), g_localVer.c_str()); g_hot = B_HOST; g_btn[B_HOST].hover = 1; }
         int rc = 1;
@@ -1440,7 +2303,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     Present();
     ShowWindow(g_wnd, test ? SW_SHOWNOACTIVATE : SW_SHOW);
     SetTimer(g_wnd, 1, 16, NULL);
-    if (test) SetTimer(g_wnd, g_testLaunch >= 0 ? 3 : 2, g_testLaunch >= 0 ? 3000 : 5000, NULL);
+    if (test && g_testSalon.empty()) SetTimer(g_wnd, g_testLaunch >= 0 ? 3 : 2, g_testLaunch >= 0 ? 3000 : 5000, NULL);
+    if (test && !g_testSalon.empty()) SetTimer(g_wnd, 4, 500, NULL);
     if (g_exeKind == EXE_OK) StartUpdate();
     else if (g_exeKind != EXE_MISSING && !test) BadExeMessage(g_exeKind);
 
