@@ -1341,6 +1341,29 @@ void InstallEnterHooks()
     o_GetExit = (PadBool_t)MakeDetour(0x4AA8F0, held, sizeof(held), (void *)h_GetExit);
 }
 
+// Invite : l'hote passe une porte (hotel, club...) : c'est son jeu qui change de zone, pas une commande de script,
+// donc rien ne nous parvenait. Un invite pose dans l'hotel au debut de la partie restait "a l'interieur" dehors
+// pendant 4 minutes (GG, 29/09 : sol brillant des interieurs sur la route, pas d'ombres). Si on etait dans la meme
+// zone que lui et a quelques metres (on franchit la porte ensemble), on le suit.
+static void FollowHostDoors(bool inGame)
+{
+    static int lastHostArea = -1;
+    const NetPlayer &h = g_players[0];
+    if (g_cfg.host || !inGame || !h.connected || !h.state.inGame) { lastHostArea = -1; return; }
+    int a = h.state.area;
+    if (a == lastHostArea) return;
+    void *me = FindPlayerPed();
+    int mine = *(int *)0x978810;   // CGame::currArea
+    if (lastHostArea >= 0 && me && mine == lastHostArea && mine != a && !*(bool *)0xA10AB2) {
+        float dx = h.state.pos[0] - Pos(me).x, dy = h.state.pos[1] - Pos(me).y;
+        if (dx * dx + dy * dy < 25.0f * 25.0f) {
+            MirrorFollowHostArea(a);
+            Log("coop : l'hote passe de la zone %d a la zone %d a cote de nous, on le suit", lastHostArea, a);
+        }
+    }
+    lastHostArea = a;
+}
+
 static void PassengerKey()
 {
     static bool wasDown;
@@ -1395,6 +1418,7 @@ void CoopFrame()
     MouseFocusFrame();
     PlayersFrame(inGame);
     PanelFrame(inGame);
+    FollowHostDoors(inGame);
     ShareWanted(inGame);
     if (inGame) { KeepAIOffPlayerCars(); HostPoliceChasesGuests(); GuestThreats(); }
     if (inGame) { CameraFrame(); PassengerShooting(); }
