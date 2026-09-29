@@ -100,6 +100,25 @@ static void __fastcall h_CarGenProcess(void *gen, void *edx)
     if (!OtherPopulates(p[0], p[1])) o_CarGenProcess(gen, edx);
 }
 
+// Portee des voitures garees : CCarGenerator::CheckIfWithinRangeOfAnyPlayers (0x5A6D00) ne fait naitre la voiture
+// qu'entre 90 et 110 m du joueur (x CCamera::m_fGenerationDistMultiplier, 0x7E477C). Ce multiplicateur, on l'agrandit
+// (ZonePopulation, DistanceAffichage : x1,83 par defaut) : la bande passait a 181-201 m, ou le sol du spot n'est pas
+// encore charge (CWorld::FindGroundZFor3DCoord echoue, la voiture n'est pas creee), et plus pres il est trop tard.
+// Aucune voiture garee n'apparaissait : PCJ-600 de PCJ Playground, motocross, etc. Le test de portee se fait donc
+// avec le multiplicateur d'origine du jeu.
+extern float g_genBoost;   // interp.cpp
+typedef bool(__fastcall *CarGenRange_t)(void *gen, void *edx);
+static CarGenRange_t o_CarGenRange;
+static bool __fastcall h_CarGenRange(void *gen, void *edx)
+{
+    float &mult = *(float *)0x7E477C;
+    float saved = mult;
+    if (g_genBoost > 1.0f) mult = saved / g_genBoost;
+    bool r = o_CarGenRange(gen, edx);
+    mult = saved;
+    return r;
+}
+
 // --- Reserves du jeu agrandies ---
 // CPools::Initialise (0x4C02xx) cree la reserve des personnages (140) et des vehicules (110) : joueurs, copies,
 // passants et voitures s'y partagent la place. Doublees (comme le font les "limit adjusters" en .asi), avant que le
@@ -140,6 +159,8 @@ void InstallPopulation()
     o_GenerateRandomCars = (GenCars_t)MakeDetour(0x4292A0, genPro, sizeof(genPro), (void *)h_GenerateRandomCars);
     static const uint8_t carGenPro[] = { 0x53, 0x56, 0x57, 0x55, 0x81, 0xEC, 0xC0, 0x00, 0x00, 0x00 };
     o_CarGenProcess = (CarGen_t)MakeDetour(0x5A71C0, carGenPro, sizeof(carGenPro), (void *)h_CarGenProcess);
+    static const uint8_t rangePro[] = { 0x0F, 0xB6, 0x05, 0xFB, 0x0A, 0xA1, 0x00, 0x53, 0x56 };   // movzx eax,[PlayerInFocus]
+    o_CarGenRange = (CarGenRange_t)MakeDetour(0x5A6D00, rangePro, sizeof(rangePro), (void *)h_CarGenRange);
 }
 
 // Une entite ambiante locale peut-elle etre retiree ? (jamais ce qu'un joueur ou le reseau utilise)

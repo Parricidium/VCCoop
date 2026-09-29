@@ -10,6 +10,7 @@
 #include "game.h"
 #include "vehicles.h"
 #include "conditions.h"
+#include "mirror.h"
 #include <math.h>
 #include <string.h>
 
@@ -170,9 +171,75 @@ struct MsgMarker { uint8_t type; uint8_t use3d; uint16_t pad; uint32_t id; float
 
 AutotestMarker g_mainMarker, g_missionMarker;
 
+// --- Cercles lumineux : DRAW_CORONA (024F), redessine chaque image par le script ---
+// Checkpoints des missions annexes (PCJ Playground, Trial by Dirt, Test Track, Chopper Checkpoint, RC...) : les invites
+// ne voyaient pas les cercles a traverser. L'hote envoie chaque cercle (5 Hz) ; l'invite le redessine chaque image
+// tant qu'il en recoit (CCoronas::RegisterCorona 0x5427A0, avec les memes constantes que le jeu, cas 0x5B de 0x457580).
+#pragma pack(push, 1)
+struct MsgCorona { uint8_t type, ctype, flare, r, g, b; uint16_t pad; uint32_t id; float x, y, z, size; };
+#pragma pack(pop)
+
+static void SendCorona(void *script, int ip)
+{
+    const uint32_t *u = (const uint32_t *)0x7D7438;   // ScriptParams : x y z taille type reflet r g b
+    static struct { uint32_t id, last; } seen[32];
+    uint32_t now = GetTickCount(), id = 0x80000000u | (uint32_t)ip;   // hors des adresses (identifiants du jeu)
+    int slot = -1;
+    for (int i = 0; i < 32; i++) if (seen[i].id == id) slot = i;
+    if (slot < 0) { slot = 0; for (int i = 1; i < 32; i++) if (seen[i].last < seen[slot].last) slot = i; seen[slot].id = id; seen[slot].last = 0; }
+    if (now - seen[slot].last < 200) return;
+    seen[slot].last = now;
+    MsgCorona m = { MSG_CORONA, (uint8_t)u[4], (uint8_t)u[5], (uint8_t)u[6], (uint8_t)u[7], (uint8_t)u[8], 0, id, F(0), F(1), F(2), F(3) };
+    NetSendToGuests(&m, sizeof(m));
+    static uint32_t lastLog;
+    if (g_cfg.logScripts && now - lastLog > 5000) {
+        lastLog = now;
+        Log("conditions : cercle %X (%.8s) en %.1f %.1f %.1f taille %.1f envoye", ip, (char *)script + 8, m.x, m.y, m.z, m.size);
+    }
+}
+
+static struct { uint32_t id, until; MsgCorona m; } g_coronas[32];
+
+void OnCorona(const uint8_t *data, int len)
+{
+    if (len < (int)sizeof(MsgCorona)) return;
+    const MsgCorona &m = *(const MsgCorona *)data;
+    uint32_t now = GetTickCount();
+    int slot = -1;
+    for (int i = 0; i < 32; i++) if (g_coronas[i].id == m.id) slot = i;
+    if (slot < 0) {
+        for (int i = 0; i < 32; i++) if (g_coronas[i].until < now) { slot = i; break; }
+        if (slot >= 0 && g_cfg.logScripts) Log("conditions : cercle de l'hote en %.1f %.1f %.1f (taille %.1f)", m.x, m.y, m.z, m.size);
+    }
+    if (slot < 0) return;
+    g_coronas[slot].id = m.id;
+    g_coronas[slot].until = now + 500;
+    g_coronas[slot].m = m;
+    if (m.z <= *(float *)0x689808)   // -100 : au sol (comme le jeu)
+        g_coronas[slot].m.z = ((float(__cdecl *)(float, float))0x4D5540)(m.x, m.y);
+}
+
+static void DrawCoronas()
+{
+    uint32_t now = GetTickCount();
+    for (auto &k : g_coronas) {
+        if (k.until < now) continue;
+        const MsgCorona &m = k.m;
+        float pos[3] = { m.x, m.y, m.z };
+        ((void(__cdecl *)(uint32_t, uint8_t, uint8_t, uint8_t, uint8_t, const float *, float, float, uint8_t, uint8_t, uint8_t,
+                          uint8_t, uint8_t, float, bool, float))0x5427A0)(
+            k.id, m.r, m.g, m.b, 255, pos, m.size, *(float *)0x6898F4, m.ctype, m.flare, 1, 0, 0, *(float *)0x6898A4, false,
+            *(float *)0x6898F0);
+    }
+}
+
 void ConditionsAfterCommand(void *script, uint16_t op, int ip)
 {
     if (!g_cfg.host) return;
+    if (op == 0x024F && Field<bool>(script, 0x85)) {   // DRAW_CORONA d'une mission reproduite (histoire)
+        if (!MirrorHostQuiet()) SendCorona(script, ip);
+        return;
+    }
     bool is2d = Is2D(op), is3d = Is3D(op);
     if (!is2d && !is3d) return;
     int sphere = P(is2d ? 5 : 7);
@@ -228,6 +295,7 @@ void OnMarker(const uint8_t *data, int len)
 void ConditionsFrame(bool inGame)
 {
     if (g_cfg.host || !inGame) return;
+    DrawCoronas();
     uint32_t now = GetTickCount();
     for (auto &k : g_markers) {
         if (k.until < now) continue;

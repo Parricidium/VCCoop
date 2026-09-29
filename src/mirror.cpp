@@ -201,9 +201,10 @@ static int g_hostMission;       // hote : son numero
 // Missions de l'hote qui ne sont pas reproduites chez les invites : les missions secondaires de vehicule (taxi,
 // ambulance, pompiers, justicier, pizza : chacun joue les siennes) et les achats d'immeubles (chacun achete les
 // siens, avec son argent).
-static bool IsSideMission(int m) { return m == 75 || m == 76 || m == 77 || m == 78 || m == 92; }
+static bool IsSideMission(int m) { return m == 75 || m == 76 || m == 77 || m == 78 || m == 92 || IsChallengeMission(m); }
 static bool IsBuyMission(int m) { return m >= 36 && m <= 50; }   // BUYPRO1..SKUMBUY (table de main.scm)
 static bool g_hostQuiet;        // hote : la mission en cours n'est pas reproduite
+bool MirrorHostQuiet() { return g_missionRunning && g_hostQuiet; }
 // Variables "par joueur" : jamais envoyees aux invites. Les drapeaux de possession des immeubles (ecrits par les
 // missions d'achat 39..50, releves dans main.scm, plus tout ce qu'une mission d'achat change chez l'hote).
 static uint8_t g_perPlayer[0x8620 / 4 / 8 + 1];

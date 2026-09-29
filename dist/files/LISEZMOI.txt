@@ -69,9 +69,13 @@ JOUER
   SensibiliteCamera=100 (en %).
 - La radio est celle du conducteur (station choisie ou eteinte).
 - Missions secondaires (taxi, ambulance, pompiers, vigilante, pizzas) : un
-  invite peut les jouer de son cote dans le bon vehicule.
-- L'argent donne par les missions va a tous (ArgentPartage), les etoiles de
-  police sont communes (RecherchePartagee).
+  invite peut les jouer de son cote dans le bon vehicule. Pareil pour les defis
+  a checkpoints (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper
+  Checkpoint, courses RC, Checkpoint Charlie) : chacun fait les siens.
+- Les cercles a traverser des missions de l'histoire (course de bateaux,
+  Kickstart...) s'affichent aussi chez les invites.
+- L'argent donne par les missions va a tous (ArgentPartage). Les etoiles de
+  police sont a chacun (RecherchePartagee=1 pour les partager).
 - Un invite mort ou arrete reapparait a l'hopital / au commissariat le plus
   proche, avec ses armes et son argent (GarderArmes).
 - Coupure reseau : l'invite se reconnecte tout seul, sans recharger.

@@ -475,6 +475,9 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
     case MSG_MARKER:
         OnMarker(buf, len);
         break;
+    case MSG_CORONA:
+        OnCorona(buf, len);
+        break;
     case MSG_PED_REMOVE:
         HandleEntityMsg(buf, len);
         break;
