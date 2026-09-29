@@ -390,8 +390,11 @@ void PopulationFrame(bool inGame)
         g_shared = want;
         Log(want ? "population : pres de l'hote" : "population : loin de l'hote");
     }
-    // Colle a l'hote : il ne fait plus naitre de passants (tous seraient dans la zone de l'hote, nes puis retires).
-    bool close = hostHere && !GuestSideMission() && d2 < 40.0f * 40.0f;
+    // Pres de l'hote (population partagee) : il ne fait plus rien naitre, c'est l'hote qui peuple tout. Avant, seulement
+    // a moins de 40 m : au-dela, son jeu faisait naitre passants et voitures a 30 m de lui, que l'on retirait aussitot
+    // (dans la zone de l'hote) ; entre-temps ils partaient chez l'hote, qui les voyait apparaitre et disparaitre pres
+    // de lui (JD, 29/09).
+    bool close = hostHere && !GuestSideMission() && (g_shared || d2 < 40.0f * 40.0f);
     if (close != g_hostClose) {
         g_hostClose = close;
         if (close) g_savedPedDensity = PedDensity(); else PedDensity() = g_savedPedDensity;

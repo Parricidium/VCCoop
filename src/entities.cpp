@@ -49,6 +49,7 @@ static void ScanOwnPeds()
             // Invite : ses passants pres d'un autre joueur (hors de la zone de l'hote, il peuple son coin du monde) ;
             // sa police seulement s'il en a une a lui.
             if (CharCreatedBy(ped) != 1 || (IsLawPed(ped) && !LocalWanted())) continue;
+            if (PopulationShared() && !IsLawPed(ped)) continue;   // pres de l'hote : c'est lui qui peuple (ceux-la vont etre retires)
             if (!NearOtherPlayer(&Pos(ped).x, AreaCode(ped), (float)AMBIENT_SHARE_M)) continue;
         }
         MsgPed m = {};

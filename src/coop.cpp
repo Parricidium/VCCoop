@@ -1341,27 +1341,27 @@ void InstallEnterHooks()
     o_GetExit = (PadBool_t)MakeDetour(0x4AA8F0, held, sizeof(held), (void *)h_GetExit);
 }
 
-// Invite : l'hote passe une porte (hotel, club...) : c'est son jeu qui change de zone, pas une commande de script,
-// donc rien ne nous parvenait. Un invite pose dans l'hotel au debut de la partie restait "a l'interieur" dehors
-// pendant 4 minutes (GG, 29/09 : sol brillant des interieurs sur la route, pas d'ombres). Si on etait dans la meme
-// zone que lui et a quelques metres (on franchit la porte ensemble), on le suit.
+// Invite : l'hote sort d'un interieur (porte de l'hotel, fin de cinematique) : c'est son jeu qui change de zone, sans
+// commande de script, donc rien ne nous parvenait. Un invite mis dans l'hotel au debut de la partie (il y etait pose a
+// cote de l'hote) restait "a l'interieur" dehors : sol brillant des interieurs sur la route, pas d'ombres (GG, 29/09).
+// Si c'est nous qui l'avions mis dans cet interieur et que l'hote est dehors, a moins de 40 m, depuis 1,5 s (hors cinematique), on sort
+// aussi. On ne le suit jamais VERS un interieur : pose dans l'hotel alors qu'il etait reste sur le trottoir, il voyait
+// l'interieur de l'hotel au milieu de la rue (JD, 29/09).
 static void FollowHostDoors(bool inGame)
 {
-    static int lastHostArea = -1;
+    static uint32_t outSince;
     const NetPlayer &h = g_players[0];
-    if (g_cfg.host || !inGame || !h.connected || !h.state.inGame) { lastHostArea = -1; return; }
-    int a = h.state.area;
-    if (a == lastHostArea) return;
+    bool cut = *(bool *)0xA10AB2 || h.state.cutscene;
+    if (g_cfg.host || !inGame || !h.connected || !h.state.inGame || cut || h.state.area != 0 || !MirrorAreaForced()) { outSince = 0; return; }
+    // (et seulement s'il n'est pas loin : un invite reste seul dans l'interieur y reste)
     void *me = FindPlayerPed();
-    int mine = *(int *)0x978810;   // CGame::currArea
-    if (lastHostArea >= 0 && me && mine == lastHostArea && mine != a && !*(bool *)0xA10AB2) {
-        float dx = h.state.pos[0] - Pos(me).x, dy = h.state.pos[1] - Pos(me).y;
-        if (dx * dx + dy * dy < 25.0f * 25.0f) {
-            MirrorFollowHostArea(a);
-            Log("coop : l'hote passe de la zone %d a la zone %d a cote de nous, on le suit", lastHostArea, a);
-        }
-    }
-    lastHostArea = a;
+    float dx = me ? h.state.pos[0] - Pos(me).x : 1e4f, dy = me ? h.state.pos[1] - Pos(me).y : 1e4f;
+    if (dx * dx + dy * dy > 40.0f * 40.0f) { outSince = 0; return; }
+    if (!outSince) { outSince = GetTickCount(); return; }
+    if (GetTickCount() - outSince < 1500) return;
+    outSince = 0;
+    Log("coop : l'hote est dehors, on quitte l'interieur %d ou on nous avait mis", *(int *)0x978810);
+    MirrorFollowHostArea(0);
 }
 
 static void PassengerKey()

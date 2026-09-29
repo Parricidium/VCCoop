@@ -973,6 +973,7 @@ void VehiclesFrame(bool inGame)
                 void *v = pool->objects + i * VEHICLE_POOL_ENTRY;
                 uint8_t by = Field<uint8_t>(v, 0x1F8);
                 if ((by != 1 && by != 3) || FindByPtr(v) || (IsLawVehicle(v) && !LocalWanted())) continue;
+                if (PopulationShared() && !IsLawVehicle(v)) continue;   // pres de l'hote : c'est lui qui peuple (ceux-la vont etre retires)
                 if (VehClass(v) == VCLASS_TRAIN || !NearOtherPlayer(&Pos(v).x, AreaCode(v), (float)AMBIENT_SHARE_M)) continue;
                 NetVehicle *e = Alloc(((uint32_t)g_localId << 24) | (++g_vehCounter & 0xFFFFFF));
                 if (!e) break;

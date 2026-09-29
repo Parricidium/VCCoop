@@ -693,7 +693,8 @@ static void SetArea(int area)
     if (void *me = FindPlayerPed()) AreaCode(me) = (uint8_t)area;   // notre Tommy dans la meme zone que la ville affichee
     Log("miroir : zone visible %d (avec l'hote)", area);
 }
-void MirrorFollowHostArea(int area) { SetArea(area); }   // coop.cpp : regroupement pres de l'hote
+void MirrorFollowHostArea(int area) { SetArea(area); }
+bool MirrorAreaForced() { return g_mirrorArea > 0 && *(int *)0x978810 == g_mirrorArea; }   // interieur pose par nous (pas par une porte chez nous)   // coop.cpp : regroupement pres de l'hote
 
 // Minuteurs / compteurs affiches chez nous sur ordre de l'hote : effaces a la fin de sa mission (chez lui, c'est le
 // nettoyage de fin de mission du jeu qui le fait).

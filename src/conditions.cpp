@@ -149,7 +149,10 @@ static void __fastcall h_UpdateCompareFlag(void *script, void *edx, uint8_t flag
         uint16_t op = g_curOp;
         // Le sujet doit etre l'hote : joueur 0 ($PLAYER_CHAR) ou, pour un LOCATE de personnage, son Tommy.
         bool aboutHost = IsCharLocate(op) ? (uint32_t)P(0) == PedHandle(FindPlayerPed()) : P(0) == 0;
-        if ((IsLocate(op) || op == 0x0056 || op == 0x0057 || op == 0x00DC || op == 0x00DE || op == 0x00E0) && aboutHost && AnyGuestSatisfies(op)) {
+        // Pas "le joueur est dans une voiture / dans tel modele" (00E0 / 00DE) : la mission prend ensuite LA voiture du
+        // joueur (STORE_CAR_PLAYER_IS_IN) ; l'hote a pied n'en a pas, et la suite plantait (lawyer1, deux fois le 29/09,
+        // arrivee au port avant la cinematique du yacht). 00DC (dans CETTE voiture) reste : la mission la connait.
+        if ((IsLocate(op) || op == 0x0056 || op == 0x0057 || op == 0x00DC) && aboutHost && AnyGuestSatisfies(op)) {
             flag = 1;
             static uint16_t lastOp;
             static uint32_t lastLog;

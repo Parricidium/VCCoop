@@ -15,6 +15,7 @@ void MirrorPlayerJoined(int peer);
 void MirrorGuestsGetHostSave();      // hote : tous les invites vont charger sa sauvegarde   // hote : envoie l'etat de l'histoire a un nouvel invite
 void RequestGather();
 void MirrorFollowHostArea(int area);
+bool MirrorAreaForced();   // invite : l'interieur affiche vient de nous (l'hote y etait), pas d'une porte franchie ici
 void CoopWatchWalls();   // coop.cpp : quelques secondes de surveillance "pas dans un mur" apres une teleportation   // invite : prend la zone visible de l'hote (il est pose a cote de lui)
 void MirrorLocal(uint16_t op, int n, const int32_t *vals);   // invite : execute une commande de script chez soi
 bool MirrorHostQuiet();   // hote : la mission en cours n'est pas reproduite (secondaire, defi, achat)
