@@ -137,6 +137,15 @@ static void LoadConfig()
     g_cfg.testMenu = GetPrivateProfileIntA("VCCoop", "TestMenu", 0, ini);
     GetPrivateProfileStringA("VCCoop", "TestMenuPlan", "", g_cfg.testMenuPlan, sizeof(g_cfg.testMenuPlan), ini);
     g_cfg.netAuto = GetPrivateProfileIntA("VCCoop", "Reseau", 0, ini) != 0;
+    // Salon du lanceur : l'hote entre directement en partie (-vccoop-partie nouvelle | <emplacement 1..8>).
+    g_cfg.startSlot = -1;
+    if (const char *part = strstr(cmd, "-vccoop-partie ")) {
+        char what[16] = "";
+        sscanf(part + 15, "%15s", what);
+        int slot = atoi(what);
+        if (_stricmp(what, "nouvelle") == 0) { g_cfg.startSlot = 0; g_cfg.autoStart = true; }
+        else if (slot >= 1 && slot <= 8) { g_cfg.startSlot = slot; g_cfg.autoStart = false; }   // (AutoDemarrer des instances de test ignore)
+    }
     const char *opt = strstr(cmd, "-vccoop ");
     if (opt) {
         g_cfg.netAuto = true;
