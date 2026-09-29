@@ -578,7 +578,8 @@ float4 PsAOBlur(float2 vpos : VPOS) : COLOR {
 // ---- sols mouilles (pluie) et sols brillants (interieurs) : reflet de l'image le long du rayon reflechi
 float4 gWet : register(c30);                  // mouillage, temps (s), brillance des interieurs, force
 row_major float4x4 gWetVP : register(c31);    // monde -> clip (camera principale)
-float4 gWetSky : register(c35);               // couleur du ciel bas (reflet quand le rayon ne touche rien)
+float4 gWetSky : register(c35);               // couleur du ciel bas (reflet quand le rayon ne touche rien) ; w : masque pret
+sampler2D sDynMask : register(s5);            // personnages et vehicules (pas de sol mouille ni brillant sur eux)
 float3 NormalAt(float2 uv, float d, float3 P) {
   float2 dx = float2(gScreen.z, 0), dy = float2(0, gScreen.w);
   float dl = tex2Dlod(sDepth, float4(uv - dx, 0, 0)).r, dr = tex2Dlod(sDepth, float4(uv + dx, 0, 0)).r;
@@ -595,6 +596,7 @@ float4 PsWet(float2 vpos : VPOS) : COLOR {
   float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
   float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
   if (d >= 0.999) return float4(scene, 1);
+  if (gWetSky.w > 0.5 && tex2Dlod(sDynMask, float4(uv, 0, 0)).r > 0.5) return float4(scene, 1);
   float3 P = WorldAt(uv, d);
   float3 N = NormalAt(uv, d, P);
   float3 V = gCam.xyz - P;
@@ -815,8 +817,9 @@ static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
 static IDirect3DVertexShader9 *g_vsRefl[8];   // selon le format : normale (1), couleur (2), uv (4)
 static IDirect3DPixelShader9 *g_psRefl;
 static IDirect3DPixelShader9 *g_psAO, *g_psAOBlur, *g_psWet, *g_psHaze, *g_psBeam, *g_psCarRefl, *g_psGI, *g_psGIApply, *g_psFlag[2];
-static IDirect3DTexture9 *g_carMask;
-static IDirect3DSurface9 *g_carMaskSurf;
+static IDirect3DTexture9 *g_carMask, *g_dynMask;
+static IDirect3DSurface9 *g_carMaskSurf, *g_dynMaskSurf;
+static bool g_dynMaskReady;
 static IDirect3DVertexShader9 *g_vsBeam;
 static IDirect3DTexture9 *g_ao;          // occlusion ambiante avant le flou
 static IDirect3DSurface9 *g_aoSurf;
@@ -879,6 +882,7 @@ static void ReleaseResources()
     SafeRelease(g_reflSurf); SafeRelease(g_refl); SafeRelease(g_reflDs);
     SafeRelease(g_aoSurf); SafeRelease(g_ao);
     SafeRelease(g_carMaskSurf); SafeRelease(g_carMask);
+    SafeRelease(g_dynMaskSurf); SafeRelease(g_dynMask);
     SafeRelease(g_replayVb); SafeRelease(g_replayIb);
     SafeRelease(g_state);
     g_replayVbSize = g_replayIbSize = 0;
@@ -923,6 +927,8 @@ static bool CreateResources()
     else Log("rendu : cible de l'occlusion ambiante impossible");
     if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &g_carMask, NULL)))
         g_carMask->GetSurfaceLevel(0, &g_carMaskSurf);
+    if (SUCCEEDED(g_dev->CreateTexture(g_width, g_height, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &g_dynMask, NULL)))
+        g_dynMask->GetSurfaceLevel(0, &g_dynMaskSurf);
     if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_state))) { Log("rendu : bloc d'etats impossible"); ReleaseResources(); return false; }
     g_resourcesFailed = false;
     g_resourcesOk = true;
@@ -942,6 +948,7 @@ struct Rec {
     uint8_t viewIdx;      // sa camera (g_views)
     bool caster, water;   // projette une ombre ; surface de l'eau (dessinee par nous)
     bool vehicle;         // dessin d'un vehicule (reflets des carrosseries)
+    bool dynamic;         // vehicule ou personnage (pas de sol mouille / brillant dessus)
     GfxDraw d;
     DWORD fvf;
     float world[16];
@@ -1227,6 +1234,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     if (r.alphaTest && r.alphaRef < 0.02f) r.alphaRef = 0.02f;
     r.recvCand = !blend && zw && !g_bridgeCasterOnly;
     r.vehicle = g_curEntity && (((uint8_t *)g_curEntity)[0x50] & 7) == 2;
+    r.dynamic = g_curEntity && ((((uint8_t *)g_curEntity)[0x50] & 7) == 2 || (((uint8_t *)g_curEntity)[0x50] & 7) == 3);
     r.receiver = false;   // fixe par ChooseMainView
     r.caster = true;
     g_recs.push_back(r);
@@ -1824,11 +1832,15 @@ static void AmbiencePasses(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldRt, IDi
         float wc[6 * 4] = {};
         wc[0] = outdoors ? wetRoads : 0; wc[1] = (float)(GetTickCount() % 600000) / 1000.0f; wc[2] = outdoors ? 0 : 0.28f; wc[3] = 0.85f;
         memcpy(wc + 4, vp.m, 64);
-        wc[20] = sky[0]; wc[21] = sky[1]; wc[22] = sky[2]; wc[23] = 1;
+        wc[20] = sky[0]; wc[21] = sky[1]; wc[22] = sky[2]; wc[23] = g_dynMaskReady ? 1.0f : 0.0f;
         g_dev->SetPixelShaderConstantF(30, wc, 6);
+        g_dev->SetTexture(5, g_dynMaskReady ? g_dynMask : NULL);
+        g_dev->SetSamplerState(5, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(5, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
         g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
         g_dev->SetPixelShader(g_psWet);
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+        g_dev->SetTexture(5, NULL);
     }
     // Brume : teinte du jour (bleu pale), du coucher (doree), du soir et de la nuit (violette) ; pluie et brouillard : grise.
     if (g_cfg.haze && g_psHaze && outdoors) {
@@ -1943,6 +1955,25 @@ static void Apply()
             g_carMaskReady = true;
         }
         g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+    }
+    // 2c. Masque des personnages et vehicules : le sol mouille (pluie) et les sols brillants des interieurs ne
+    // s'appliquaient qu'aux surfaces tournees vers le haut... y compris les epaules et la tete des passagers vus par
+    // les vitres, et les toits des voitures (JD, 29/09).
+    g_dynMaskReady = false;
+    if (g_cfg.wetRoads && g_dynMaskSurf && g_psFlag[1]) {
+        g_dev->SetRenderTarget(0, g_dynMaskSurf);
+        g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0, 1.0f, 0);
+        g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+        for (const Rec &r : g_recs) {
+            if (!r.receiver || !r.dynamic) continue;
+            M4 w; memcpy(w.m, r.world, 64);
+            DrawRec(r, Mul(w, vp), true);
+            g_dev->SetPixelShader(g_psFlag[1]);
+            if (r.d.indexed) g_dev->DrawIndexedPrimitive((D3DPRIMITIVETYPE)r.d.type, (INT)r.d.baseVertex, r.d.minIndex, r.d.numVerts, r.d.start, r.d.count);
+            else g_dev->DrawPrimitive((D3DPRIMITIVETYPE)r.d.type, r.d.start, r.d.count);
+        }
+        g_dev->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
+        g_dynMaskReady = true;
     }
 
     // 3. Masque d'ombre sur l'image.

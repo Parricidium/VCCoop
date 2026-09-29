@@ -923,7 +923,18 @@ static bool Execute(const uint8_t *d, int len, bool force)
         memcpy(&host, d + 5, 4);
         MapDel(g_pickups, g_pickupCount, host);
     }
-    if (op == 0x02EA) g_objCount = 0;   // CLEAR_CUTSCENE detruit les objets de la cinematique
+    if (op == 0x02EA) {   // CLEAR_CUTSCENE detruit les objets de la cinematique
+        g_objCount = 0;
+        // Le LOAD_SCENE de l'hote vise l'endroit ou IL est : si on n'y est pas, le decor autour de nous pouvait rester
+        // absent un moment apres la cinematique (GG, 29/09, apres LAW_2B). On charge aussi le notre.
+        if (void *me = FindPlayerPed()) {
+            float xyz[3] = { Pos(me).x, Pos(me).y, Pos(me).z };
+            int32_t p[3];
+            memcpy(p, xyz, 12);
+            Local(0x03CB, 3, p);   // LOAD_SCENE
+            Log("miroir : fin de cinematique, decor charge autour de nous");
+        }
+    }
     if (g_cfg.logScripts) { const OpSig *s = FindOp(op); Log("miroir : rejoue %s", s ? s->name : "?"); }
     return true;
 }

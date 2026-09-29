@@ -135,6 +135,8 @@ struct Rag {
     Frame f0[ND];
     V3 startVel, topple;
     float startZ;
+    V3 origin;                // bassin au debut (personnage de mission : il ne s'en eloigne pas trop)
+    bool mission;
     uint32_t startAt, lastSend, lastRecv, sleepAt, endAt, still, lastWake;
     V3 wakePos;
     bool noSupportWake;   // reveille "sans support" et reste sur place : support invisible au test, on n'y regarde plus
@@ -306,6 +308,8 @@ void __fastcall h_PreRender(void *ped, void *edx)
         r->ready = true;
         r->startAt = GetTickCount();
         r->startZ = r->p[P_PELVIS].z;
+        r->origin = r->p[P_PELVIS];
+        r->mission = !r->remote && CharCreatedBy(r->ped) == PED_CHAR_MISSION;   // (une copie suit la pose recue)
     }
     if (!r->ready) return;
     float w = 1.0f;
@@ -395,8 +399,12 @@ void PushByVehicles(Rag &r, float stepFrac)
             r.p[k] = r.p[k] + ax[best] * (pen * dir);
             // Il prend la vitesse de la voiture (et un peu de hauteur quand elle le heurte de face).
             float sp = Len(carStep);
-            // Pose sur le toit ou le capot : il suit la voiture (frottement) ; heurte de cote : une partie de l'elan.
-            r.q[k] = r.p[k] - carStep * (best == 2 ? 1.0f : kCarTransfer) - V3{ 0, 0, best == 2 ? 0.0f : sp * 0.15f };
+            // Pose sur le toit ou le capot d'une voiture lente : il suit la voiture (frottement) ; heurte de cote, ou
+            // sur une moto, ou sur une voiture lancee : une partie de l'elan, et il retombe. (Avant : il restait sur le
+            // dessus a n'importe quelle vitesse ; le cuisinier de Back Alley Brawl, ecrase a moto, partait avec elle, et
+            // le telephone de la mission avec lui, JD le 29/09.)
+            bool ride = best == 2 && VehClass(v) != VCLASS_BIKE && ms.x * ms.x + ms.y * ms.y < 0.1f * 0.1f;
+            r.q[k] = r.p[k] - carStep * (ride ? 1.0f : kCarTransfer) - V3{ 0, 0, ride ? 0.0f : sp * 0.15f };
         }
     }
 }
@@ -625,6 +633,18 @@ bool NeedsWake(const Rag &r)
 
 void KeepPedOnBody(Rag &r)
 {
+    // Personnage de mission : son corps reste a 10 m au plus de l'endroit ou il est tombe (ce que la mission lui fait
+    // lacher, telephone, mallette, est pose la ou il est ; projete loin, dans l'eau ou sur un toit, on ne le trouvait
+    // plus).
+    if (r.mission) {
+        V3 d = r.p[P_PELVIS] - r.origin;
+        d.z = 0;
+        float l = Len(d);
+        if (l > 10.0f) {
+            V3 back = d * ((10.0f - l) / l);
+            for (int i = 0; i < NP; i++) { r.p[i] = r.p[i] + back; r.q[i] = r.q[i] + back; }
+        }
+    }
     // Le personnage (bouding sphere, argent ou arme laches, tests du jeu) suit le bassin ; plus de vitesse a lui.
     Vec3 &pos = Pos(r.ped);
     pos.x = r.p[P_PELVIS].x;
