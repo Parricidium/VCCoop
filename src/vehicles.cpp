@@ -478,9 +478,39 @@ void VehiclesAfterProcess()
 
 // Copie : on la supprime, apres avoir fait descendre ses occupants (copies ou Tommy distants). Si c'est notre
 // vehicule a nous (ou que nous sommes dedans), on le garde et on l'oublie seulement.
+// Vehicule de NOTRE jeu (pas une copie creee par nous) qu'un autre joueur possedait, et dont on perd l'entree (retrait
+// recu, plus d'etat pendant 10 s) : il reste dans notre monde. Si son identifiant revient, on le reprend au lieu de
+// creer une copie a cote (voiture dupliquee chez l'hote, lawyer1 le 29/09).
+static struct { uint32_t id; void *veh; } g_orphans[16];
+static int g_orphanAt;
+
+static void KeepOrphan(uint32_t id, void *veh)
+{
+    auto &o = g_orphans[g_orphanAt++ % 16];
+    if (o.veh) CleanUpOldReference(o.veh, &o.veh);
+    o.id = id;
+    o.veh = veh;
+    if (veh) RegisterReference(veh, &o.veh);
+    Log("vehicules : %08X oublie (retrait ou silence du proprietaire), il reste dans notre monde", id);
+}
+
+static void *TakeOrphan(uint32_t id, int model)
+{
+    for (auto &o : g_orphans) {
+        if (!o.veh || o.id != id) continue;
+        void *v = o.veh;
+        CleanUpOldReference(v, &o.veh);
+        o.veh = NULL;
+        if (ModelIndex(v) != model || FindByPtr(v)) return NULL;
+        return v;
+    }
+    return NULL;
+}
+
 static void DeleteCopy(NetVehicle &e)
 {
     void *me = FindPlayerPed();
+    if (e.veh && !e.ours) KeepOrphan(e.id, e.veh);
     if (e.veh && e.ours && !(me && InVehicle(me) && PedVehicle(me) == e.veh)) {
         void *v = e.veh;
         Unbind(e);
@@ -995,6 +1025,14 @@ void VehiclesFrame(bool inGame)
             continue;
         }
         if (!e.haveState) continue;
+        if (!e.veh) {
+            if (void *old = TakeOrphan(e.id, e.state.model)) {
+                Bind(e, old);
+                Field<uint8_t>(old, 0x53) |= 0x08;
+                SetCopyFlags(old, true);
+                Log("vehicules : %08X retrouve dans notre monde, repris au lieu d'en creer un second", e.id);
+            }
+        }
         if (!e.veh) {
             void *v = CreateCopy(e.state);
             if (v) {
