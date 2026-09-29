@@ -56,6 +56,7 @@ static void LoadConfig()
     g_cfg.drawDistance = GetPrivateProfileIntA("VCCoop", "DistanceAffichage", 200, ini);
     g_cfg.zonePop = GetPrivateProfileIntA("VCCoop", "ZonePopulation", 150, ini);
     g_cfg.popDensity = GetPrivateProfileIntA("VCCoop", "DensitePopulation", 150, ini);
+    g_cfg.ragdoll = GetPrivateProfileIntA("VCCoop", "CorpsMous", 1, ini) != 0;
     if (g_cfg.popDensity < 50) g_cfg.popDensity = 50;
     if (g_cfg.popDensity > 300) g_cfg.popDensity = 300;
     if (g_cfg.zonePop < 100) g_cfg.zonePop = 100;

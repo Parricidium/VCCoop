@@ -5,6 +5,7 @@
 #include "game.h"
 #include "interp.h"
 #include "vehicles.h"
+#include "ragdoll.h"
 #include <math.h>
 #include <string.h>
 
@@ -194,6 +195,7 @@ static void __cdecl h_GameProcess()
     PuppetsAfterProcess();
     VehiclesAfterProcess();
     GhostsAfterProcess();
+    RagdollAfterProcess();
 }
 
 // --- Autour de DMAudio.Service (appel en 0x4A5DAA, juste apres CGame::Process) : sons des copies (vehicles.cpp) ---

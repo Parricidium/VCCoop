@@ -31,7 +31,7 @@ enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
        ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
-       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS, ACT_POPZONE, ACT_POPDENS };
+       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS, ACT_POPZONE, ACT_POPDENS, ACT_RAGDOLL };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
 enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
@@ -80,6 +80,7 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "ArgentPartage", g_cfg.shareMoney ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "AfficherPseudos", g_cfg.showNames ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "GarderArmes", g_cfg.keepWeapons ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "CorpsMous", g_cfg.ragdoll ? "1" : "0", ini);
     char dd[16];
     wsprintfA(dd, "%d", g_cfg.drawDistance);
     WritePrivateProfileStringA("VCCoop", "DistanceAffichage", dd, ini);
@@ -165,6 +166,10 @@ static const wchar_t *CoopText(const char *key)
     if (!strcmp(key, "VCC_PD")) {
         wsprintfA(buf, "%s : %d%%", fr ? "Densite de population" : "Population density", g_cfg.popDensity);
         return Put(34, buf);
+    }
+    if (!strcmp(key, "VCC_RG")) {
+        wsprintfA(buf, "%s : %s", fr ? "Corps mous" : "Ragdolls", g_cfg.ragdoll ? yes : no);
+        return Put(35, buf);
     }
     if (!strcmp(key, "VCC_GA")) {
         wsprintfA(buf, "%s : %s", fr ? "Garder ses armes" : "Keep weapons", g_cfg.keepWeapons ? yes : no);
@@ -340,6 +345,7 @@ static void OnCoopAction(int action)
     case ACT_MONEY: g_cfg.shareMoney = !g_cfg.shareMoney; SaveIni(); break;
     case ACT_NAMES: g_cfg.showNames = !g_cfg.showNames; SaveIni(); break;
     case ACT_WEAPONS: g_cfg.keepWeapons = !g_cfg.keepWeapons; SaveIni(); break;
+    case ACT_RAGDOLL: g_cfg.ragdoll = !g_cfg.ragdoll; SaveIni(); break;
     case ACT_POPZONE: g_cfg.zonePop = g_cfg.zonePop >= 200 ? 100 : g_cfg.zonePop + 25; SaveIni(); break;   // 100..200 par 25
     case ACT_POPDENS: {
         static const int steps[] = { 50, 100, 150, 200, 250, 300 };
@@ -453,6 +459,7 @@ static void BuildCoopPage()
         items[n++] = { ACT_FRIENDLY, "VCC_TA" }; items[n++] = { ACT_MONEY, "VCC_AP" };
         items[n++] = { ACT_NAMES, "VCC_PS2" }; items[n++] = { ACT_WEAPONS, "VCC_GA" };
         items[n++] = { ACT_POPZONE, "VCC_PZ" }; items[n++] = { ACT_POPDENS, "VCC_PD" };   // (reglages de l'hote, envoyes)
+        items[n++] = { ACT_RAGDOLL, "VCC_RG" };
     } else if (g_sub == SUB_VIDEO) {
         items[n++] = { ACT_DRAWDIST, "VCC_DD" }; items[n++] = { ACT_MSAA, "VCC_AA" }; items[n++] = { ACT_ANISO, "VCC_AF" };
         items[n++] = { ACT_SHADOWS, "VCC_SH" };

@@ -5,6 +5,7 @@
 #include "net.h"
 #include "conditions.h"
 #include "mirror.h"
+#include "ragdoll.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -33,6 +34,7 @@ static bool HandleEntityMsg(const uint8_t *buf, int len)
         if (g_onPed) g_onPed(*(const MsgPed *)buf);
         return true;
     }
+    if (buf[0] == MSG_RAGDOLL) { RagdollOnMsg(buf, len); return true; }
     if (buf[0] == MSG_PED_REMOVE && len >= (int)sizeof(MsgPedRemove)) {
         const MsgPedRemove *r = (const MsgPedRemove *)buf;
         if (g_onPedRemove) g_onPedRemove(r->owner, r->handle);
@@ -477,6 +479,9 @@ static void GuestReceive(const uint8_t *buf, int len, const sockaddr_in &from)
         break;
     case MSG_CORONA:
         OnCorona(buf, len);
+        break;
+    case MSG_RAGDOLL:
+        HandleEntityMsg(buf, len);
         break;
     case MSG_PED_REMOVE:
         HandleEntityMsg(buf, len);

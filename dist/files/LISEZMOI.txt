@@ -78,6 +78,10 @@ JOUER
   police sont a chacun (RecherchePartagee=1 pour les partager). Un invite
   recherche (2 etoiles et plus) pres de l'hote a aussi des voitures de police
   a ses trousses, sirene hurlante.
+- Corps mous : un passant tue, ou percute par une voiture, s'effondre et roule
+  comme un vrai corps (percute mais vivant, il se releve ensuite). La pose est
+  la meme chez tout le monde. CorpsMous=0 (ou menu Options coop) pour revenir
+  aux animations d'origine.
 - Chacun voit et entend ce que font les autres : decor casse (cartons,
   lampadaires, vitres), chocs, moteur, pneus et sirene de leurs vehicules,
   montees et descentes animees (joueurs et personnages), passants qui fuient

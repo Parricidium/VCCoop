@@ -129,6 +129,9 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   the checkpoint challenges (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper
   Checkpoint, RC races, Checkpoint Charlie): everyone runs their own. The checkpoint rings of story
   missions (boat race, Kickstart...) are shown to the guests too.
+- **Ragdolls**: a character who is killed or hit by a car collapses and tumbles like a real body (hit
+  but alive, they get back up afterwards); the pose is computed by the character's owner and is the
+  same for everyone. `CorpsMous=0` (or Coop options) brings back the original animations.
 - **What the others do, seen and heard**: smashed props (boxes, lamp posts, windows), crash sounds,
   engine, tyres and sirens of their vehicles, animated getting in and out (players and characters),
   passers-by fleeing an armed guest, police cars chasing a wanted guest (2 stars and up) near the host.
@@ -361,6 +364,9 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   à checkpoints (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper Checkpoint, courses RC,
   Checkpoint Charlie) : chacun fait les siens. Les cercles à traverser des missions de l'histoire (course
   de bateaux, Kickstart...) s'affichent aussi chez les invités.
+- **Corps mous** : un personnage tué ou percuté par une voiture s'effondre et roule comme un vrai corps
+  (percuté mais vivant, il se relève ensuite) ; la pose est calculée par le propriétaire du personnage,
+  identique chez tout le monde. `CorpsMous=0` (ou Options coop) pour les animations d'origine.
 - **Ce que font les autres, vu et entendu** : décor cassé (cartons, lampadaires, vitres), bruits de choc,
   moteur, pneus et sirène de leurs véhicules, montées et descentes animées (joueurs et personnages),
   passants qui fuient un invité armé, voitures de police aux trousses d'un invité recherché (2 étoiles et
