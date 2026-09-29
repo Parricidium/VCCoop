@@ -58,6 +58,17 @@ const MinLink kMins[] = {
     { P_RUA, P_RFA, P_RH }, { P_LUA, P_LFA, P_LH }, { P_RTH, P_RCA, P_RFO }, { P_LTH, P_LCA, P_LFO },
 };
 enum { NM = sizeof(kMins) / sizeof(kMins[0]) };
+// Tonus : ressorts doux vers les distances de depart entre articulations non voisines (le corps garde une forme au
+// lieu de se replier comme un chiffon) ; raideur par iteration.
+const uint8_t kSoft[][2] = {
+    { P_RUA, P_RH }, { P_LUA, P_LH }, { P_RTH, P_RFO }, { P_LTH, P_LFO }, { P_PELVIS, P_RFO }, { P_PELVIS, P_LFO },
+    { P_PELVIS, P_HEAD }, { P_CHEST, P_HEADTOP }, { P_PELVIS, P_HEADTOP }, { P_CHEST, P_RFA }, { P_CHEST, P_LFA },
+};
+enum { NS = sizeof(kSoft) / sizeof(kSoft[0]) };
+const float kSoftK = 0.07f;
+// Poids : gravite un peu plus forte que la vraie (le corps "tombe lourd", pas en papier), air freinant, elan des
+// voitures en partie seulement transmis.
+const float kGravity = 13.0f, kAirKeep = 0.99f, kCarTransfer = 0.8f;
 
 // Os pilotes : de la particule "from" vers "to" ; reference laterale : entre deux particules (ref >= 0) ou le repere
 // courant du parent pilote (parent >= 0).
@@ -103,11 +114,13 @@ struct Rag {
     int pnode[NP];
     V3 p[NP], q[NP], target[NP];
     bool haveTarget;
-    float rest[NL], minDist[NM];
+    float rest[NL], minDist[NM], soft[NS];
     Frame f0[ND];
     V3 startVel, topple;
     float startZ;
-    uint32_t startAt, lastSend, lastRecv, sleepAt, endAt, still;
+    uint32_t startAt, lastSend, lastRecv, sleepAt, endAt, still, lastWake;
+    V3 wakePos;
+    bool noSupportWake;   // reveille "sans support" et reste sur place : support invisible au test, on n'y regarde plus
     int endSends;
 };
 Rag g_rag[MAX_RAG];
@@ -157,7 +170,8 @@ bool Capture(Rag &r)
     for (int i = 0; i < NP; i++) if (!Finite(r.p[i])) return false;
     for (int l = 0; l < NL; l++) r.rest[l] = Len(r.p[kLinks[l][0]] - r.p[kLinks[l][1]]);
     for (int m = 0; m < NM; m++)
-        r.minDist[m] = 0.45f * (Len(r.p[kMins[m].a] - r.p[kMins[m].mid]) + Len(r.p[kMins[m].mid] - r.p[kMins[m].b]));
+        r.minDist[m] = 0.62f * (Len(r.p[kMins[m].a] - r.p[kMins[m].mid]) + Len(r.p[kMins[m].mid] - r.p[kMins[m].b]));
+    for (int k = 0; k < NS; k++) r.soft[k] = Len(r.p[kSoft[k][0]] - r.p[kSoft[k][1]]);
     for (int d = 0; d < ND; d++) {
         const Drive &k = kDrives[d];
         V3 ref = k.parent < 0 ? r.p[k.refA] - r.p[k.refB] : r.f0[k.parent].z;
@@ -339,7 +353,8 @@ void PushByVehicles(Rag &r, float stepFrac)
             r.p[k] = r.p[k] + ax[best] * (pen * dir);
             // Il prend la vitesse de la voiture (et un peu de hauteur quand elle le heurte de face).
             float sp = Len(carStep);
-            r.q[k] = r.p[k] - carStep - V3{ 0, 0, best == 2 ? 0.0f : sp * 0.25f };
+            // Pose sur le toit ou le capot : il suit la voiture (frottement) ; heurte de cote : une partie de l'elan.
+            r.q[k] = r.p[k] - carStep * (best == 2 ? 1.0f : kCarTransfer) - V3{ 0, 0, best == 2 ? 0.0f : sp * 0.15f };
         }
     }
 }
@@ -355,18 +370,26 @@ void Simulate(Rag &r)
     memcpy(prevFrame, r.p, sizeof(prevFrame));
     for (int s = 0; s < sub; s++) {
         for (int i = 0; i < NP; i++) {
-            V3 v = (r.p[i] - r.q[i]) * 0.995f;
+            V3 v = (r.p[i] - r.q[i]) * kAirKeep;
             r.q[i] = r.p[i];
-            r.p[i] = r.p[i] + v + V3{ 0, 0, -9.81f * h * h };
+            r.p[i] = r.p[i] + v + V3{ 0, 0, -kGravity * h * h };
         }
         PushByVehicles(r, 1.0f / sub);
-        for (int it = 0; it < 6; it++) {
+        for (int it = 0; it < 10; it++) {
             for (int l = 0; l < NL; l++) {
                 V3 &a = r.p[kLinks[l][0]], &b = r.p[kLinks[l][1]];
                 V3 d = b - a;
                 float len = Len(d);
                 if (len < 1e-5f) continue;
                 V3 corr = d * (0.5f * (len - r.rest[l]) / len);
+                a = a + corr; b = b - corr;
+            }
+            for (int k = 0; k < NS; k++) {
+                V3 &a = r.p[kSoft[k][0]], &b = r.p[kSoft[k][1]];
+                V3 d = b - a;
+                float len = Len(d);
+                if (len < 1e-5f) continue;
+                V3 corr = d * (0.5f * kSoftK * (len - r.soft[k]) / len);
                 a = a + corr; b = b - corr;
             }
             for (int m = 0; m < NM; m++) {
@@ -392,7 +415,7 @@ void Simulate(Rag &r)
         V3 v = r.p[i] - r.q[i];
         float vn = Dot(v, n);
         V3 vt = v - n * vn;
-        r.q[i] = r.p[i] - (vt * 0.55f - n * (vn < 0 ? vn * 0.1f : vn));   // frottement, presque pas de rebond
+        r.q[i] = r.p[i] - (vt * 0.35f - n * (vn < 0 ? 0.0f : vn));   // lourd : frottement fort, pas de rebond
     }
     for (int i = 0; i < NP; i++) if (!Finite(r.p[i])) { r.broken = true; Log("ragdoll : simulation invalide, abandon"); return; }
     float maxMove = 0.0f;
@@ -429,6 +452,35 @@ void Send(Rag &r, uint8_t flags)
         for (int a = 0; a < 3; a++) m.p[i][a] = (int16_t)(c[a] > 32000.0f ? 32000 : c[a] < -32000.0f ? -32000 : (int)c[a]);
     }
     NetSendToAll(&m, sizeof(m));
+}
+
+// Corps immobile (endormi) : plus rien sous lui (la voiture sur laquelle il etait tombe est partie), ou une voiture
+// qui roule le touche : il se remet a bouger (avant : il restait fige en l'air).
+bool NeedsWake(const Rag &r)
+{
+    V3 pv = r.p[P_PELVIS], ch = r.p[P_CHEST];
+    if (!r.noSupportWake) {
+        uint8_t col[64];
+        void *ent = NULL;
+        bool supported = false;
+        const V3 pts[2] = { pv, ch };
+        for (V3 c : pts) {
+            float s[3] = { c.x, c.y, c.z + 0.15f }, e[3] = { c.x, c.y, c.z - 0.45f };
+            memset(col, 0, sizeof(col));
+            if (((LineOfSight_t)0x4D92D0)(s, e, col, &ent, true, true, false, true, false, false, false, false)) supported = true;
+        }
+        if (!supported) return true;
+    }
+    Pool *vp = VehiclePool();
+    for (int i = 0; i < vp->size; i++) {
+        if (vp->flags[i] & 0x80) continue;
+        void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+        Vec3 ms = MoveSpeed(v);
+        if (ms.x * ms.x + ms.y * ms.y + ms.z * ms.z < 0.05f * 0.05f) continue;   // roule vraiment (pas une epave qui tangue)
+        float dx = Pos(v).x - pv.x, dy = Pos(v).y - pv.y, dz = Pos(v).z - pv.z;
+        if (dx * dx + dy * dy + dz * dz < 2.5f * 2.5f) return true;
+    }
+    return false;
 }
 
 void KeepPedOnBody(Rag &r)
@@ -472,7 +524,7 @@ void RagdollAfterProcess()
         r = NewRag(ped);
         if (!r) continue;
         r->alive = !dying;
-        r->startVel = V3{ ms.x, ms.y, ms.z } * 50.0f;   // m/s (vitesse du jeu : par 1/50 s)
+        r->startVel = V3{ ms.x, ms.y, ms.z } * (50.0f * kCarTransfer);   // m/s (vitesse du jeu : par 1/50 s)
         // Tue par une balle ou un coup : le jeu a remis sa vitesse a zero ; il bascule a l'oppose du joueur le plus
         // proche (probablement le tireur), le haut du corps plus que les jambes (Capture).
         if (sp < 0.02f) {
@@ -509,7 +561,7 @@ void RagdollAfterProcess()
             Simulate(r);
             if (r.broken) continue;
             // Passe a travers le sol (collision manquee : sol pas encore charge...) : remonte et fige.
-            if (r.p[P_PELVIS].z < r.startZ - 3.0f) {
+            if (r.p[P_PELVIS].z < r.startZ - 6.0f) {
                 float up = r.startZ - 0.8f - r.p[P_PELVIS].z;
                 for (int i = 0; i < NP; i++) { r.p[i].z += up; r.q[i] = r.p[i]; }
                 r.still = 1000;
@@ -519,15 +571,31 @@ void RagdollAfterProcess()
             if (!r.alive && (r.still > 45 || now - r.startAt > 12000)) {
                 r.sleeping = true;
                 r.sleepAt = now;
+                if (r.lastWake && Len(r.p[P_PELVIS] - r.wakePos) < 0.1f) r.noSupportWake = true;
                 Send(r, RF_SLEEP);
                 r.lastSend = now;
             } else if (now - r.lastSend >= 66) {
                 Send(r, RF_ACTIVE);
                 r.lastSend = now;
             }
-        } else if (now - r.sleepAt < 6000 && now - r.lastSend >= 1000) {   // pose finale, redite (pertes, arrivees)
-            Send(r, RF_SLEEP);
-            r.lastSend = now;
+        } else {
+            if (now - r.lastWake >= 250) {
+                r.lastWake = now;
+                if (NeedsWake(r)) {
+                    r.sleeping = false;
+                    r.still = 0;
+                    r.startAt = now;
+                    r.startZ = r.p[P_PELVIS].z;
+                    r.wakePos = r.p[P_PELVIS];
+                    for (int i = 0; i < NP; i++) r.q[i] = r.p[i];
+                    if (g_cfg.logScripts) Log("ragdoll : %08X se remet a bouger (plus de support, ou voiture)", r.handle);
+                    continue;
+                }
+            }
+            if (now - r.sleepAt < 6000 && now - r.lastSend >= 1000) {   // pose finale, redite (pertes, arrivees)
+                Send(r, RF_SLEEP);
+                r.lastSend = now;
+            }
         }
         // Percute mais vivant : quand le jeu le fait se relever, on rend la main a l'animation (fondu de 0,3 s),
         // debout la ou son corps est tombe.
@@ -570,6 +638,7 @@ void RagdollOnMsg(const uint8_t *buf, int len)
     r->haveTarget = true;
     r->lastRecv = GetTickCount();
     if (m.flags & RF_SLEEP) { r->sleeping = true; r->sleepAt = GetTickCount(); }
+    else r->sleeping = false;   // reveille chez le proprietaire
 }
 
 void RagdollReset()
