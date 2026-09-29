@@ -220,6 +220,22 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
         // plusieurs secondes) : la couper laissait le personnage sans animation (plantage 0x403ED2).
         // L'animation de sortie n'a pas demarre en 0,8 s (le jeu la refuse) : il est pose dehors tout de suite (avant :
         // 4 s pendant lesquelles on le voyait encore assis alors qu'il courait deja chez lui).
+        // Pas encore demarree : le jeu la refuse tant que la voiture roule (CanPedExitCar). Chez lui aussi, le jeu attend
+        // l'arret ("descente en attente") : tant qu'il est encore a bord en train de descendre, on reessaie (avant :
+        // pose dehors au bout de 0,8 s, puis rassis, puis repose).
+        else if (PedState(ped) != 60 && PedState(ped) != 57 && StartExitAnimated(ped, cur)) {
+            pp.busySince = now;
+            Log("coop : Tommy %d : descente animee demarree", s.id);
+            return true;
+        }
+        else if (PedState(ped) != 60 && PedState(ped) != 57 && s.inVehicle && s.exiting && now - pp.busySince < 12000) {
+            return true;
+        }
+        else if (PedState(ped) != 60 && PedState(ped) != 57 && s.inVehicle && !s.exiting) {
+            pp.exiting = false;   // il a renonce (ou la voiture est repartie) : il reste assis
+            ((void(__thiscall *)(void *))0x521720)(ped);
+            Log("coop : Tommy %d : descente annulee", s.id);
+        }
         else if ((PedState(ped) != 60 && now - pp.busySince > 800) || now - pp.busySince > 12000) {
             pp.exiting = false;
             ((void(__thiscall *)(void *))0x521720)(ped);
@@ -265,7 +281,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
     if (cur && s.exiting && (s.inVehicle ? cur == want : true) && now - pp.seatedAt > 1000) {
         int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
         if (!LocallyDriven(cur, ped)) { MoveSpeed(cur) = { 0, 0, 0 }; TurnSpeed(cur) = { 0, 0, 0 }; }
-        MirrorLocal(0x01D3, 2, a);
+        if (!StartExitAnimated(ped, cur)) MirrorLocal(0x01D3, 2, a);   // la scene du jeu directement, sinon l'objectif
         pp.exitedFrom = NetVehicleId(cur);
         pp.exiting = true;
         pp.busySince = now;
@@ -292,7 +308,7 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
             int32_t a[2] = { (int32_t)PedHandle(ped), (int32_t)VehicleHandle(cur) };
             MoveSpeed(cur) = { 0, 0, 0 };
             TurnSpeed(cur) = { 0, 0, 0 };
-            MirrorLocal(0x01D3, 2, a);
+            if (!StartExitAnimated(ped, cur)) MirrorLocal(0x01D3, 2, a);
             pp.exitedFrom = NetVehicleId(cur);
             pp.exiting = true;
             pp.busySince = now;
@@ -301,7 +317,19 @@ static bool UpdatePuppetVehicle(Puppet &pp, const MsgState &s)
             return true;
         }
     }
-    // Passager : n'importe quelle place de passager convient (chaque machine range ses passagers a sa facon).
+    // Passager : a la place ou il est chez lui, si elle est libre ici (sinon n'importe laquelle : pas de va-et-vient
+    // entre deux machines qui ne sont pas d'accord ; au plus un changement toutes les 2 s).
+    if (cur && cur == want && s.seat > 0 && SeatOf(cur, ped) > 0 && SeatOf(cur, ped) != s.seat && !VehPassenger(cur, s.seat - 1) &&
+        s.seat <= Field<uint8_t>(cur, 0x1D0) && now - pp.seatedAt > 2000) {
+        int was = SeatOf(cur, ped);
+        WarpOutOfVehicle(ped, NULL);
+        if (WarpIntoSeat(ped, cur, s.seat)) {
+            pp.seatedAt = now;
+            Log("coop : Tommy %d change de place (%d -> %d, comme chez lui)", s.id, was, SeatOf(cur, ped));
+            return true;
+        }
+        cur = NULL;
+    }
     if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (s.seat == 0))) {
         Vec3 at = { s.pos[0], s.pos[1], s.pos[2] };
         WarpOutOfVehicle(ped, &at);
@@ -606,7 +634,7 @@ static void SendLocalState(bool inGame)
             s.enterId = NetVehicleId(PedVehicle(ped));
             s.enterSeat = Field<int>(ped, 0x164) == 0x11 ? 1 : 0;   // objectif "monter en passager" (F/G) ; braquer = volant
         }
-        s.exiting = InVehicle(ped) && ExitingState(st);
+        s.exiting = InVehicle(ped) && (ExitingState(st) || (g_leaving && g_leaving == PedVehicle(ped)));   // (aussi : descente en attente de l'arret)
         s.aiming = IsAimingGun(ped) ? 1 : 0;
         s.inVehicle = InVehicle(ped) ? 1 : 0;
         s.shared = PopulationShared() ? 1 : 0;
@@ -928,9 +956,116 @@ static void HostPoliceChasesGuests()
         assigned++;
         if (g_cfg.logScripts) Log("police : le policier %08X poursuit le joueur %d", a[0], PuppetPlayer(best));
     }
+    // Voitures de police (celles que le jeu fait naitre pour un invite recherche, population.cpp, ou qui patrouillent) :
+    // sirene, vers l'invite recherche le plus proche (a moins de 150 m, plus proche que l'hote) ; il est en voiture :
+    // elles l'eperonnent (SET_CAR_RAM_CAR 032C) ; a pied : elles vont a lui (CAR_GOTO_COORDINATES 00A7) et, a 20 m,
+    // les policiers descendent (la poursuite a pied ci-dessus prend le relais).
+    int cars = 0;
+    if (me && WantedLevel(me) == 0) {
+        Pool *vp = VehiclePool();
+        for (int i = 0; i < vp->size; i++) {
+            if (vp->flags[i] & 0x80) continue;
+            void *v = vp->objects + i * VEHICLE_POOL_ENTRY;
+            if (!IsLawVehicle(v) || Field<uint8_t>(v, 0x1F8) != 1 || NetVehicleIsCopy(v) || EntityStatus(v) == STATUS_WRECKED) continue;
+            void *drv = VehDriver(v);
+            if (!drv || PedType(drv) != 6 || IsPuppet(drv) || Health(drv) <= 0.0f) continue;
+            float dh = (Pos(v).x - Pos(me).x) * (Pos(v).x - Pos(me).x) + (Pos(v).y - Pos(me).y) * (Pos(v).y - Pos(me).y);
+            int who = -1;
+            float bestD = 150.0f * 150.0f;
+            for (int p = 1; p < MAX_PLAYERS; p++) {
+                const NetPlayer &np = g_players[p];
+                void *pup = PuppetPed(p);
+                if (!pup || !np.connected || !np.state.inGame || np.state.wanted < 2 || np.state.down || np.state.health <= 0.0f || np.state.cutscene) continue;
+                float dx = Pos(v).x - Pos(pup).x, dy = Pos(v).y - Pos(pup).y, d = dx * dx + dy * dy;
+                if (d < bestD && d < dh) { bestD = d; who = p; }
+            }
+            if (who < 0) continue;
+            const MsgState &s = g_players[who].state;
+            void *pup = PuppetPed(who);
+            void *gcar = s.inVehicle ? NetVehicleById(s.vehicleId) : NULL;
+            int32_t hv = (int32_t)VehicleHandle(v);
+            cars++;
+            if (!gcar && bestD < 20.0f * 20.0f) {   // a pied, tout pres : on descend
+                void *occ[9] = { drv };
+                for (int k = 0; k < 8; k++) occ[k + 1] = VehPassenger(v, k);
+                for (void *c : occ) {
+                    if (!c || PedType(c) != 6 || IsPuppet(c)) continue;
+                    int32_t a[2] = { (int32_t)PedHandle(c), hv };
+                    MirrorLocal(0x01D3, 2, a);   // SET_CHAR_OBJ_LEAVE_CAR
+                }
+                continue;
+            }
+            int32_t siren[2] = { hv, 1 }, speed[2] = { hv, gcar ? 40 : 25 }, style[2] = { hv, 2 };
+            MirrorLocal(0x0397, 2, siren);   // SWITCH_CAR_SIREN
+            MirrorLocal(0x00AD, 2, speed);   // SET_CAR_CRUISE_SPEED
+            MirrorLocal(0x00AE, 2, style);   // SET_CAR_DRIVING_STYLE (2 : evite les voitures)
+            if (gcar) {
+                int32_t a[2] = { hv, (int32_t)VehicleHandle(gcar) };
+                MirrorLocal(0x032C, 2, a);   // SET_CAR_RAM_CAR
+            } else {
+                float xyz[3] = { Pos(pup).x, Pos(pup).y, Pos(pup).z };
+                int32_t a[4] = { hv };
+                memcpy(a + 1, xyz, 12);
+                MirrorLocal(0x00A7, 4, a);   // CAR_GOTO_COORDINATES
+            }
+        }
+    }
+    static int lastCars = -1;
+    if (cars != lastCars && (cars == 0 || lastCars <= 0)) Log("police : %d voitures de police de l'hote poursuivent des invites", cars);
+    lastCars = cars;
     static int lastAssigned = -1;
     if (assigned != lastAssigned && (assigned == 0 || lastAssigned <= 0)) Log("police : %d policiers de l'hote poursuivent des invites", assigned);
     lastAssigned = assigned;
+}
+
+// Passants de l'hote face a un invite arme : le jeu ne fait reagir ses passants qu'au joueur local (braque, il
+// fuient ; les gangs ripostent). Un invite qui les braquait (visee) ou tirait pres d'eux les laissait indifferents.
+// Hote, 3 fois par seconde : passants a moins de 10 m dans l'axe de sa visee, ou a moins de 15 m quand il tire ->
+// fuite (SET_CHAR_OBJ_FLEE_CHAR_ON_FOOT_TILL_SAFE 01CD) ; membres de gang sur qui il tire -> ils l'attaquent
+// (SET_CHAR_OBJ_KILL_CHAR_ON_FOOT 01C9). Chaque passant au plus une fois toutes les 8 s.
+static void GuestThreats()
+{
+    static uint32_t last;
+    static uint8_t lastShots[MAX_PLAYERS];
+    static struct { uint32_t handle, at; } told[64];
+    static int toldAt;
+    uint32_t now = GetTickCount();
+    if (!g_cfg.host || now - last < 300) return;
+    last = now;
+    Pool *pool = PedPool();
+    for (int p = 1; p < MAX_PLAYERS; p++) {
+        const NetPlayer &np = g_players[p];
+        const MsgState &s = np.state;
+        void *pup = PuppetPed(p);
+        bool fired = s.shots != lastShots[p];
+        lastShots[p] = s.shots;
+        if (!pup || !np.connected || !np.state.inGame || s.inVehicle || s.down || s.cutscene) continue;
+        if (s.weapon < 17 || s.weapon > 33 || (!s.aiming && !fired)) continue;   // armes a feu (colt 45 .. minigun)
+        float fx = -sinf(s.heading), fy = cosf(s.heading);
+        int n = 0;
+        for (int i = 0; i < pool->size && n < 6; i++) {
+            if (pool->flags[i] & 0x80) continue;
+            void *ped = pool->objects + i * PED_POOL_ENTRY;
+            int type = PedType(ped);
+            bool gang = type >= 7 && type <= 15, civ = type == 4 || type == 5 || type == 18 || type == 20;
+            if ((!gang && !civ) || CharCreatedBy(ped) != 1 || IsPuppet(ped) || IsGhostPed(ped) || Health(ped) <= 0.0f || InVehicle(ped)) continue;
+            float dx = Pos(ped).x - Pos(pup).x, dy = Pos(ped).y - Pos(pup).y, d2 = dx * dx + dy * dy;
+            if (d2 > (fired ? 15.0f * 15.0f : 10.0f * 10.0f) || d2 < 0.01f) continue;
+            float d = sqrtf(d2);
+            if (!fired && (dx * fx + dy * fy) / d < 0.85f) continue;   // braque : dans l'axe de sa visee
+            uint32_t h = PedHandle(ped);
+            bool recent = false;
+            for (auto &t : told) recent |= t.handle == h && now - t.at < 8000;
+            if (recent) continue;
+            told[toldAt++ % 64] = { h, now };
+            Field<int>(ped, 0x168) = 0;   // objectif precedent : sinon SetObjective ignore un objectif identique
+            int32_t a[2] = { (int32_t)h, (int32_t)PedHandle(pup) };
+            bool attack = gang && fired;
+            MirrorLocal(attack ? 0x01C9 : 0x01CD, 2, a);
+            n++;
+            if (g_cfg.logScripts) Log("coop : le passant %08X %s le joueur %d", h, attack ? "attaque" : "fuit", p);
+        }
+    }
 }
 
 static void KeepAIOffPlayerCars()
@@ -1230,7 +1365,7 @@ void CoopFrame()
     MouseFocusFrame();
     PlayersFrame(inGame);
     ShareWanted(inGame);
-    if (inGame) { KeepAIOffPlayerCars(); HostPoliceChasesGuests(); }
+    if (inGame) { KeepAIOffPlayerCars(); HostPoliceChasesGuests(); GuestThreats(); }
     if (inGame) { CameraFrame(); PassengerShooting(); }
     VehiclesFrame(inGame);
     ObjSyncFrame(inGame);

@@ -173,6 +173,7 @@ BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID)
     InstallDisplay();
     InstallInterface();
     InstallPopulation();
+    InstallObjSync();
     InstallVehicleAudio();
     InstallConditions();
     InstallInterp();

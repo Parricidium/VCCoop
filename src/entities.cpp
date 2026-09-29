@@ -77,6 +77,12 @@ static void ScanOwnPeds()
             int seat = SeatOf(PedVehicle(ped), ped);
             m.seat = (uint8_t)(seat < 0 ? 0 : seat);
         }
+        // Montee / descente en cours : les autres jouent la meme animation sur leur copie (avant : teleporte).
+        if (!InVehicle(ped) && PedVehicle(ped) && EnteringState(PedState(ped))) {
+            m.enterId = NetVehicleId(PedVehicle(ped));
+            m.enterSeat = Field<int>(ped, 0x164) == 0x11 ? 1 : 0;   // objectif "monter en passager"
+        }
+        m.exiting = InVehicle(ped) && ExitingState(PedState(ped)) ? 1 : 0;
         NetSendToAll(&m, sizeof(m));   // hote : a tous les invites ; invite : a l'hote, qui relaie
         if (seenCount < MAX_SENT) seen[seenCount++] = m.handle;
     }
@@ -103,6 +109,8 @@ struct Ghost {
     uint32_t lastRecv;
     int lastMoveState;
     bool dead;
+    bool entering, exiting;   // montee / descente animee en cours (le jeu joue la scene, on ne touche a rien)
+    uint32_t busySince;
     uint8_t lastShots;
     Track track;
     AnimMirror anims;
@@ -232,6 +240,34 @@ static void UpdateGhost(Ghost &g)
 
     void *want = m.vehicleId ? NetVehicleById(m.vehicleId) : NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;
+    uint32_t now = GetTickCount();
+    // Montee / descente animees (comme les doubles des joueurs, coop.cpp) ; si ca traine, pose directe comme avant.
+    if (g.entering) {
+        if (cur) g.entering = false;
+        else if (now - g.busySince > 4000 || (!m.enterId && !m.vehicleId)) { g.entering = false; if (EnterInProgress(ped)) AbortEnter(ped); }
+        else return;
+    }
+    if (g.exiting) {
+        if (!cur) g.exiting = false;
+        else if ((PedState(ped) != 60 && now - g.busySince > 800) || now - g.busySince > 6000) g.exiting = false;
+        else return;
+    }
+    if (cur && !g.exiting && ((m.exiting && cur == want) || (!want && !m.enterId && !NetVehicleMoving(cur))) && StartExitAnimated(ped, cur)) {
+        g.exiting = true;
+        g.busySince = now;
+        if (g_cfg.logScripts) Log("entites : %08X descend (animation)", g.handle);
+        return;
+    }
+    if (!cur && !g.entering && m.enterId) {
+        void *veh = NetVehicleById(m.enterId);
+        if (veh && DoorDistance(ped, veh, m.enterSeat) < 2.5f && StartEnterAnimated(ped, veh, m.enterSeat, false)) {
+            g.entering = true;
+            g.busySince = now;
+            EnsureLiveAnim(ped);
+            if (g_cfg.logScripts) Log("entites : %08X monte (animation, %s)", g.handle, m.enterSeat ? "passager" : "volant");
+            return;
+        }
+    }
     if (cur && (cur != want || (SeatOf(cur, ped) == 0) != (m.seat == 0))) {
         Vec3 at = { m.pos[0], m.pos[1], m.pos[2] };
         WarpOutOfVehicle(ped, &at);
@@ -284,7 +320,7 @@ static void OnPed(const MsgPed &m)
 void GhostsAfterProcess()
 {
     for (auto &g : g_ghosts) {
-        if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.state.vehicleId) continue;
+        if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.state.vehicleId || g.entering) continue;
         Snap n;
         if (!TrackSample(g.track, g.owner, n, true)) continue;
         float jx = n.pos[0] - Pos(g.ped).x, jy = n.pos[1] - Pos(g.ped).y, jz = n.pos[2] - Pos(g.ped).z;

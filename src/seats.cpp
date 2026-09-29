@@ -161,6 +161,23 @@ bool StartEnterAnimated(void *ped, void *veh, int seat, bool walk)
     return true;
 }
 
+bool StartExitAnimated(void *ped, void *veh)
+{
+    if (!InVehicle(ped) || PedVehicle(ped) != veh) return false;
+    int st = PedState(ped);
+    if (st == 60 || st == 57) return true;   // PED_EXIT_CAR / PED_DRAG_FROM_CAR : deja en cours
+    // SetExitCar refuse si le vehicule bouge (CanPedExitCar 0x5B8180) : chez le joueur, lui, descend deja (sa copie
+    // de la voiture a ralenti plus tot, ou c'est nous qui conduisons encore) ; vitesses mises a zero le temps de l'appel.
+    Vec3 mv = MoveSpeed(veh), tv = TurnSpeed(veh);
+    MoveSpeed(veh) = { 0, 0, 0 };
+    TurnSpeed(veh) = { 0, 0, 0 };
+    ((void(__thiscall *)(void *, void *, int))0x516C60)(ped, veh, 0);   // CPed::SetExitCar (0 : sa porte)
+    MoveSpeed(veh) = mv;
+    TurnSpeed(veh) = tv;
+    st = PedState(ped);
+    return st == 60 || st == 57;
+}
+
 // Diagnostic d'une montee en cours (une ligne par seconde).
 void LogEnterProgress(void *ped, const char *who)
 {
@@ -174,6 +191,19 @@ void LogEnterProgress(void *ped, const char *who)
         veh ? EntityStatus(veh) : -1, a, a ? Field<int16_t>(a, 0x2C) : -1, a ? Field<float>(a, 0x20) : 0.0f, a && Field<void *>(a, 0x14) ? Field<float>(Field<void *>(a, 0x14), 0x10) : 0.0f,
         a ? Field<float>(a, 0x18) : 0.0f, a ? Field<uint16_t>(a, 0x2E) : 0,
         veh ? sqrtf((door.x - p.x) * (door.x - p.x) + (door.y - p.y) * (door.y - p.y)) : 0.0f, MoveState(ped), IsPedInControl(ped), Field<uint8_t>(ped, 0x51) & 1);
+}
+
+// Place de passager precise (comme CVehicle::AddPassenger(ped, n) de reVC) : libre et existante seulement.
+// CVehicle::AddPassenger (0x5B8E60) prend la premiere libre : chaque machine rangeait les passagers a sa facon.
+static bool AddPassengerAt(void *veh, void *ped, int slot)
+{
+    if (slot < 0 || slot >= 8 || slot >= Field<uint8_t>(veh, 0x1D0)) return false;   // m_nNumMaxPassengers
+    void *&p = VehPassenger(veh, slot);
+    if (p) return false;
+    p = ped;
+    RegisterReference(ped, &p);
+    Field<uint8_t>(veh, 0x1CC)++;   // m_nNumPassengers
+    return true;
 }
 
 bool WarpIntoSeat(void *ped, void *veh, int seat)
@@ -199,7 +229,7 @@ bool WarpIntoSeat(void *ped, void *veh, int seat)
         PedVehicle(ped) = veh;
         RegisterReference(veh, &PedVehicle(ped));
         InVehicle(ped) = true;
-        if (!AddPassenger(veh, ped)) {
+        if (!AddPassengerAt(veh, ped, seat - 1) && !AddPassenger(veh, ped)) {
             InVehicle(ped) = false;
             CleanUpOldReference(veh, &PedVehicle(ped));
             PedVehicle(ped) = NULL;

@@ -129,6 +129,9 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   the checkpoint challenges (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper
   Checkpoint, RC races, Checkpoint Charlie): everyone runs their own. The checkpoint rings of story
   missions (boat race, Kickstart...) are shown to the guests too.
+- **What the others do, seen and heard**: smashed props (boxes, lamp posts, windows), crash sounds,
+  engine, tyres and sirens of their vehicles, animated getting in and out (players and characters),
+  passers-by fleeing an armed guest, police cars chasing a wanted guest (2 stars and up) near the host.
 - **Properties per player**: a guest can buy safehouses and businesses with their own money
   (the purchase mission runs on their side); the host's purchases stay the host's, the icon remains
   on sale for the others. A guest's money, weapons and properties are kept in
@@ -358,6 +361,10 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   à checkpoints (PCJ Playground, Trial by Dirt, Test Track, Cone Crazy, Chopper Checkpoint, courses RC,
   Checkpoint Charlie) : chacun fait les siens. Les cercles à traverser des missions de l'histoire (course
   de bateaux, Kickstart...) s'affichent aussi chez les invités.
+- **Ce que font les autres, vu et entendu** : décor cassé (cartons, lampadaires, vitres), bruits de choc,
+  moteur, pneus et sirène de leurs véhicules, montées et descentes animées (joueurs et personnages),
+  passants qui fuient un invité armé, voitures de police aux trousses d'un invité recherché (2 étoiles et
+  plus) près de l'hôte.
 - **Immeubles par joueur** : un invité peut acheter planques et commerces avec son propre argent (la
   mission d'achat tourne chez lui) ; les achats de l'hôte restent à l'hôte, l'icône reste à vendre
   pour les autres. Argent, armes et immeubles d'un invité sont gardés dans `joueur-<pseudo>.ini` à
