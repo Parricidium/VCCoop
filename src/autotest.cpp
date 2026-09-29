@@ -177,6 +177,36 @@ void AutotestFrame()
         }
         return;
     }
+    // Autotest=casse : (hote) casse l'objet cassable (carton, poubelle...) et la vitre les plus proches, par les
+    // fonctions du jeu (ObjectDamage / WindowRespondsToCollision) ; l'invite (rejoindre) doit les voir casses aussi.
+    if (_stricmp(g_cfg.autotest, "casse") == 0) {
+        uint32_t t = frame - controlSince;
+        if (!g_cfg.host || (t != 400 && t != 700)) return;
+        void *me = FindPlayerPed();
+        Pool *op = *(Pool **)0x94DBE0;
+        void *box = NULL, *glass = NULL;
+        float bb = 80.0f * 80.0f, bg = 80.0f * 80.0f;
+        for (int i = 0; i < op->size; i++) {
+            if (op->flags[i] & 0x80) continue;
+            void *o = op->objects + i * 0x1A0;
+            if (!(Field<uint8_t>(o, 0x51) & 0x01)) continue;   // deja casse (plus de collision)
+            float dx = Pos(o).x - Pos(me).x, dy = Pos(o).y - Pos(me).y, d = dx * dx + dy * dy;
+            uint16_t mf = *(uint16_t *)(*(uint8_t **)(0x92D4C8 + ModelIndex(o) * 4) + 0x42);
+            if (mf & 0x6000) { if (d < bg) { bg = d; glass = o; } }
+            else if (Field<uint8_t>(o, 0x178) && d < bb) { bb = d; box = o; }
+        }
+        if (box) {
+            Log("autotest : casse %s (modele %d, effet %d) a %.0f m", ModelName(ModelIndex(box)), ModelIndex(box), Field<uint8_t>(box, 0x178), sqrtf(bb));
+            ((void(__thiscall *)(void *, float))0x4E0990)(box, 5000.0f);
+        }
+        if (glass) {
+            Log("autotest : brise la vitre %s (modele %d) a %.0f m", ModelName(ModelIndex(glass)), ModelIndex(glass), sqrtf(bg));
+            ((void(__cdecl *)(void *, float, float, float, float, float, float, float, uint8_t))0x553C10)(glass, 2000.0f, 0.1f, 0.0f, 0.0f,
+                Pos(glass).x, Pos(glass).y, Pos(glass).z + 1.0f, 0);
+        }
+        if (!box && !glass) Log("autotest : casse, rien de cassable a 80 m");
+        return;
+    }
     // Autotest=decor : (hote) fonce en voiture sur l'objet du decor le plus proche (lampadaire, borne, panneau...) ;
     // l'invite doit le voir tomber aussi (objsync.cpp).
     if (_stricmp(g_cfg.autotest, "decor") == 0) {
@@ -406,13 +436,39 @@ void AutotestFrame()
         else if (step == 4 && now - at > 1500) { Log("autotest : menu actif %d, page %d", MenuActive(), MenuCurrentPage()); step = 5; }
         return;
     }
+    // TestPos=x,y,z (ini) : Autotest=route (et recherche) s'y teleportent au debut (route passante : circulation, police).
+    bool route = _stricmp(g_cfg.autotest, "route") == 0;
+    if (route || _stricmp(g_cfg.autotest, "recherche") == 0) {
+        static bool placed;
+        char pos[64];
+        GetPrivateProfileStringA("VCCoop", "TestPos", "", pos, sizeof(pos), IniPath());
+        float xyz[3];
+        if (!placed && pos[0] && frame - controlSince > (g_cfg.host ? 31u : 450u) && sscanf(pos, "%f,%f,%f", &xyz[0], &xyz[1], &xyz[2]) == 3) {
+            placed = true;
+            int32_t p[4] = { 0 };
+            if (!g_cfg.host) xyz[0] += 3.0f;
+            memcpy(p + 1, xyz, 12);
+            MirrorLocal(0x0055, 4, p);
+            Log("autotest : place en %.0f %.0f", xyz[0], xyz[1]);
+        }
+        if (route) return;
+    }
     if (_stricmp(g_cfg.autotest, "recherche") == 0) {   // (invite) 2 etoiles au bout de 5 s de jeu
         static bool done;
         void *w = Field<void *>(FindPlayerPed(), 0x5F4);
         if (!done && w && frame - controlSince > 150) {
             done = true;
-            ((void(__thiscall *)(void *, int))0x4D1FA0)(w, 2);
-            Log("autotest : je me fais rechercher (2 etoiles)");
+            int stars = g_cfg.testModel > 0 && g_cfg.testModel <= 6 ? g_cfg.testModel : 2;   // TestModele=N : N etoiles
+            ((void(__thiscall *)(void *, int))0x4D1FA0)(w, stars);
+            Log("autotest : je me fais rechercher (%d etoiles)", stars);
+        }
+        // TestFinRecherche=N (ini) : etoiles retirees N images apres (l'hote garde les voitures de police venues pour lui).
+        static bool cleared;
+        int endAt = GetPrivateProfileIntA("VCCoop", "TestFinRecherche", 0, IniPath());
+        if (done && !cleared && endAt > 0 && frame - controlSince > 150u + (uint32_t)endAt) {
+            cleared = true;
+            ((void(__thiscall *)(void *, int))0x4D1FA0)(w, 0);
+            Log("autotest : plus recherche");
         }
         return;
     }

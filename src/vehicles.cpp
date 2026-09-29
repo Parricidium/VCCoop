@@ -763,6 +763,58 @@ static void MyCarHitsPlayers()
     }
 }
 
+// --- Sons des copies ---
+// Le moteur audio (reVC AudioLogic.cpp, ProcessVehicleEngine / Skidding / SirenOrAlarm) lit sur chaque vehicule : roues
+// au sol (CAutomobile +0x5C4..0x5C6, CBike +0x4DC..0x4DE), rapport engage (CVehicle +0x208), etat des pneus (patinent,
+// glissent, bloques : CAutomobile +0x5CC, CBike +0x4E4) et, pour la sirene, un statut autre que "abandonne". Une copie
+// est figee et "abandonnee" (sa physique est chez son proprietaire) : moteur hurlant roues en l'air au premier rapport,
+// jamais de crissement, sirene muette. Juste avant le traitement audio, on les deduit de la vitesse et des pedales
+// recues ; le statut est remis juste apres.
+static void *g_audioStatus[64];
+static int g_audioStatusN;
+
+void VehiclesBeforeAudio()
+{
+    g_audioStatusN = 0;
+    for (auto &e : g_vehs) {
+        if (!e.used || !e.veh || e.owner == g_localId || !e.haveState) continue;
+        void *v = e.veh;
+        int cls = VehClass(v);
+        if ((cls != VCLASS_CAR && cls != VCLASS_BIKE) || EntityStatus(v) == STATUS_WRECKED) continue;
+        Vec3 mv = MoveSpeed(v), f = Field<Vec3>(v, 0x14), r = Field<Vec3>(v, 0x04);
+        float fwd = mv.x * f.x + mv.y * f.y + mv.z * f.z, side = fabsf(mv.x * r.x + mv.y * r.y + mv.z * r.z);
+        float sp = sqrtf(mv.x * mv.x + mv.y * mv.y);
+        bool ground = fabsf(mv.z) < 0.08f;
+        int gear = fwd < -0.01f ? 0 : 1 + (int)(sp * 180.0f / 40.0f);   // ~40 km/h par rapport
+        Field<uint8_t>(v, 0x208) = (uint8_t)(gear > 5 ? 5 : gear);
+        float gas = Field<float>(v, 0x1F0), brake = Field<float>(v, 0x1F4);
+        int ws = (side > 0.08f && sp > 0.1f) ? 2                        // glisse (derapage)
+               : (brake > 0.8f && sp > 0.15f) ? 3                       // roues bloquees (freinage)
+               : (gas > 0.9f && sp < 0.05f && ground) ? 1 : 0;          // patinent (demarrage)
+        if (!ground) ws = 0;
+        if (cls == VCLASS_CAR) {
+            uint8_t n = ground ? 4 : 0;
+            Field<uint8_t>(v, 0x5C4) = n; Field<uint8_t>(v, 0x5C5) = n; Field<uint8_t>(v, 0x5C6) = n;
+            for (int i = 0; i < 4; i++) Field<int>(v, 0x5CC + i * 4) = ws;
+        } else {
+            uint8_t n = ground ? 2 : 0;
+            Field<uint8_t>(v, 0x4DC) = n; Field<uint8_t>(v, 0x4DD) = n; Field<uint8_t>(v, 0x4DE) = n;
+            for (int i = 0; i < 2; i++) Field<int>(v, 0x4E4 + i * 4) = ws;
+        }
+        if (EntityStatus(v) == STATUS_ABANDONED && VehDriver(v) && g_audioStatusN < 64) {
+            SetEntityStatus(v, STATUS_PHYSICS);
+            g_audioStatus[g_audioStatusN++] = v;
+        }
+    }
+}
+
+void VehiclesAfterAudio()
+{
+    for (int i = 0; i < g_audioStatusN; i++)
+        if (EntityStatus(g_audioStatus[i]) == STATUS_PHYSICS) SetEntityStatus(g_audioStatus[i], STATUS_ABANDONED);
+    g_audioStatusN = 0;
+}
+
 void VehiclesFrame(bool inGame)
 {
     if (inGame) { CopyCollisions(); RunOverByPlayers(); MyCarHitsPlayers(); }

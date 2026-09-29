@@ -75,7 +75,13 @@ JOUER
 - Les cercles a traverser des missions de l'histoire (course de bateaux,
   Kickstart...) s'affichent aussi chez les invites.
 - L'argent donne par les missions va a tous (ArgentPartage). Les etoiles de
-  police sont a chacun (RecherchePartagee=1 pour les partager).
+  police sont a chacun (RecherchePartagee=1 pour les partager). Un invite
+  recherche (2 etoiles et plus) pres de l'hote a aussi des voitures de police
+  a ses trousses, sirene hurlante.
+- Chacun voit et entend ce que font les autres : decor casse (cartons,
+  lampadaires, vitres), chocs, moteur, pneus et sirene de leurs vehicules,
+  montees et descentes animees (joueurs et personnages), passants qui fuient
+  un invite arme.
 - Un invite mort ou arrete reapparait a l'hopital / au commissariat le plus
   proche, avec ses armes et son argent (GarderArmes).
 - Coupure reseau : l'invite se reconnecte tout seul, sans recharger.

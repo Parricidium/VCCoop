@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 16 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 17 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -119,6 +119,9 @@ struct MsgPed {
     uint8_t owner;          // joueur dont c'est le personnage (0 = hote ; un invite recherche envoie sa police)
     uint8_t ambient;        // passant (population partagee), pas un personnage de mission
     uint8_t shots;          // compteur de tirs (chaque nouveau tir est rejoue sur la copie : ses balles font mal)
+    uint32_t enterId;       // vehicule reseau ou il est en train de monter (animation du jeu), 0 sinon
+    uint8_t enterSeat;      // 0 volant, 1 passager
+    uint8_t exiting;        // en train de descendre (animation du jeu)
 };
 struct MsgPedRemove { uint8_t type; uint32_t handle; uint8_t owner; };
 #pragma pack(pop)

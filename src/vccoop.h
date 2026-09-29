@@ -80,6 +80,7 @@ void WatchdogFrame();
 void InstallScriptHooks();
 void ObjSyncFrame(bool inGame);   // objsync.cpp : decor renverse partage
 void ObjSyncOnReliable(int from, const uint8_t *data, int len);
+void InstallObjSync();             // objsync.cpp : decor casse partage (crochets ObjectDamage / vitres)
 bool GuestMayStartMission();
 void PuppetPassThrough(int player, uint32_t ms);   // coop.cpp : Tommy d'un joueur traversable un moment (percute)   // script.cpp : invite au volant d'un vehicule de mission secondaire, ou achat d'immeuble
 bool GuestSideMission();   // invite : il joue une mission secondaire (taxi, ambulance...) chez lui

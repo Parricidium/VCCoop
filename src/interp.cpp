@@ -4,6 +4,7 @@
 #include "net.h"
 #include "game.h"
 #include "interp.h"
+#include "vehicles.h"
 #include <math.h>
 #include <string.h>
 
@@ -195,8 +196,20 @@ static void __cdecl h_GameProcess()
     GhostsAfterProcess();
 }
 
+// --- Autour de DMAudio.Service (appel en 0x4A5DAA, juste apres CGame::Process) : sons des copies (vehicles.cpp) ---
+static void __fastcall h_AudioService(void *dm, void *)
+{
+    bool ok = GameState() == GS_PLAYING && FindPlayerPed();
+    if (ok) VehiclesBeforeAudio();
+    ((void(__thiscall *)(void *))0x5F9E50)(dm);   // cDMAudio::Service
+    if (ok) VehiclesAfterAudio();
+}
+
 void InstallInterp()
 {
+    static const uint8_t svc[] = { 0xB9, 0x8A, 0x0B, 0xA1, 0x00, 0xE8, 0xA1, 0x40, 0x15, 0x00 };   // mov ecx,DMAudio ; call Service
+    if (memcmp((void *)0x4A5DA5, svc, sizeof(svc)) == 0) PatchCall(0x4A5DAA, (void *)h_AudioService);
+    else Log("interpolation : appel de DMAudio.Service introuvable");
     static const uint8_t call[] = { 0xE8, 0x6B, 0xE6, 0xFF, 0xFF };   // call 0x4A4410
     if (memcmp((void *)0x4A5DA0, call, sizeof(call)) != 0) { Log("interpolation : appel de CGame::Process introuvable"); return; }
     PatchCall(0x4A5DA0, (void *)h_GameProcess);

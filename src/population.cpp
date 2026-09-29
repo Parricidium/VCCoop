@@ -39,7 +39,44 @@ static bool Wanted() { void *me = FindPlayerPed(); void *w = me ? Field<void *>(
 // coop.cpp HostPoliceChasesGuests) ; ses etoiles restent affichees mais ne font rien venir.
 static bool OwnPolice() { return Wanted() && !(g_cfg.hostPolice && g_shared); }
 static bool g_hostClose;   // invite colle a l'hote (< 40 m) : tout ce qu'il ferait naitre serait dans la zone de l'hote
-static void __cdecl h_GenerateRandomCars() { if (!g_hostClose || OwnPolice()) o_GenerateRandomCars(); }
+// Hote : un invite recherche dans sa zone (2 etoiles et plus) n'avait que les policiers deja la, car le jeu ne fait
+// naitre des voitures de police que d'apres les etoiles du joueur local (CCarCtrl::GenerateOneRandomCar : niveau > 1,
+// NumLawEnforcerCars < m_MaximumLawEnforcerVehicles, m_CurrentCops < m_MaxCops). Le temps de la generation, l'hote
+// "prend" le niveau de l'invite (CWanted : +0x19 m_MaxCops, +0x1A vehicules, +0x1C barrages, +0x20 niveau ; valeurs de
+// CWanted::UpdateWantedLevel, sans barrages) ; ses 0x28 premiers octets sont remis juste apres. Les voitures de police
+// ainsi nees sont envoyees sur l'invite (coop.cpp, HostPoliceChasesGuests).
+static float Dist2(const Vec3 &a, float x, float y);
+static int GuestWantedNearHost()
+{
+    void *me = FindPlayerPed();
+    if (!me) return 0;
+    const float hz = HOST_ZONE_M * g_cfg.zonePop / 100.0f;
+    int best = 0;
+    for (int i = 1; i < MAX_PLAYERS; i++) {
+        const NetPlayer &g = g_players[i];
+        if (!g.connected || !g.state.inGame || g.state.down || g.state.health <= 0.0f || g.state.area != (uint8_t)*(int *)0x978810) continue;
+        if (Dist2(Pos(me), g.state.pos[0], g.state.pos[1]) < hz * hz && g.state.wanted > best) best = g.state.wanted;
+    }
+    return best;
+}
+static void __cdecl h_GenerateRandomCars()
+{
+    if (g_hostClose && !OwnPolice()) return;
+    void *me = FindPlayerPed();
+    void *w = me ? Field<void *>(me, 0x5F4) : NULL;
+    int lvl = g_cfg.host && g_cfg.hostPolice && w ? GuestWantedNearHost() : 0;
+    if (lvl < 2 || lvl <= Field<int>(w, 0x20)) { o_GenerateRandomCars(); return; }
+    if (lvl > 6) lvl = 6;
+    static const uint8_t maxVeh[7] = { 0, 1, 2, 2, 2, 3, 3 }, maxCops[7] = { 0, 1, 3, 4, 6, 8, 10 };
+    uint8_t save[0x28];
+    memcpy(save, w, sizeof(save));
+    Field<int>(w, 0x20) = lvl;
+    Field<uint8_t>(w, 0x19) = maxCops[lvl];
+    Field<uint8_t>(w, 0x1A) = maxVeh[lvl];
+    Field<int16_t>(w, 0x1C) = 0;
+    o_GenerateRandomCars();
+    memcpy(w, save, sizeof(save));
+}
 
 // A qui revient de peupler ce point ? Hote : a moins de HOST_ZONE_M de lui. Invite : au-dela, s'il est le plus proche.
 static bool HostPos(Vec3 &out)
