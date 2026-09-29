@@ -546,8 +546,10 @@ static void DrawSkinMenu()
                                                    : L"LEFT / RIGHT: CHOOSE   ENTER: KEEP   BACKSPACE: CANCEL");
 }
 
+void Gfx9BeforeHud();   // gfx9.cpp
 static void __cdecl h_Render2dStuff()
 {
+    Gfx9BeforeHud();   // post-traitement de l'image, avant pseudos et interface
     if (GameState() == GS_PLAYING && FindPlayerPed()) { DrawNametags(); DrawSkinMenu(); DrawNotice(); DrawPlayerList();
         if (FreeAimActive()) { FontSetup(1.0f); FontColor(0xFFFFFFE0); FontPrint(ScreenW() * 0.5f, ScreenH() * 0.5f - ScreenH() * 0.03f, L"+"); } }
     ((void(__cdecl *)())0x4A6190)();

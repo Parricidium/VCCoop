@@ -175,6 +175,12 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Ambient occlusion** (`OcclusionAmbiante`, modern renderer): corners, the foot of walls, palm trees and
   characters, and the underside of cars get a soft contact shade (screen-space, edge-aware blur, fades out
   after 90 m).
+- **Image effects** (Video options > Image effects): SMAA anti-aliasing (MIT-licensed SMAA 2.8), bloom (neons,
+  sun and headlights glow softly), colour grading (`Etalonnage`: Original, Vice — "Miami 80s" colours that
+  follow the time of day —, Film) and adaptive sharpening (`Nettete`).
+- **Street lamps, neons and signs cast real light** at night (`LampadairesEclairent`), with shadows for the
+  closest ones; their painted ground patch is removed. **Soft particles** (`ParticulesDouces`): smoke and
+  explosions no longer cut sharply against the ground and walls.
 - **30 fps by default** (`ImagesParSeconde`): above 30 the original game misbehaves (vehicle entry).
 - **ASI loader built in**: `.asi` mods from the game folder, `scripts\` and `plugins\` are loaded
   (`ChargerASI=0` to skip). Do not install the Ultimate ASI Loader (same `dinput8.dll` name).
@@ -412,6 +418,12 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Occlusion ambiante** (`OcclusionAmbiante`, rendu moderne) : les coins, le pied des murs, des palmiers et des
   personnages, le dessous des voitures reçoivent une ombre de contact douce (calculée à l'écran, flou qui
   respecte les bords, s'efface après 90 m).
+- **Effets d'image** (Options vidéo > Effets d'image) : anticrénelage SMAA (SMAA 2.8, licence MIT), éclat (néons,
+  soleil et phares débordent en lumière douce), étalonnage (`Etalonnage` : Original, Vice — couleurs « Miami 80 »
+  qui suivent l'heure du jeu —, Film) et netteté adaptative (`Nettete`).
+- **Réverbères, néons et enseignes éclairent vraiment** la nuit (`LampadairesEclairent`), avec ombres pour les
+  plus proches ; leur tache peinte au sol est retirée. **Particules douces** (`ParticulesDouces`) : fumée et
+  explosions ne coupent plus net contre le sol et les murs.
 - **30 images/s par défaut** (`ImagesParSeconde`) : au-dessus, le jeu d'origine a des bogues (montée
   en véhicule).
 - **Chargeur ASI intégré** : les mods `.asi` du dossier du jeu, de `scripts\` et de `plugins\` sont

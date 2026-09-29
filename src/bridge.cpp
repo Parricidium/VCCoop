@@ -651,6 +651,7 @@ public:
         if (Gfx9Intercept(m_fvf, d, false)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, false);
         HRESULT hr = m_obj->DrawPrimitive(t, start, count);
+        Gfx9DrawDone();
         Gfx9AfterDraw(m_fvf, d);
         return hr;
     }
@@ -660,6 +661,7 @@ public:
         if (Gfx9Intercept(m_fvf, d, false)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, false);
         HRESULT hr = m_obj->DrawIndexedPrimitive(t, m_baseVertex, minIdx, numVerts, start, count);
+        Gfx9DrawDone();
         Gfx9AfterDraw(m_fvf, d);
         return hr;
     }
@@ -668,14 +670,18 @@ public:
         GfxDraw d = { false, (UINT)t, 0, 0, 0, 0, count };
         if (Gfx9Intercept(m_fvf, d, true)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, true);
-        return m_obj->DrawPrimitiveUP(t, count, data, stride);
+        HRESULT hr = m_obj->DrawPrimitiveUP(t, count, data, stride);
+        Gfx9DrawDone();
+        return hr;
     }
     STDM DrawIndexedPrimitiveUP(D3DPRIMITIVETYPE t, UINT minIdx, UINT numVerts, UINT count, const void *idx, D3DFORMAT fmt, const void *data, UINT stride)
     {
         GfxDraw d = { true, (UINT)t, 0, minIdx, numVerts, 0, count };
         if (Gfx9Intercept(m_fvf, d, true)) return D3D_OK;
         Gfx9BeforeDraw(m_fvf, true);
-        return m_obj->DrawIndexedPrimitiveUP(t, minIdx, numVerts, count, idx, fmt, data, stride);
+        HRESULT hr = m_obj->DrawIndexedPrimitiveUP(t, minIdx, numVerts, count, idx, fmt, data, stride);
+        Gfx9DrawDone();
+        return hr;
     }
     STDM ProcessVertices(UINT src, UINT dst, UINT n, VertexBuffer8 *buf, DWORD f) { return m_obj->ProcessVertices(src, dst, n, Real<IDirect3DVertexBuffer9>(buf), NULL, f); }
     // Le jeu ne cree aucun shader : seulement des formats de sommets fixes (FVF).

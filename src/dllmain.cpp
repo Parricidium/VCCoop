@@ -74,6 +74,15 @@ static void LoadConfig()
     if (g_cfg.lightShadows > 4) g_cfg.lightShadows = 4;
     g_cfg.moonShadows = GetPrivateProfileIntA("VCCoop", "OmbresLune", 1, ini) != 0;
     g_cfg.ambientOcclusion = GetPrivateProfileIntA("VCCoop", "OcclusionAmbiante", 1, ini) != 0;
+    g_cfg.smaa = GetPrivateProfileIntA("VCCoop", "SMAA", 1, ini) != 0;
+    g_cfg.bloom = GetPrivateProfileIntA("VCCoop", "Eclat", 1, ini) != 0;
+    g_cfg.grade = GetPrivateProfileIntA("VCCoop", "Etalonnage", 1, ini);
+    if (g_cfg.grade < 0 || g_cfg.grade > 2) g_cfg.grade = 1;
+    g_cfg.sharpen = GetPrivateProfileIntA("VCCoop", "Nettete", 40, ini);
+    if (g_cfg.sharpen < 0) g_cfg.sharpen = 0;
+    if (g_cfg.sharpen > 100) g_cfg.sharpen = 100;
+    g_cfg.softParticles = GetPrivateProfileIntA("VCCoop", "ParticulesDouces", 1, ini) != 0;
+    g_cfg.lampLights = GetPrivateProfileIntA("VCCoop", "LampadairesEclairent", 1, ini) != 0;
     g_cfg.captureSecs = GetPrivateProfileIntA("VCCoop", "CaptureRendu", 0, ini);
     g_cfg.freeCam = GetPrivateProfileIntA("VCCoop", "CameraLibre", 1, ini) != 0;
     g_cfg.fpsView = GetPrivateProfileIntA("VCCoop", "VuePremierePersonne", 1, ini) != 0;

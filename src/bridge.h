@@ -22,6 +22,8 @@ bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up);   // vrai : dessin gar
 void Gfx9BeforeDraw(DWORD fvf, bool up);           // avant chaque dessin du jeu (peut poser le masque d'ombre)
 void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d);    // apres chaque dessin du jeu (tampons de sommets / d'indices)
 void Gfx9BeforePresent();
+void Gfx9DrawDone();          // apres chaque dessin du jeu (retire nos shaders poses pour ce dessin)
+void Gfx9BeforeHud();         // players.cpp, avant Render2dStuff : post-traitement (SMAA, eclat, etalonnage, nettete)
 void InstallGfx9Hooks();
 void Gfx9SettingsChanged();   // qualite des ombres changee au menu : ressources refaites a la prochaine image
 // Projeteurs d'ombre seulement : les dessins du jeu sont notes par le rendu moderne mais pas affiches (objets hors

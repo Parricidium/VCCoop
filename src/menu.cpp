@@ -31,10 +31,11 @@ enum { PAGE_MAIN = 29, PAGE_NEW_GAME = 7, PAGE_COOP = 33 };
 enum { ACT_CHANGEMENU = 4, ACT_GOBACK = 34, ACT_CREATE = 60, ACT_JOIN, ACT_ADDRESS, ACT_NICK,
        ACT_FRIENDLY, ACT_MONEY, ACT_NAMES, ACT_WEAPONS, ACT_INFO, ACT_NEWGAME, ACT_LOADGAME, ACT_DRAWDIST,
        ACT_OPTIONS, ACT_OPTCOOP, ACT_OPTVIDEO, ACT_BACKSUB, ACT_MSAA, ACT_ANISO, ACT_JOINPAGE, ACT_SHADOWS,
-       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS, ACT_POPZONE, ACT_POPDENS, ACT_RAGDOLL };
+       ACT_RENDERER, ACT_SHADOWQ, ACT_WATER, ACT_LIGHTS, ACT_LIGHTSHADOWS, ACT_MOON, ACT_CLOSELOBBY, ACT_DISCONNECT, ACT_REFLECT, ACT_AO, ACT_FPS, ACT_POPZONE, ACT_POPDENS, ACT_RAGDOLL,
+       ACT_POSTPAGE, ACT_AMBPAGE, ACT_SMAA, ACT_BLOOM, ACT_GRADE, ACT_SHARPEN, ACT_SOFTPART, ACT_LAMPS };
 // Sous-pages de l'ecran COOP (meme ecran 33, contenu refait) : accueil / salon / en partie, puis Options,
 // Options coop, Options video. Echap (ou Retour) remonte d'un cran.
-enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN };
+enum { SUB_MAIN, SUB_OPTIONS, SUB_COOP, SUB_VIDEO, SUB_JOIN, SUB_POST, SUB_AMB };   // Effets d'image, Ambiance : sous-pages de Options video
 static int g_sub, g_subParent;
 enum { PAGE_LOAD_GAME = 8 };
 
@@ -94,6 +95,14 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "OmbresLumieres", g_cfg.lightShadows ? "4" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OmbresLune", g_cfg.moonShadows ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OcclusionAmbiante", g_cfg.ambientOcclusion ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "SMAA", g_cfg.smaa ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "Eclat", g_cfg.bloom ? "1" : "0", ini);
+    wsprintfA(dd, "%d", g_cfg.grade);
+    WritePrivateProfileStringA("VCCoop", "Etalonnage", dd, ini);
+    wsprintfA(dd, "%d", g_cfg.sharpen);
+    WritePrivateProfileStringA("VCCoop", "Nettete", dd, ini);
+    WritePrivateProfileStringA("VCCoop", "ParticulesDouces", g_cfg.softParticles ? "1" : "0", ini);
+    WritePrivateProfileStringA("VCCoop", "LampadairesEclairent", g_cfg.lampLights ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "VuePremierePersonne", g_cfg.fpsView ? "1" : "0", ini);
     wsprintfA(dd, "%d", g_cfg.zonePop);
     WritePrivateProfileStringA("VCCoop", "ZonePopulation", dd, ini);
@@ -106,7 +115,7 @@ static void SaveIni()
 }
 
 // --- Textes ---
-static wchar_t g_text[40][80];
+static wchar_t g_text[48][80];
 
 static const wchar_t *Put(int slot, const char *s)
 {
@@ -127,7 +136,8 @@ static const wchar_t *CoopText(const char *key)
     char buf[96];
     if (!strcmp(key, "VCC_MM")) return Put(0, "COOP");
     if (!strcmp(key, "VCC_TIT")) return Put(1, g_sub == SUB_OPTIONS ? "Options" : g_sub == SUB_COOP ? (fr ? "Options coop" : "Coop options")
-                                              : g_sub == SUB_VIDEO ? (fr ? "Options video" : "Video options") : g_sub == SUB_JOIN ? (fr ? "Rejoindre" : "Join") : "COOP");
+                                              : g_sub == SUB_VIDEO ? (fr ? "Options video" : "Video options") : g_sub == SUB_JOIN ? (fr ? "Rejoindre" : "Join")
+                                              : g_sub == SUB_POST ? (fr ? "Effets d'image" : "Image effects") : g_sub == SUB_AMB ? (fr ? "Ambiance" : "Atmosphere") : "COOP");
     if (!strcmp(key, "VCC_JP")) return Put(23, fr ? "Rejoindre" : "Join");
     if (!strcmp(key, "VCC_OPT")) return Put(18, "Options");
     if (!strcmp(key, "VCC_OC")) return Put(19, fr ? "Options coop" : "Coop options");
@@ -167,6 +177,22 @@ static const wchar_t *CoopText(const char *key)
         wsprintfA(buf, "%s : %d%%", fr ? "Densite de population" : "Population density", g_cfg.popDensity);
         return Put(34, buf);
     }
+    if (!strcmp(key, "VCC_PP")) return Put(36, fr ? "Effets d'image..." : "Image effects...");
+    if (!strcmp(key, "VCC_AM")) return Put(37, fr ? "Ambiance..." : "Atmosphere...");
+    if (!strcmp(key, "VCC_SM")) { wsprintfA(buf, "SMAA : %s", g_cfg.smaa ? yes : no); return Put(38, buf); }
+    if (!strcmp(key, "VCC_BL")) { wsprintfA(buf, "%s : %s", fr ? "Eclat (lumieres qui debordent)" : "Bloom", g_cfg.bloom ? yes : no); return Put(39, buf); }
+    if (!strcmp(key, "VCC_GR")) {
+        static const char *fN[3] = { "Original", "Vice", "Film" };
+        wsprintfA(buf, "%s : %s", fr ? "Etalonnage" : "Color grading", fN[g_cfg.grade < 0 || g_cfg.grade > 2 ? 0 : g_cfg.grade]);
+        return Put(40, buf);
+    }
+    if (!strcmp(key, "VCC_NT")) {
+        if (g_cfg.sharpen > 0) wsprintfA(buf, "%s : %d%%", fr ? "Nettete" : "Sharpening", g_cfg.sharpen);
+        else wsprintfA(buf, "%s : %s", fr ? "Nettete" : "Sharpening", no);
+        return Put(41, buf);
+    }
+    if (!strcmp(key, "VCC_SP")) { wsprintfA(buf, "%s : %s", fr ? "Particules douces" : "Soft particles", g_cfg.softParticles ? yes : no); return Put(42, buf); }
+    if (!strcmp(key, "VCC_LP")) { wsprintfA(buf, "%s : %s", fr ? "Lampadaires et neons eclairent" : "Street lamps and neons cast light", g_cfg.lampLights ? yes : no); return Put(43, buf); }
     if (!strcmp(key, "VCC_RG")) {
         wsprintfA(buf, "%s : %s", fr ? "Corps mous" : "Ragdolls", g_cfg.ragdoll ? yes : no);
         return Put(35, buf);
@@ -303,6 +329,7 @@ static void EndEdit(bool keep)
 
 static void SubBack()
 {
+    if (g_sub == SUB_POST || g_sub == SUB_AMB) { g_sub = SUB_VIDEO; *(int *)(Menu() + 0x30) = 0; return; }   // (parent de Options video garde)
     g_sub = g_subParent;
     g_subParent = SUB_MAIN;
     *(int *)(Menu() + 0x30) = 0;
@@ -395,6 +422,14 @@ static void OnCoopAction(int action)
     case ACT_JOINPAGE: g_subParent = SUB_MAIN; g_sub = SUB_JOIN; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_OPTCOOP: g_subParent = g_sub; g_sub = SUB_COOP; *(int *)(Menu() + 0x30) = 0; break;
     case ACT_OPTVIDEO: g_subParent = g_sub; g_sub = SUB_VIDEO; *(int *)(Menu() + 0x30) = 0; break;
+    case ACT_POSTPAGE: g_sub = SUB_POST; *(int *)(Menu() + 0x30) = 0; break;
+    case ACT_AMBPAGE: g_sub = SUB_AMB; *(int *)(Menu() + 0x30) = 0; break;
+    case ACT_SMAA: g_cfg.smaa = !g_cfg.smaa; SaveIni(); break;
+    case ACT_BLOOM: g_cfg.bloom = !g_cfg.bloom; SaveIni(); break;
+    case ACT_GRADE: g_cfg.grade = (g_cfg.grade + 1) % 3; SaveIni(); break;
+    case ACT_SHARPEN: g_cfg.sharpen = g_cfg.sharpen >= 100 ? 0 : g_cfg.sharpen + 20; SaveIni(); break;
+    case ACT_SOFTPART: g_cfg.softParticles = !g_cfg.softParticles; SaveIni(); break;
+    case ACT_LAMPS: g_cfg.lampLights = !g_cfg.lampLights; SaveIni(); break;
     case ACT_BACKSUB: SubBack(); break;
     }
 }
@@ -467,11 +502,16 @@ static void BuildCoopPage()
             items[n++] = { ACT_SHADOWQ, "VCC_SQ" };
             items[n++] = { ACT_WATER, "VCC_WA" };    // reflets compris
             items[n++] = { ACT_LIGHTS, "VCC_LI" };   // ombres des lumieres comprises
-            items[n++] = { ACT_MOON, "VCC_MO" };
-            items[n++] = { ACT_AO, "VCC_AO" };
         }
         items[n++] = { ACT_FPS, "VCC_FP" };
         items[n++] = { ACT_RENDERER, "VCC_RD" };
+        if (g_cfg.renderer == 9) { items[n++] = { ACT_POSTPAGE, "VCC_PP" }; items[n++] = { ACT_AMBPAGE, "VCC_AM" }; }
+    } else if (g_sub == SUB_POST) {
+        items[n++] = { ACT_SMAA, "VCC_SM" }; items[n++] = { ACT_BLOOM, "VCC_BL" };
+        items[n++] = { ACT_GRADE, "VCC_GR" }; items[n++] = { ACT_SHARPEN, "VCC_NT" };
+    } else if (g_sub == SUB_AMB) {
+        items[n++] = { ACT_AO, "VCC_AO" }; items[n++] = { ACT_MOON, "VCC_MO" };
+        items[n++] = { ACT_LAMPS, "VCC_LP" }; items[n++] = { ACT_SOFTPART, "VCC_SP" };
     } else if (!g_netStarted && !inGame) {
         // Accueil : Creer / Rejoindre / Pseudo / Options (coop + video : a regler avant de creer ou rejoindre).
         items[n++] = { ACT_CREATE, "VCC_CRE" }; items[n++] = { ACT_JOINPAGE, "VCC_JP" };
@@ -557,7 +597,7 @@ void MenuFrame()
             return;
         }
         if (_stricmp(g_cfg.testMenuPlan, "options") == 0) {   // Options > Options video, puis Echap x2 (retour accueil)
-            static bool shown;
+            static bool shown, pagesDone;
             // Lignes cherchees par action (leur place change selon l'etat du menu).
             auto find = [](int act) { for (int i = 0; i < 12; i++) if (Screens()[PAGE_COOP].entries[i].action == act) return i; return -1; };
             if (step == 0 && CurrentPage() == PAGE_COOP && find(ACT_OPTIONS) >= 0) { g_pendingSelect = find(ACT_OPTIONS); step = 1; since = now; }
@@ -569,7 +609,15 @@ void MenuFrame()
                 int n = 0; for (int i = 0; i < 12; i++) n += Screens()[PAGE_COOP].entries[i].action != 0;
                 Log("menu : test, Options video ouvertes : %d lignes, page suivante intacte : %.8s", n, Screens()[PAGE_COOP + 1].name);
             }
-            else if (step == 2 && now - since > 4000) { g_pendingBack = true; step = 3; since = now; Log("menu : test, sous-page %d", g_sub); }
+            else if (step == 2 && now - since > 3000 && !pagesDone && find(ACT_POSTPAGE) >= 0) { g_pendingSelect = find(ACT_POSTPAGE); step = 20; since = now; }
+            else if ((step == 20 || step == 22) && now - since > 1500) {
+                int n = 0; for (int i = 0; i < 12; i++) n += Screens()[PAGE_COOP].entries[i].action != 0;
+                Log("menu : test, sous-page %d : %d lignes", g_sub, n);
+                g_pendingBack = true; step++; since = now;
+            }
+            else if (step == 21 && now - since > 1500 && find(ACT_AMBPAGE) >= 0) { g_pendingSelect = find(ACT_AMBPAGE); step = 22; since = now; }
+            else if (step == 23 && now - since > 1500) { pagesDone = true; step = 2; since = now - 3000; Log("menu : test, retour sous-page %d", g_sub); }
+            else if (step == 2 && now - since > 4000 && (pagesDone || find(ACT_POSTPAGE) < 0)) { g_pendingBack = true; step = 3; since = now; Log("menu : test, sous-page %d", g_sub); }
             else if (step == 3 && now - since > 1500) { g_pendingBack = true; step = 4; since = now; Log("menu : test, sous-page %d", g_sub); }
             else if (step == 4 && now - since > 1500) { step = 5; Log("menu : test, sous-page %d, page %d", g_sub, CurrentPage()); }
             return;

@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <vector>
+#include <string>
 #include <xmmintrin.h>
 
 using namespace game;
@@ -57,6 +58,7 @@ static int g_captureStage;                    // 1 : capture demandee pour cette
 static int g_captureIndex;
 static UINT g_width, g_height;
 static bool g_msaa;
+static bool g_effectsPass, g_depthReady;   // pendant RenderEffects ; profondeur de la scene prete (particules douces)
 
 // ======================================================================= Matrices (lignes, vecteurs lignes)
 struct M4 { float m[16]; };
@@ -946,10 +948,14 @@ static void __cdecl h_RenderEverythingBarRoads()
     ExtraCasters();
 }
 
+static void ReleasePostResources();
+static bool g_postResFailed;
 void Gfx9SettingsChanged()
 {
     if (!g_dev) return;
     ReleaseResources();
+    ReleasePostResources();
+    g_postResFailed = false;
     g_resourcesFailed = false;
 }
 
@@ -963,7 +969,8 @@ void Gfx9DeviceCreated(IDirect3DDevice9 *dev, UINT width, UINT height, bool msaa
     g_debugMask = GetPrivateProfileIntA("VCCoop", "OmbresDebug", 0, IniPath());
     if (g_cfg.sunShadows || g_cfg.modernWater || g_cfg.dynLights) CreateShaders();   // au lancement (pas au milieu d'une image de jeu)
 }
-void Gfx9BeforeReset() { SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; }
+static void ReleasePostResources();
+void Gfx9BeforeReset() { SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
 void Gfx9AfterReset(UINT width, UINT height, bool msaa) { g_width = width; g_height = height; g_msaa = msaa; }
 
 void Gfx9BeginScene()
@@ -1209,6 +1216,97 @@ static void __cdecl h_StoreCarLight(void *car, int id, void *tex, float *pos, fl
     o_StoreCarLight(car, id, tex, pos, fx, fy, sx, sy, r, g, b, maxAngle);
 }
 
+// ======================================================================= Lampadaires, neons, enseignes
+// Les lumieres des batiments et objets (2dEffect "light", CEntity::ProcessLightsForEntity 0x541590) ne sont que des
+// halos (CCoronas::RegisterCorona, variante a texture 0x542490) et, sous les lampadaires, une tache lumineuse peinte
+// au sol (CShadows::StoreStaticShadow 0x56E780, type 2 additif). Chacune devient ici une vraie lumiere (couleur de
+// l'effet, portee selon la taille du halo ou de la tache) qui eclaire rue, voitures et personnages, avec ombre pour
+// les plus proches (meme systeme que les phares) ; la tache peinte est retiree. Les candidates (jusqu'a 256) sont
+// triees par importance et completent la liste des lumieres de l'image.
+#include <intrin.h>
+enum { MAX_LAMPS = 256 };
+static DynLight g_lamps[MAX_LAMPS];
+static int g_lampCount;
+static bool FromEntityLights(void *ret) { uintptr_t a = (uintptr_t)ret; return a >= 0x541590 && a < 0x541F00; }
+
+static void AddLamp(float x, float y, float z, float radius, float r, float g, float b)
+{
+    if (r + g + b < 0.03f || radius <= 0.5f) return;
+    const float *cam = (const float *)0x7E46B8;
+    float ex = x - cam[0], ey = y - cam[1], ez = z - cam[2];
+    if (ex * ex + ey * ey + ez * ez > 160.0f * 160.0f) return;
+    for (int i = 0; i < g_lampCount; i++) {   // halo et tache de la meme lampe : une seule lumiere
+        DynLight &l = g_lamps[i];
+        float dx = l.x - x, dy = l.y - y, dz = l.z - z;
+        if (dx * dx + dy * dy + dz * dz < 1.5f * 1.5f) {
+            if (radius > l.radius) l.radius = radius;
+            if (r + g + b > l.r + l.g + l.b) { l.r = r; l.g = g; l.b = b; }
+            return;
+        }
+    }
+    if (g_lampCount < MAX_LAMPS) g_lamps[g_lampCount++] = { x, y, z, 0, 0, -1, radius, r, g, b, 0, 0.0f };
+}
+
+typedef void(__cdecl *StoreStaticShadow_t)(uint32_t, int, void *, const float *, float, float, float, float, int, int, int, int, float, float, float, int, float);
+static StoreStaticShadow_t o_StoreStaticShadow;
+static void __cdecl h_StoreStaticShadow(uint32_t id, int type, void *tex, const float *pos, float fx, float fy, float sx, float sy,
+                                        int intensity, int r, int g, int b, float zDist, float scale, float drawDist, int temporary, float upDist)
+{
+    if (g_cfg.lampLights && g_lightsLive && (type & 0xFF) == 2 && pos && FromEntityLights(_ReturnAddress())) {
+        float size = fabsf(fx) > fabsf(sy) ? fabsf(fx) : fabsf(sy);
+        float k = 2.2f / 255.0f;
+        AddLamp(pos[0], pos[1], pos[2], size * 2.4f < 5.0f ? 5.0f : size * 2.4f > 18.0f ? 18.0f : size * 2.4f,
+                (r & 0xFF) * k, (g & 0xFF) * k, (b & 0xFF) * k);
+        return;   // plus de tache peinte : la lumiere eclaire vraiment
+    }
+    o_StoreStaticShadow(id, type, tex, pos, fx, fy, sx, sy, intensity, r, g, b, zDist, scale, drawDist, temporary, upDist);
+}
+
+typedef void(__cdecl *RegisterCoronaTex_t)(uint32_t, int, int, int, int, const float *, float, float, void *, int, int, int, int, float, int, float);
+static RegisterCoronaTex_t o_RegisterCoronaTex;
+static void __cdecl h_RegisterCoronaTex(uint32_t id, int r, int g, int b, int a, const float *pos, float size, float drawDist, void *tex,
+                                        int flare, int refl, int los, int streak, float angle, int longDist, float nearDist)
+{
+    if (g_cfg.lampLights && g_lightsLive && pos && (a & 0xFF) > 20 && FromEntityLights(_ReturnAddress())) {
+        float k = 1.1f * (a & 0xFF) / (255.0f * 255.0f);
+        float rad = size * 4.5f;
+        AddLamp(pos[0], pos[1], pos[2], rad < 2.5f ? 2.5f : rad > 12.0f ? 12.0f : rad, (r & 0xFF) * k, (g & 0xFF) * k, (b & 0xFF) * k);
+    }
+    o_RegisterCoronaTex(id, r, g, b, a, pos, size, drawDist, tex, flare, refl, los, streak, angle, longDist, nearDist);
+}
+
+// Les lampes les plus importantes (vues d'ici) completent la liste des lumieres ; pas de doublon avec une lumiere
+// deja donnee par le jeu (CPointLights::AddLight d'un lampadaire).
+static void MergeLamps()
+{
+    if (!g_lampCount) return;
+    const float *cam = (const float *)0x7E46B8;
+    static float score[MAX_LAMPS];
+    for (int i = 0; i < g_lampCount; i++) {
+        const DynLight &l = g_lamps[i];
+        float dx = l.x - cam[0], dy = l.y - cam[1], dz = l.z - cam[2];
+        score[i] = (l.r + l.g + l.b) * l.radius / (6.0f + sqrtf(dx * dx + dy * dy + dz * dz));
+    }
+    int added = 0;
+    while (g_lightCount < MAX_LIGHTS) {
+        int best = -1;
+        for (int i = 0; i < g_lampCount; i++) if (score[i] > 0 && (best < 0 || score[i] > score[best])) best = i;
+        if (best < 0) break;
+        score[best] = 0;
+        const DynLight &l = g_lamps[best];
+        bool dup = false;
+        for (int j = 0; j < g_lightCount && !dup; j++) {
+            float dx = g_lightList[j].x - l.x, dy = g_lightList[j].y - l.y, dz = g_lightList[j].z - l.z;
+            dup = g_lightList[j].type == 0 && dx * dx + dy * dy + dz * dz < 2.0f * 2.0f;
+        }
+        if (dup) continue;
+        g_lightList[g_lightCount++] = l;
+        added++;
+    }
+    static uint32_t lastLog;
+    if (GetTickCount() - lastLog > 10000) { lastLog = GetTickCount(); Log("rendu : %d lampes et enseignes vues, %d eclairent", g_lampCount, added); }
+}
+
 static void SetCommonStates()
 {
     g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
@@ -1322,6 +1420,7 @@ static void Apply()
     g_applied = true;
     UpdateSun();
     ChooseMainView();
+    if (LightsWanted()) MergeLamps();
     bool shadows = ShadowsWanted() && g_sunK > 0.01f;
     bool lights = LightsWanted() && g_lightCount > 0;
     bool aoWanted = AoWanted();
@@ -1382,6 +1481,7 @@ static void Apply()
     // 2. Profondeur de la scene vue de la camera (l'eau comprise : elle recoit ombres et lumieres).
     const float depthScale = kDepthScale;
     RenderScreenDepth(vp, true);
+    g_depthReady = true;
 
     // 3. Masque d'ombre sur l'image.
     if (g_captureStage == 1 && !g_captureBefore && SUCCEEDED(g_dev->CreateRenderTarget(g_width, g_height, D3DFMT_X8R8G8B8, D3DMULTISAMPLE_NONE, 0, FALSE, &g_captureBefore, NULL)))
@@ -1539,6 +1639,7 @@ static bool g_waterTexSet;
 static void *g_waterTex;
 static int g_waterDraws;
 
+static void MaybeBindSoft(DWORD fvf);
 extern bool g_hideOwnGlass;   // camera.cpp : vehicule du joueur en vue a la premiere personne
 bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
 {
@@ -1548,6 +1649,7 @@ bool Gfx9Intercept(DWORD fvf, const GfxDraw &d, bool up)
         if (blend) return true;
     }
     if (g_bridgeCasterOnly) { if (!up) Gfx9AfterDraw(fvf, d); return true; }
+    if (g_effectsPass && g_dev) { MaybeBindSoft(fvf); return false; }
     if (!g_waterPass || !g_dev || !WaterWanted()) return false;
     // Sur PC, RenderWater ne dessine que la mer au loin ; l'eau proche vient de RenderTransparentWater (meme texture),
     // suivie d'un masque (autre texture) qu'on retire aussi.
@@ -1807,6 +1909,464 @@ void Gfx9BeforeDraw(DWORD fvf, bool up)
 
 void Gfx9EndScene() { if (!g_applied && g_recs.size() >= 20) Apply(); }
 
+// ======================================================================= Post-traitement (avant l'interface)
+// Juste avant Render2dStuff (appel 0x4A608E dans Idle : la scene, les particules, les halos et le flou de mouvement
+// du jeu sont dessines ; l'interface pas encore) :
+//  1. SMAA 1x (SMAA 2.8, licence MIT, smaa/) : bords en escalier (palmiers, fils, carrosseries) ;
+//  2. eclat : zones claires (neons, soleil, phares, reflets) extraites a 1/4 de la taille, floutees a 1/4, 1/8, 1/16 ;
+//  3. passe finale : nettete adaptative (contraste local, a la maniere de CAS), eclat ajoute, etalonnage (Original,
+//     Vice, Film) teinte selon l'heure du jeu (coucher : roses et turquoises ; nuit : bleutee), vignette.
+#include "smaa/smaa_src.h"
+#include "smaa/AreaTex.h"
+#include "smaa/SearchTex.h"
+
+static const char kPostShaders[] = R"HLSL(
+float4 gTexel : register(c0);      // 1/largeur, 1/hauteur de la source, largeur, hauteur
+float4 gBloomP : register(c1);     // seuil, genou, direction du flou (x, y)
+float4 gGrade0 : register(c2);     // saturation, contraste, exposition, vignette
+float4 gGradeLo : register(c3);    // teinte des ombres (rgb), courbe filmique (w)
+float4 gGradeHi : register(c4);    // teinte des lumieres (rgb), force de l'eclat (w)
+float4 gSharp : register(c5);      // x = nettete (0..1)
+sampler2D sSrc : register(s0);
+sampler2D sB1 : register(s1);
+sampler2D sB2 : register(s2);
+sampler2D sB3 : register(s3);
+struct PIn { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+PIn VsPost(PIn i) { return i; }
+
+float3 Box4(float2 uv) {
+  float2 t = gTexel.xy;
+  return (tex2D(sSrc, uv + t * float2(-0.5, -0.5)).rgb + tex2D(sSrc, uv + t * float2(0.5, -0.5)).rgb +
+          tex2D(sSrc, uv + t * float2(-0.5, 0.5)).rgb + tex2D(sSrc, uv + t * float2(0.5, 0.5)).rgb) * 0.25;
+}
+float4 PsBright(PIn i) : COLOR {
+  float3 c = Box4(i.uv);
+  float l = max(c.r, max(c.g, c.b));
+  float knee = gBloomP.y;
+  float soft = clamp(l - gBloomP.x + knee, 0, 2 * knee);
+  soft = soft * soft / (4 * knee + 1e-4);
+  float k = max(soft, l - gBloomP.x) / max(l, 1e-4);
+  return float4(c * k, 1);
+}
+float4 PsDown(PIn i) : COLOR { return float4(Box4(i.uv), 1); }
+float4 PsBlur(PIn i) : COLOR {
+  float2 d = gBloomP.zw * gTexel.xy;
+  const float w[5] = { 0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216 };
+  float3 c = tex2D(sSrc, i.uv).rgb * w[0];
+  [unroll] for (int k = 1; k < 5; k++) c += (tex2D(sSrc, i.uv + d * k).rgb + tex2D(sSrc, i.uv - d * k).rgb) * w[k];
+  return float4(c, 1);
+}
+float3 Hable(float3 x) {
+  const float A = 0.22, B = 0.30, C = 0.10, D = 0.20, E = 0.01, F = 0.30;
+  return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - E / F;
+}
+float4 PsFinal(PIn i) : COLOR {
+  float2 t = gTexel.xy;
+  float3 c = tex2Dlod(sSrc, float4(i.uv, 0, 0)).rgb;
+  [branch] if (gSharp.x > 0) {
+    float3 n = tex2Dlod(sSrc, float4(i.uv + float2(0, -t.y), 0, 0)).rgb, s = tex2Dlod(sSrc, float4(i.uv + float2(0, t.y), 0, 0)).rgb;
+    float3 e = tex2Dlod(sSrc, float4(i.uv + float2(t.x, 0), 0, 0)).rgb, w = tex2Dlod(sSrc, float4(i.uv + float2(-t.x, 0), 0, 0)).rgb;
+    float3 mn = min(c, min(min(n, s), min(e, w))), mx = max(c, max(max(n, s), max(e, w)));
+    float3 amp = sqrt(saturate(min(mn, 1 - mx) / max(mx, 1e-4)));   // peu de contraste local : plus de nettete
+    float3 wgt = -amp * gSharp.x * 0.2;
+    c = saturate((c + (n + s + e + w) * wgt) / (1 + 4 * wgt));
+  }
+  c += (tex2D(sB1, i.uv).rgb * 0.55 + tex2D(sB2, i.uv).rgb * 0.75 + tex2D(sB3, i.uv).rgb * 0.95) * gGradeHi.w;
+  c *= gGrade0.z;
+  if (gGradeLo.w > 0.5) c = Hable(c * 3.2) / Hable(3.2);   // courbe "film" : hautes lumieres adoucies
+  float l = dot(c, float3(0.2126, 0.7152, 0.0722));
+  c = lerp(l.xxx, c, gGrade0.x);
+  c = (c - 0.5) * gGrade0.y + 0.5;
+  c *= lerp(gGradeLo.rgb, gGradeHi.rgb, smoothstep(0.05, 0.85, l));   // ombres / lumieres teintees
+  float2 v = i.uv - 0.5;
+  c *= 1 - dot(v, v) * gGrade0.w;
+  return float4(saturate(c), 1);
+}
+)HLSL";
+
+static const char kSmaaWrap[] = R"HLSL(
+float4 gRtMetrics : register(c0);
+#define SMAA_RT_METRICS gRtMetrics
+#define SMAA_HLSL_3 1
+#define SMAA_PRESET_HIGH 1
+)HLSL";
+static const char kSmaaEntries[] = R"HLSL(
+sampler2D sColor : register(s0);
+sampler2D sEdges : register(s1);
+sampler2D sArea : register(s2);
+sampler2D sSearch : register(s3);
+struct SIn { float4 pos : POSITION; float2 uv : TEXCOORD0; };
+struct SEdge { float4 pos : POSITION; float2 uv : TEXCOORD0; float4 o0 : TEXCOORD1; float4 o1 : TEXCOORD2; float4 o2 : TEXCOORD3; };
+SEdge VsSmaaEdge(SIn i) { SEdge o; o.pos = i.pos; o.uv = i.uv; float4 off[3]; SMAAEdgeDetectionVS(i.uv, off); o.o0 = off[0]; o.o1 = off[1]; o.o2 = off[2]; return o; }
+float4 PsSmaaEdge(SEdge i) : COLOR { float4 off[3] = { i.o0, i.o1, i.o2 }; return float4(SMAALumaEdgeDetectionPS(i.uv, off, sColor), 0, 0); }
+struct SWeight { float4 pos : POSITION; float2 uv : TEXCOORD0; float2 pix : TEXCOORD1; float4 o0 : TEXCOORD2; float4 o1 : TEXCOORD3; float4 o2 : TEXCOORD4; };
+SWeight VsSmaaWeight(SIn i) { SWeight o; o.pos = i.pos; o.uv = i.uv; float4 off[3]; SMAABlendingWeightCalculationVS(i.uv, o.pix, off); o.o0 = off[0]; o.o1 = off[1]; o.o2 = off[2]; return o; }
+float4 PsSmaaWeight(SWeight i) : COLOR { float4 off[3] = { i.o0, i.o1, i.o2 }; return SMAABlendingWeightCalculationPS(i.uv, i.pix, off, sEdges, sArea, sSearch, 0); }
+struct SBlend { float4 pos : POSITION; float2 uv : TEXCOORD0; float4 o : TEXCOORD1; };
+SBlend VsSmaaBlend(SIn i) { SBlend o; o.pos = i.pos; o.uv = i.uv; SMAANeighborhoodBlendingVS(i.uv, o.o); return o; }
+float4 PsSmaaBlend(SBlend i) : COLOR { return SMAANeighborhoodBlendingPS(i.uv, i.o, sColor, sEdges); }
+)HLSL";
+
+static IDirect3DVertexShader9 *g_vsPost, *g_vsSmaa[3];
+static IDirect3DPixelShader9 *g_psSmaa[3], *g_psBright, *g_psDown, *g_psBlur, *g_psFinal;
+static IDirect3DTexture9 *g_postA, *g_postB, *g_smaaEdge, *g_smaaWeight, *g_areaTex, *g_searchTex, *g_bloomTex[3][2];
+static IDirect3DStateBlock9 *g_postState;
+static bool g_postTried, g_postShadersOk, g_postResOk;
+static UINT g_bloomW[3], g_bloomH[3];
+
+static IUnknown *CompileFrom(const std::string &source, const char *entry, const char *target)
+{
+    if (!g_compile) return NULL;
+    ID3DBlob *code = NULL, *err = NULL;
+    HRESULT hr = g_compile(source.data(), source.size(), "vccoop-post", NULL, NULL, entry, target, D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &code, &err);
+    if (FAILED(hr)) {
+        Log("rendu : shader %s refuse : %.600s", entry, err ? (const char *)err->GetBufferPointer() : "?");
+        if (err) err->Release();
+        return NULL;
+    }
+    if (err) err->Release();
+    IUnknown *out = NULL;
+    if (target[0] == 'v') g_dev->CreateVertexShader((const DWORD *)code->GetBufferPointer(), (IDirect3DVertexShader9 **)&out);
+    else g_dev->CreatePixelShader((const DWORD *)code->GetBufferPointer(), (IDirect3DPixelShader9 **)&out);
+    code->Release();
+    return out;
+}
+
+static bool CreatePostShaders()
+{
+    if (g_postTried) return g_postShadersOk;
+    g_postTried = true;
+    CreateShaders();
+    if (!g_compile) return false;
+    std::string post(kPostShaders);
+    g_vsPost = (IDirect3DVertexShader9 *)CompileFrom(post, "VsPost", "vs_3_0");
+    g_psBright = (IDirect3DPixelShader9 *)CompileFrom(post, "PsBright", "ps_3_0");
+    g_psDown = (IDirect3DPixelShader9 *)CompileFrom(post, "PsDown", "ps_3_0");
+    g_psBlur = (IDirect3DPixelShader9 *)CompileFrom(post, "PsBlur", "ps_3_0");
+    g_psFinal = (IDirect3DPixelShader9 *)CompileFrom(post, "PsFinal", "ps_3_0");
+    std::string smaa = std::string(kSmaaWrap) + kSmaaSource + kSmaaEntries;
+    static const char *vs[3] = { "VsSmaaEdge", "VsSmaaWeight", "VsSmaaBlend" }, *ps[3] = { "PsSmaaEdge", "PsSmaaWeight", "PsSmaaBlend" };
+    for (int k = 0; k < 3; k++) {
+        g_vsSmaa[k] = (IDirect3DVertexShader9 *)CompileFrom(smaa, vs[k], "vs_3_0");
+        g_psSmaa[k] = (IDirect3DPixelShader9 *)CompileFrom(smaa, ps[k], "ps_3_0");
+    }
+    g_postShadersOk = g_vsPost && g_psFinal;
+    Log("rendu : post-traitement %s (SMAA %s, eclat %s)", g_postShadersOk ? "pret" : "en echec",
+        g_vsSmaa[0] && g_vsSmaa[1] && g_vsSmaa[2] && g_psSmaa[0] && g_psSmaa[1] && g_psSmaa[2] ? "oui" : "non",
+        g_psBright && g_psDown && g_psBlur ? "oui" : "non");
+    return g_postShadersOk;
+}
+
+static void ReleasePostResources()
+{
+    SafeRelease(g_postA); SafeRelease(g_postB); SafeRelease(g_smaaEdge); SafeRelease(g_smaaWeight);
+    for (auto &l : g_bloomTex) { SafeRelease(l[0]); SafeRelease(l[1]); }
+    SafeRelease(g_postState);
+    g_postResOk = false;
+}
+
+static bool RenderTargetTex(UINT w, UINT h, IDirect3DTexture9 **t)
+{
+    return SUCCEEDED(g_dev->CreateTexture(w, h, 1, D3DUSAGE_RENDERTARGET, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, t, NULL));
+}
+
+static bool CreatePostResources()
+{
+    if (g_postResOk) return true;
+    if (g_postResFailed || !CreatePostShaders()) return false;
+    g_postResFailed = true;
+    if (!RenderTargetTex(g_width, g_height, &g_postA) || !RenderTargetTex(g_width, g_height, &g_postB) ||
+        !RenderTargetTex(g_width, g_height, &g_smaaEdge) || !RenderTargetTex(g_width, g_height, &g_smaaWeight)) {
+        Log("rendu : cibles du post-traitement impossibles"); ReleasePostResources(); return false;
+    }
+    for (int l = 0; l < 3; l++) {
+        g_bloomW[l] = g_width >> (2 + l); g_bloomH[l] = g_height >> (2 + l);
+        if (g_bloomW[l] < 8) g_bloomW[l] = 8;
+        if (g_bloomH[l] < 8) g_bloomH[l] = 8;
+        if (!RenderTargetTex(g_bloomW[l], g_bloomH[l], &g_bloomTex[l][0]) || !RenderTargetTex(g_bloomW[l], g_bloomH[l], &g_bloomTex[l][1])) {
+            Log("rendu : cibles de l'eclat impossibles"); ReleasePostResources(); return false;
+        }
+    }
+    // Tables du SMAA (gardees d'une remise a zero a l'autre) : aire en A8L8 (R -> L, G -> A : lue .ra), recherche en L8.
+    if (!g_areaTex && SUCCEEDED(g_dev->CreateTexture(AREATEX_WIDTH, AREATEX_HEIGHT, 1, 0, D3DFMT_A8L8, D3DPOOL_MANAGED, &g_areaTex, NULL))) {
+        D3DLOCKED_RECT lr;
+        if (SUCCEEDED(g_areaTex->LockRect(0, &lr, NULL, 0))) {
+            for (int y = 0; y < AREATEX_HEIGHT; y++) memcpy((BYTE *)lr.pBits + y * lr.Pitch, areaTexBytes + y * AREATEX_PITCH, AREATEX_PITCH);
+            g_areaTex->UnlockRect(0);
+        }
+    }
+    if (!g_searchTex && SUCCEEDED(g_dev->CreateTexture(SEARCHTEX_WIDTH, SEARCHTEX_HEIGHT, 1, 0, D3DFMT_L8, D3DPOOL_MANAGED, &g_searchTex, NULL))) {
+        D3DLOCKED_RECT lr;
+        if (SUCCEEDED(g_searchTex->LockRect(0, &lr, NULL, 0))) {
+            for (int y = 0; y < SEARCHTEX_HEIGHT; y++) memcpy((BYTE *)lr.pBits + y * lr.Pitch, searchTexBytes + y * SEARCHTEX_PITCH, SEARCHTEX_PITCH);
+            g_searchTex->UnlockRect(0);
+        }
+    }
+    if (FAILED(g_dev->CreateStateBlock(D3DSBT_ALL, &g_postState))) { ReleasePostResources(); return false; }
+    g_postResFailed = false;
+    g_postResOk = true;
+    return true;
+}
+
+// Rectangle plein ecran sur une cible de w x h : demi-texel de Direct3D 9 compense.
+static void PostQuadTo(IDirect3DSurface9 *s, UINT w, UINT h)
+{
+    g_dev->SetRenderTarget(0, s);
+    D3DVIEWPORT9 vp = { 0, 0, w, h, 0, 1 };
+    g_dev->SetViewport(&vp);
+    float ox = -1.0f / w, oy = 1.0f / h;
+    const float q[4 * 6] = {
+        -1 + ox, 1 + oy, 0.5f, 1, 0, 0,
+         1 + ox, 1 + oy, 0.5f, 1, 1, 0,
+        -1 + ox, -1 + oy, 0.5f, 1, 0, 1,
+         1 + ox, -1 + oy, 0.5f, 1, 1, 1,
+    };
+    g_dev->SetFVF(D3DFVF_XYZW | D3DFVF_TEX1);
+    g_dev->DrawPrimitiveUP(D3DPT_TRIANGLESTRIP, 2, q, 24);
+}
+static void PostQuad(IDirect3DTexture9 *target, UINT w, UINT h)
+{
+    IDirect3DSurface9 *s = NULL;
+    target->GetSurfaceLevel(0, &s);
+    PostQuadTo(s, w, h);
+    s->Release();
+}
+static void Sampler(int s, IDirect3DBaseTexture9 *t, bool linear)
+{
+    g_dev->SetTexture(s, t);
+    D3DTEXTUREFILTERTYPE f = linear ? D3DTEXF_LINEAR : D3DTEXF_POINT;
+    g_dev->SetSamplerState(s, D3DSAMP_MINFILTER, f);
+    g_dev->SetSamplerState(s, D3DSAMP_MAGFILTER, f);
+    g_dev->SetSamplerState(s, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    g_dev->SetSamplerState(s, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    g_dev->SetSamplerState(s, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    g_dev->SetSamplerState(s, D3DSAMP_SRGBTEXTURE, FALSE);
+}
+
+static void SaveCapture(IDirect3DSurface9 *from, const char *tag);
+static bool PostWanted()
+{
+    return g_cfg.renderer == 9 && GameState() == GS_PLAYING && (g_cfg.smaa || g_cfg.bloom || g_cfg.grade || g_cfg.sharpen > 0);
+}
+
+static void PostProcess()
+{
+    if (!g_dev || !PostWanted() || !CreatePostResources()) return;
+    FpuGuard fpu;
+    IDirect3DSurface9 *bb = NULL, *oldRt = NULL, *oldDs = NULL;
+    if (FAILED(g_dev->GetBackBuffer(0, 0, D3DBACKBUFFER_TYPE_MONO, &bb))) return;
+    g_dev->GetRenderTarget(0, &oldRt);
+    g_dev->GetDepthStencilSurface(&oldDs);
+    g_postState->Capture();
+    IDirect3DSurface9 *a = NULL;
+    g_postA->GetSurfaceLevel(0, &a);
+    g_dev->StretchRect(bb, NULL, a, NULL, D3DTEXF_NONE);   // (resout le MSAA)
+    if (g_captureStage == 1) SaveCapture(a, "-brut");   // tests : l'image avant le post-traitement
+    a->Release();
+    SetCommonStates();
+    g_dev->SetDepthStencilSurface(NULL);
+    g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
+    g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
+    for (int s = 0; s < 4; s++) g_dev->SetTexture(s, NULL);
+
+    IDirect3DTexture9 *src = g_postA;
+    // 1. SMAA.
+    bool smaa = g_cfg.smaa && g_vsSmaa[0] && g_vsSmaa[1] && g_vsSmaa[2] && g_psSmaa[0] && g_psSmaa[1] && g_psSmaa[2] && g_areaTex && g_searchTex;
+    if (smaa) {
+        float rtm[4] = { 1.0f / g_width, 1.0f / g_height, (float)g_width, (float)g_height };
+        g_dev->SetVertexShaderConstantF(0, rtm, 1);
+        g_dev->SetPixelShaderConstantF(0, rtm, 1);
+        IDirect3DSurface9 *s = NULL;
+        g_smaaEdge->GetSurfaceLevel(0, &s); g_dev->SetRenderTarget(0, s); g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0, 1, 0); s->Release();
+        g_dev->SetVertexShader(g_vsSmaa[0]); g_dev->SetPixelShader(g_psSmaa[0]);
+        Sampler(0, g_postA, true);
+        PostQuad(g_smaaEdge, g_width, g_height);
+        g_smaaWeight->GetSurfaceLevel(0, &s); g_dev->SetRenderTarget(0, s); g_dev->Clear(0, NULL, D3DCLEAR_TARGET, 0, 1, 0); s->Release();
+        g_dev->SetVertexShader(g_vsSmaa[1]); g_dev->SetPixelShader(g_psSmaa[1]);
+        Sampler(0, NULL, true); Sampler(1, g_smaaEdge, true); Sampler(2, g_areaTex, true); Sampler(3, g_searchTex, false);
+        PostQuad(g_smaaWeight, g_width, g_height);
+        g_dev->SetVertexShader(g_vsSmaa[2]); g_dev->SetPixelShader(g_psSmaa[2]);
+        Sampler(0, g_postA, true); Sampler(1, g_smaaWeight, true); Sampler(2, NULL, true); Sampler(3, NULL, true);
+        PostQuad(g_postB, g_width, g_height);
+        src = g_postB;
+    }
+    g_dev->SetVertexShader(g_vsPost);
+    // 2. Eclat.
+    bool bloom = g_cfg.bloom && g_psBright && g_psDown && g_psBlur;
+    float night = g_night;
+    if (bloom) {
+        // Seuil plus bas la nuit : neons et phares ressortent sur une image sombre.
+        float bp[4] = { 0.90f - 0.28f * night, 0.10f, 0, 0 };
+        for (int l = 0; l < 3; l++) {
+            IDirect3DTexture9 *from = l == 0 ? src : g_bloomTex[l - 1][0];
+            UINT fw = l == 0 ? g_width : g_bloomW[l - 1], fh = l == 0 ? g_height : g_bloomH[l - 1];
+            float tx[4] = { 1.0f / fw, 1.0f / fh, (float)fw, (float)fh };
+            g_dev->SetPixelShaderConstantF(0, tx, 1);
+            g_dev->SetPixelShaderConstantF(1, bp, 1);
+            Sampler(0, from, true);
+            g_dev->SetPixelShader(l == 0 ? g_psBright : g_psDown);
+            PostQuad(g_bloomTex[l][0], g_bloomW[l], g_bloomH[l]);
+            float bt[4] = { 1.0f / g_bloomW[l], 1.0f / g_bloomH[l], (float)g_bloomW[l], (float)g_bloomH[l] };
+            g_dev->SetPixelShaderConstantF(0, bt, 1);
+            g_dev->SetPixelShader(g_psBlur);
+            for (int pass = 0; pass < 2; pass++) {
+                float dir[4] = { bp[0], bp[1], pass == 0 ? 1.5f : 0.0f, pass == 0 ? 0.0f : 1.5f };
+                g_dev->SetPixelShaderConstantF(1, dir, 1);
+                Sampler(0, g_bloomTex[l][pass], true);
+                PostQuad(g_bloomTex[l][1 - pass], g_bloomW[l], g_bloomH[l]);
+            }
+        }
+    }
+    // 3. Passe finale vers l'image.
+    float sunset = 0;   // soleil bas sur l'horizon (lever, coucher)
+    if (g_sun.z > -0.05f && g_sun.z < 0.35f && !g_moon) sunset = 1.0f - fabsf(g_sun.z - 0.12f) / 0.23f;
+    if (sunset < 0) sunset = 0;
+    float c[6 * 4] = {};
+    c[0] = 1.0f / g_width; c[1] = 1.0f / g_height; c[2] = (float)g_width; c[3] = (float)g_height;
+    float *g0 = c + 8, *lo = c + 12, *hi = c + 16;
+    for (int k = 0; k < 3; k++) { lo[k] = 1; hi[k] = 1; }
+    g0[0] = 1; g0[1] = 1; g0[2] = 1; g0[3] = 0;
+    if (g_cfg.grade == 1) {   // Vice : saturation, contraste, ombres turquoise, lumieres roses au coucher, nuits bleutees
+        g0[0] = 1.15f; g0[1] = 1.05f; g0[2] = 1.0f; g0[3] = 0.18f;
+        lo[0] = 0.97f - 0.02f * sunset - 0.04f * night; lo[1] = 1.0f + 0.02f * sunset; lo[2] = 1.03f + 0.03f * sunset + 0.07f * night;
+        hi[0] = 1.02f + 0.06f * sunset; hi[1] = 0.99f - 0.03f * sunset; hi[2] = 1.0f + 0.03f * sunset + 0.03f * night;
+    } else if (g_cfg.grade == 2) {   // Film : courbe douce, couleurs un peu retenues, chaleur legere
+        g0[0] = 0.92f; g0[1] = 1.0f; g0[2] = 1.05f; g0[3] = 0.30f;
+        lo[0] = 0.98f; lo[1] = 0.99f; lo[2] = 1.03f; lo[3] = 1;
+        hi[0] = 1.03f; hi[1] = 1.0f; hi[2] = 0.95f;
+    }
+    hi[3] = bloom ? (0.35f + 0.55f * night) : 0.0f;
+    c[20] = g_cfg.sharpen / 100.0f;
+    g_dev->SetPixelShaderConstantF(0, c, 6);
+    Sampler(0, src, false);
+    for (int l = 0; l < 3; l++) Sampler(1 + l, bloom ? g_bloomTex[l][0] : NULL, true);
+    g_dev->SetPixelShader(g_psFinal);
+    PostQuadTo(bb, g_width, g_height);
+
+    for (int s = 0; s < 4; s++) g_dev->SetTexture(s, NULL);
+    g_dev->SetRenderTarget(0, oldRt);
+    g_dev->SetDepthStencilSurface(oldDs);
+    g_postState->Apply();
+    SafeRelease(oldRt); SafeRelease(oldDs); bb->Release();
+    static uint32_t lastLog;
+    if (GetTickCount() - lastLog > 10000) {
+        lastLog = GetTickCount();
+        Log("rendu : post-traitement : SMAA %s, eclat %s, etalonnage %d, nettete %d%%, coucher %.2f, nuit %.2f", smaa ? "oui" : "non",
+            bloom ? "oui" : "non", g_cfg.grade, g_cfg.sharpen, sunset, night);
+    }
+}
+
+// Appele par le crochet de Render2dStuff (players.cpp, qui dessine aussi les pseudos) : avant toute l'interface.
+void Gfx9BeforeHud() { PostProcess(); }
+
+// ======================================================================= Particules douces
+// Fumee, poussiere, eclaboussures, explosions (dessins de RenderEffects, appel 0x4A604F : sommets XYZ + couleur +
+// texture, melange, sans ecriture de profondeur) : la ou la particule rejoint le decor, elle s'efface en douceur
+// (profondeur de la scene deja calculee par Apply) au lieu de couper net en ligne droite contre le sol et les murs.
+// Nos shaders sont poses juste avant le dessin du jeu et retires juste apres (Gfx9DrawDone).
+static const char kSoftShaders[] = R"HLSL(
+row_major float4x4 gMat : register(c0);
+struct SIn { float4 pos : POSITION; float4 col : COLOR0; float2 uv : TEXCOORD0; };
+struct SOut { float4 pos : POSITION; float4 col : COLOR0; float2 uv : TEXCOORD0; float w : TEXCOORD1; };
+SOut VsSoft(SIn i) { SOut o; o.pos = mul(float4(i.pos.xyz, 1), gMat); o.col = i.col; o.uv = i.uv; o.w = o.pos.w; return o; }
+sampler2D sPTex : register(s0);
+sampler2D sPDepth : register(s1);
+float4 gSoft : register(c0);     // 1/largeur, 1/hauteur, distance de fondu (m), echelle de profondeur
+float4 gPFog : register(c1);     // debut, fin du brouillard, brouillard actif, melange additif
+float4 gPFogCol : register(c2);
+float4 PsSoft(SOut i, float2 vpos : VPOS) : COLOR {
+  float4 c = tex2D(sPTex, i.uv) * i.col;
+  float d = tex2Dlod(sPDepth, float4((vpos + 0.5) * gSoft.xy, 0, 0)).r;
+  float sceneW = d >= 0.999 ? 1e6 : d * gSoft.w;
+  c.a *= saturate((sceneW - i.w) / gSoft.z);
+  if (gPFog.z > 0.5) {
+    float f = saturate((gPFog.y - i.w) / max(gPFog.y - gPFog.x, 1));
+    if (gPFog.w > 0.5) c.rgb *= f; else c.rgb = lerp(gPFogCol.rgb, c.rgb, f);
+  }
+  if (gPFog.w > 0.5) c.rgb *= c.a;   // additif (source x 1) : la transparence doit aussi eteindre la couleur
+  return c;
+}
+)HLSL";
+static IDirect3DVertexShader9 *g_vsSoft;
+static IDirect3DPixelShader9 *g_psSoft;
+static bool g_softTried, g_softBound;
+static int g_softDraws;
+
+static bool SoftReady()
+{
+    if (!g_softTried) {
+        g_softTried = true;
+        CreateShaders();
+        std::string src(kSoftShaders);
+        g_vsSoft = (IDirect3DVertexShader9 *)CompileFrom(src, "VsSoft", "vs_3_0");
+        g_psSoft = (IDirect3DPixelShader9 *)CompileFrom(src, "PsSoft", "ps_3_0");
+        Log("rendu : particules douces %s", g_vsSoft && g_psSoft ? "pretes" : "indisponibles");
+    }
+    return g_vsSoft && g_psSoft;
+}
+
+// Avant un dessin du jeu : particule candidate -> nos shaders.
+static void MaybeBindSoft(DWORD fvf)
+{
+    if (!g_effectsPass || !g_cfg.softParticles || !g_depthReady || !g_screenDepth || fvf != (D3DFVF_XYZ | D3DFVF_DIFFUSE | D3DFVF_TEX1)) return;
+    DWORD blend = 0, zw = 0, destBlend = 0, fogOn = 0, fogCol = 0;
+    g_dev->GetRenderState(D3DRS_ALPHABLENDENABLE, &blend);
+    g_dev->GetRenderState(D3DRS_ZWRITEENABLE, &zw);
+    if (!blend || zw) return;
+    IDirect3DBaseTexture9 *t = NULL;
+    g_dev->GetTexture(0, &t);
+    if (!t) return;
+    t->Release();
+    if (!SoftReady()) return;
+    FpuGuard fpu;
+    M4 w, v, p;
+    g_dev->GetTransform(D3DTS_WORLD, (D3DMATRIX *)w.m);
+    g_dev->GetTransform(D3DTS_VIEW, (D3DMATRIX *)v.m);
+    g_dev->GetTransform(D3DTS_PROJECTION, (D3DMATRIX *)p.m);
+    M4 wvp = Mul(Mul(w, v), p);
+    g_dev->GetRenderState(D3DRS_DESTBLEND, &destBlend);
+    g_dev->GetRenderState(D3DRS_FOGENABLE, &fogOn);
+    g_dev->GetRenderState(D3DRS_FOGCOLOR, &fogCol);
+    float fs = *(float *)0x978660, fe = *(float *)0x9B6A6C;   // brouillard du cycle du jour
+    float c[3 * 4] = { 1.0f / g_width, 1.0f / g_height, 0.9f, 1.0f / kDepthScale,
+                       fs, fe, fogOn ? 1.0f : 0.0f, destBlend == D3DBLEND_ONE ? 1.0f : 0.0f,
+                       ((fogCol >> 16) & 255) / 255.0f, ((fogCol >> 8) & 255) / 255.0f, (fogCol & 255) / 255.0f, 1 };
+    g_dev->SetVertexShaderConstantF(0, wvp.m, 4);
+    g_dev->SetPixelShaderConstantF(0, c, 3);
+    g_dev->SetTexture(1, g_screenDepth);
+    g_dev->SetSamplerState(1, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+    g_dev->SetSamplerState(1, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+    g_dev->SetSamplerState(1, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+    g_dev->SetSamplerState(1, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+    g_dev->SetSamplerState(1, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+    g_dev->SetVertexShader(g_vsSoft);
+    g_dev->SetPixelShader(g_psSoft);
+    g_softBound = true;
+    g_softDraws++;
+}
+
+void Gfx9DrawDone()
+{
+    if (!g_softBound) return;
+    g_softBound = false;
+    g_dev->SetVertexShader(NULL);
+    g_dev->SetPixelShader(NULL);
+    g_dev->SetTexture(1, NULL);
+}
+
+static void __cdecl h_RenderEffects()
+{
+    g_effectsPass = true;
+    ((void(__cdecl *)())0x4A6510)();
+    g_effectsPass = false;
+    static uint32_t lastLog;
+    if (g_softDraws && GetTickCount() - lastLog > 10000) { lastLog = GetTickCount(); Log("rendu : %d dessins de particules adoucis", g_softDraws); }
+    g_softDraws = 0;
+}
+
 // ======================================================================= Captures (tests : CaptureRendu=N)
 // L'image du tampon arriere, enregistree en BMP dans captures\ du dossier du jeu : les captures de fenetre des
 // instances de test (hors ecran) sortent noires.
@@ -1872,6 +2432,8 @@ void Gfx9BeforePresent()
     g_applied = false;
     g_after3d = 0;
     g_lightCount = 0;
+    g_lampCount = 0;
+    g_depthReady = false;
     g_waterDraws = 0;
     g_lightsLive = LightsWanted() && g_shadersOk && g_psLights;
     g_night = 1.0f - SkyLum();
@@ -1893,6 +2455,8 @@ void InstallGfx9Hooks()
         PatchCall(0x4A6594, (void *)h_RenderWater);
         PatchCall(0x4A65AE, (void *)h_RenderTransparentWater);
     } else Log("rendu : appels de l'eau introuvables (eau moderne coupee)");
+    if (*(uint8_t *)0x4A604F == 0xE8 && *(int32_t *)0x4A6050 == 0x4A6510 - 0x4A6054) PatchCall(0x4A604F, (void *)h_RenderEffects);
+    else Log("rendu : appel de RenderEffects introuvable (particules douces coupees)");
     if (*(uint8_t *)0x4A604A == 0xE8 && *(int32_t *)0x4A604B == 0x4A6570 - 0x4A604F) { PatchCall(0x4A604A, (void *)h_RenderScene); g_sceneHooked = true; }
     else Log("rendu : appel de RenderScene introuvable (ombres posees au premier dessin 2D)");
     static const uint8_t carLightPro[] = { 0xBA, 0xB8, 0x46, 0x7E, 0x00 };   // mov edx, 7E46B8h (TheCamera)
@@ -1901,4 +2465,9 @@ void InstallGfx9Hooks()
     static const uint8_t addLightPro[] = { 0xD9, 0xEE, 0xD9, 0xEE, 0x83, 0xEC, 0x18 };   // fldz ; fldz ; sub esp, 18h
     o_AddLight = (AddLight_t)MakeDetour(0x567700, addLightPro, sizeof(addLightPro), (void *)h_AddLight);
     if (!o_AddLight) Log("rendu : CPointLights::AddLight introuvable (lumieres dynamiques coupees)");
+    static const uint8_t staticShadowPro[] = { 0x53, 0x56, 0x57, 0x55, 0x83, 0xEC, 0x10 };
+    o_StoreStaticShadow = (StoreStaticShadow_t)MakeDetour(0x56E780, staticShadowPro, sizeof(staticShadowPro), (void *)h_StoreStaticShadow);
+    static const uint8_t coronaTexPro[] = { 0x53, 0x56, 0x55, 0xBB, 0xB8, 0x46, 0x7E, 0x00 };
+    o_RegisterCoronaTex = (RegisterCoronaTex_t)MakeDetour(0x542490, coronaTexPro, sizeof(coronaTexPro), (void *)h_RegisterCoronaTex);
+    if (!o_StoreStaticShadow || !o_RegisterCoronaTex) Log("rendu : lampes du decor introuvables (elles n'eclairent pas)");
 }

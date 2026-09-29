@@ -38,6 +38,12 @@ struct Config {
     int lightShadows;   // OmbresLumieres=4 : nombre de lumieres (0 a 4) qui projettent une ombre
     bool ambientOcclusion;   // OcclusionAmbiante=1 (rendu moderne) : coins et dessous des objets assombris
     bool moonShadows;   // OmbresLune=1 : la lune projette des ombres (plus faibles que le soleil)
+    bool smaa;          // SMAA=1 : anticrenelage d'image (bords en escalier), en plus ou a la place du MSAA
+    bool bloom;         // Eclat=1 : neons, soleil, phares debordent en lumiere douce
+    int grade;          // Etalonnage=1 : 0 Original, 1 Vice (couleurs "Miami 80"), 2 Film
+    int sharpen;        // Nettete=40 (0 a 100) : netteté adaptative des textures
+    bool softParticles; // ParticulesDouces=1 : fumee, poussiere, explosions sans coupure nette contre le decor
+    bool lampLights;    // LampadairesEclairent=1 : reverberes, neons et enseignes eclairent vraiment (sans leur tache peinte)
     bool dynLights;     // LumieresDynamiques=1 (rendu moderne) : lampadaires, phares, explosions eclairent par pixel
     int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine
     int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)
