@@ -31,6 +31,10 @@ LANCEUR
 - Heberger / Rejoindre (pseudo et adresse de l'hote tapes dans le lanceur) /
   Jouer (menu COOP du jeu). Le lanceur reste affiche jusqu'a l'apparition de
   la fenetre du jeu.
+- Onglets VIDEO / RENDU / EFFETS / COOP : les reglages de vccoop.ini (les
+  memes que le menu COOP du jeu), pris au prochain lancement. RENDU et EFFETS
+  n'apparaissent qu'avec le moteur Direct3D 9. Les reglages marques HOTE
+  comptent chez celui qui heberge, INVITE chez celui qui rejoint.
 - Langue : francais si Windows est en francais, sinon anglais. Pour forcer :
   Langue=fr ou Langue=en dans la section [Lanceur] de vccoop-launcher.ini.
 - Fond : VCCoop\interface\launcher.png (1000x620, transparence prise en
