@@ -331,7 +331,7 @@ float3 OneLight(float4 a, float4 b, float4 c, float3 P, float3 N, out float inRa
   L /= max(dist, 0.001);
   float att = saturate(1 - dist / a.w); att *= att;
   float ndl = saturate(dot(N, L) * 0.8 + 0.2);
-  float spot = b.w > 0.5 ? smoothstep(c.w, c.w + 0.15, dot(-L, c.xyz)) : 1;
+  float spot = b.w > 0.5 ? smoothstep(c.w, c.w + (1 - c.w) * 0.6, dot(-L, c.xyz)) : 1;
   return b.rgb * att * ndl * spot;
 }
 
@@ -651,7 +651,9 @@ sampler2D sCarMask : register(s1);
 float4 PsCarRefl(float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
   float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
-  if (tex2Dlod(sCarMask, float4(uv, 0, 0)).r < 0.5) return float4(scene, 1);
+  float mask = tex2Dlod(sCarMask, float4(uv, 0, 0)).r;
+  float shiny = saturate((mask - 0.18) / 0.22);   // pneus (texture sombre) : pas de reflet
+  if (shiny <= 0) return float4(scene, 1);
   float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
   if (d >= 0.999) return float4(scene, 1);
   float3 P = WorldAt(uv, d);
@@ -662,7 +664,7 @@ float4 PsCarRefl(float2 vpos : VPOS) : COLOR {
   float found;
   float3 refl = TraceScreen(P + N * 0.05, R, vpos, sky, found);
   float fres = 0.04 + 0.96 * pow(1 - saturate(dot(N, V)), 5);
-  float k = (0.10 + fres * 0.55) * gWet.x;
+  float k = (0.10 + fres * 0.55) * gWet.x * shiny;
   return float4(lerp(scene, refl, saturate(k)), 1);
 }
 // ---- lumiere indirecte : une facade eclairee teinte ses voisines (8 echantillons autour du point)
@@ -718,7 +720,16 @@ float4 PsGIApply(float2 vpos : VPOS) : COLOR {
   return float4(scene + albedo * bounce * gWet.x, 1);
 }
 // masque des vehicules
-float4 PsFlag(VOut i) : COLOR { return 1; }
+// Masque des vehicules = clarte de leur texture : la peinture est sur une texture claire (la teinte vient du
+// materiau, voitures noires comprises), les jantes aussi ; le caoutchouc des pneus est une texture sombre.
+float4 PsFlag(VOut i) : COLOR {
+#ifndef NOUV
+  float l = max(dot(tex2D(sTex, i.uv).rgb, float3(0.3, 0.59, 0.11)), 0.02);
+#else
+  float l = 1;
+#endif
+  return float4(l, l, l, 1);
+}
 // ---- brume : la ville se fond au loin dans une teinte qui suit l'heure (doree, violette, bleutee)
 float4 gHaze : register(c30);    // couleur, densite (par m)
 float4 gHaze2 : register(c31);   // distance ou elle commence, chute avec la hauteur (par m), part sur l'horizon du ciel
@@ -1409,6 +1420,41 @@ static void __cdecl h_StoreCarLight(void *car, int id, void *tex, float *pos, fl
     o_StoreCarLight(car, id, tex, pos, fx, fy, sx, sy, r, g, b, maxAngle);
 }
 
+// ======================================================================= Phare d'Ocean Beach
+// Son faisceau d'origine est un objet (od_lightbeam, 474 -1718 60) que CMovingThings fait tourner de 20 h a 5 h (un tour
+// en 0x3FFF ms du chronometre du jeu, direction (cos a, sin a, 0), reVC Fluff.cpp). Avec LampadairesEclairent, l'objet
+// n'est plus dessine (h_RenderOneNonRoad) : a sa place un vrai projecteur tournant (eclaire le sol, les facades, la
+// mer ; ombre s'il est parmi les plus importants) et un long faisceau doux dans l'air (DrawBeams). L'eblouissement du
+// jeu quand il passe face a la camera reste.
+static Vec3 g_lhPos = { 474.3353f, -1717.672f, 60.0871f };
+static Vec3 g_lhDir;
+static bool g_lhActive;
+static int g_lhModel = -2;
+static bool IsLightBeam(int model)
+{
+    if (g_lhModel == -2) {
+        g_lhModel = -1;
+        for (int i = 0; i < 6500; i++) if (ModelInfo(i) && !_stricmp(ModelName(i), "od_lightbeam")) { g_lhModel = i; break; }
+        Log("rendu : faisceau du phare : modele %d", g_lhModel);
+    }
+    return model >= 0 && model == g_lhModel;
+}
+static void AddLighthouse()
+{
+    g_lhActive = false;
+    int h = ClockHours();
+    if (!g_cfg.lampLights || !g_lightsLive || (h < 20 && h >= 5) || g_lightCount >= MAX_LIGHTS || !Outdoors()) return;
+    const float *cam = (const float *)0x7E46B8;
+    float ex = g_lhPos.x - cam[0], ey = g_lhPos.y - cam[1];
+    if (ex * ex + ey * ey > 1200.0f * 1200.0f) return;
+    uint32_t t = *(uint32_t *)0x974B2C;   // CTimer::m_snTimeInMilliseconds
+    float a = (t % 0x3FFF) * 6.2831853f / 0x3FFF;
+    g_lhDir = Norm({ cosf(a), sinf(a), -0.12f });
+    g_lightList[g_lightCount++] = { g_lhPos.x + g_lhDir.x * 1.2f, g_lhPos.y + g_lhDir.y * 1.2f, g_lhPos.z, g_lhDir.x, g_lhDir.y, g_lhDir.z,
+                                    95.0f, 3.2f, 3.1f, 2.7f, 1, 0.985f };
+    g_lhActive = true;
+}
+
 // ======================================================================= Lampadaires, neons, enseignes
 // Les lumieres des batiments et objets (2dEffect "light", CEntity::ProcessLightsForEntity 0x541590) ne sont que des
 // halos (CCoronas::RegisterCorona, variante a texture 0x542490) et, sous les lampadaires, une tache lumineuse peinte
@@ -1626,36 +1672,49 @@ static void DrawBeams(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldDs)
 {
     float rain = WeatherF(0x975340), fog = WeatherF(0x94DDC0);
     float dens = (0.12f + 0.9f * rain + 1.0f * fog) * (0.4f + 0.6f * g_night);
-    if (dens < 0.02f) return;
     struct BV { float x, y, z; DWORD c; };
-    static BV v[MAX_LIGHTS * 3 * 2 * 18];
+    static BV v[(MAX_LIGHTS + 1) * 9 * 24];
     int nv = 0;
-    for (int i = 0; i < g_lightCount; i++) {
-        const DynLight &l = g_lightList[i];
-        if (l.type != 1) continue;
-        Vec3 o = { l.x, l.y, l.z }, dir = Norm({ l.dx, l.dy, l.dz });
-        Vec3 dc = Sub(o, cam);
-        if (Dot(dc, dc) > 80.0f * 80.0f || Dot(dir, dir) < 0.5f) continue;
+    const int cap = (int)(sizeof(v) / sizeof(v[0]));
+    // Cone : sommet o, direction dir, longueur len, rayon au bout rad ; couleur (0..1), alpha au sommet et au tiers.
+    auto addCone = [&](Vec3 o, Vec3 dir, float len, float rad, float r, float g, float b, int aTip, int aMid, int seg) {
         Vec3 up = fabsf(dir.z) > 0.9f ? Vec3{ 1, 0, 0 } : Vec3{ 0, 0, 1 };
-        Vec3 a = Norm(Cross(dir, up)), b = Cross(dir, a);
-        float len = 13.0f, rad = len * 0.42f;
-        float lum = l.r + l.g + l.b; if (lum < 0.01f) continue;
-        int cr = (int)(255 * l.r / lum * 1.2f), cg = (int)(255 * l.g / lum * 1.2f), cb = (int)(255 * l.b / lum * 1.2f);
+        Vec3 ax = Norm(Cross(dir, up)), bx = Cross(dir, ax);
+        int cr = (int)(255 * r), cg = (int)(255 * g), cb = (int)(255 * b);
         cr = cr > 255 ? 255 : cr; cg = cg > 255 ? 255 : cg; cb = cb > 255 ? 255 : cb;
-        DWORD tip = D3DCOLOR_ARGB(150, cr, cg, cb), mid = D3DCOLOR_ARGB(70, cr, cg, cb), end = D3DCOLOR_ARGB(0, cr, cg, cb);
-        const int seg = 18;
-        for (int k = 0; k < seg; k++) {
+        DWORD tip = D3DCOLOR_ARGB(aTip, cr, cg, cb), mid = D3DCOLOR_ARGB(aMid, cr, cg, cb), end = D3DCOLOR_ARGB(0, cr, cg, cb);
+        for (int k = 0; k < seg && nv + 9 <= cap; k++) {
             float a0 = k * 6.2831853f / seg, a1 = (k + 1) * 6.2831853f / seg;
-            Vec3 r0 = { a.x * cosf(a0) + b.x * sinf(a0), a.y * cosf(a0) + b.y * sinf(a0), a.z * cosf(a0) + b.z * sinf(a0) };
-            Vec3 r1 = { a.x * cosf(a1) + b.x * sinf(a1), a.y * cosf(a1) + b.y * sinf(a1), a.z * cosf(a1) + b.z * sinf(a1) };
-            auto P = [&](float t, Vec3 r) { return Vec3{ o.x + dir.x * len * t + r.x * rad * t, o.y + dir.y * len * t + r.y * rad * t, o.z + dir.z * len * t + r.z * rad * t }; };
+            Vec3 r0 = { ax.x * cosf(a0) + bx.x * sinf(a0), ax.y * cosf(a0) + bx.y * sinf(a0), ax.z * cosf(a0) + bx.z * sinf(a0) };
+            Vec3 r1 = { ax.x * cosf(a1) + bx.x * sinf(a1), ax.y * cosf(a1) + bx.y * sinf(a1), ax.z * cosf(a1) + bx.z * sinf(a1) };
+            auto P = [&](float t, Vec3 rr) { return Vec3{ o.x + dir.x * len * t + rr.x * rad * t, o.y + dir.y * len * t + rr.y * rad * t, o.z + dir.z * len * t + rr.z * rad * t }; };
             Vec3 m0 = P(0.35f, r0), m1 = P(0.35f, r1), e0 = P(1, r0), e1 = P(1, r1);
-            if (nv + 9 > (int)(sizeof(v) / sizeof(v[0]))) break;
             v[nv++] = { o.x, o.y, o.z, tip }; v[nv++] = { m0.x, m0.y, m0.z, mid }; v[nv++] = { m1.x, m1.y, m1.z, mid };
             v[nv++] = { m0.x, m0.y, m0.z, mid }; v[nv++] = { e0.x, e0.y, e0.z, end }; v[nv++] = { e1.x, e1.y, e1.z, end };
             v[nv++] = { m0.x, m0.y, m0.z, mid }; v[nv++] = { e1.x, e1.y, e1.z, end }; v[nv++] = { m1.x, m1.y, m1.z, mid };
         }
+    };
+    if (dens >= 0.02f) {
+        for (int i = 0; i < g_lightCount; i++) {
+            const DynLight &l = g_lightList[i];
+            if (l.type != 1 || l.cone > 0.95f) continue;   // (le phare a son propre faisceau)
+            Vec3 o = { l.x, l.y, l.z }, dir = Norm({ l.dx, l.dy, l.dz });
+            Vec3 dc = Sub(o, cam);
+            if (Dot(dc, dc) > 80.0f * 80.0f || Dot(dir, dir) < 0.5f) continue;
+            float lum = l.r + l.g + l.b; if (lum < 0.01f) continue;
+            addCone(o, dir, 13.0f, 13.0f * 0.42f, l.r / lum * 1.2f, l.g / lum * 1.2f, l.b / lum * 1.2f, 150, 70, 18);
+        }
     }
+    // Faisceau du phare : visible toute la nuit (plus dense sous la pluie et dans le brouillard).
+    float lhDens = 0;
+    if (g_lhActive) {
+        // Trois cones emboites : coeur etroit et lumineux, bords de plus en plus diffus (pas un coin a bord net).
+        addCone(g_lhPos, g_lhDir, 160.0f, 160.0f * 0.035f, 1.0f, 0.97f, 0.85f, 120, 70, 16);
+        addCone(g_lhPos, g_lhDir, 150.0f, 150.0f * 0.07f, 1.0f, 0.97f, 0.85f, 70, 35, 16);
+        addCone(g_lhPos, g_lhDir, 140.0f, 140.0f * 0.11f, 1.0f, 0.97f, 0.85f, 35, 15, 16);
+        lhDens = 0.35f + 0.8f * rain + 1.0f * fog;
+    }
+    int nLh = g_lhActive ? 3 * 16 * 9 : 0;   // (ajoute en dernier)
     if (!nv) return;
     g_dev->SetDepthStencilSurface(oldDs);
     g_dev->SetRenderState(D3DRS_ZENABLE, TRUE);
@@ -1666,12 +1725,20 @@ static void DrawBeams(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldDs)
     g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
     g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
     g_dev->SetVertexShaderConstantF(0, vp.m, 4);
-    float bc[4] = { dens, 1.0f / kDepthScale, 0, 0 };
-    g_dev->SetPixelShaderConstantF(30, bc, 1);
     g_dev->SetVertexShader(g_vsBeam);
     g_dev->SetPixelShader(g_psBeam);
     g_dev->SetFVF(D3DFVF_XYZ | D3DFVF_DIFFUSE);
-    g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, nv / 3, v, sizeof(BV));
+    int nCars = nv - nLh;
+    if (nCars > 0) {
+        float bc[4] = { dens, 1.0f / kDepthScale, 0, 0 };
+        g_dev->SetPixelShaderConstantF(30, bc, 1);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, nCars / 3, v, sizeof(BV));
+    }
+    if (nLh > 0) {
+        float bc[4] = { lhDens, 1.0f / kDepthScale, 0, 0 };
+        g_dev->SetPixelShaderConstantF(30, bc, 1);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, nLh / 3, v + nCars, sizeof(BV));
+    }
     g_dev->SetDepthStencilSurface(NULL);
     g_dev->SetRenderState(D3DRS_ZENABLE, FALSE);
     g_dev->SetVertexShader(g_vsQuad);
@@ -1778,7 +1845,7 @@ static void Apply()
     g_applied = true;
     UpdateSun();
     ChooseMainView();
-    if (LightsWanted()) MergeLamps();
+    if (LightsWanted()) { AddLighthouse(); MergeLamps(); }
     bool shadows = ShadowsWanted() && g_sunK > 0.01f;
     bool lights = LightsWanted() && g_lightCount > 0;
     bool aoWanted = AoWanted();
@@ -2032,6 +2099,10 @@ typedef void(__cdecl *RenderOne_t)(void *);
 static RenderOne_t o_RenderOneNonRoad;
 static void __cdecl h_RenderOneNonRoad(void *e)
 {
+    if (g_cfg.lampLights && g_lightsLive && e && IsLightBeam(*(short *)((uint8_t *)e + 0x5C))) {
+        g_lhPos = { *(float *)((uint8_t *)e + 0x34), *(float *)((uint8_t *)e + 0x38), *(float *)((uint8_t *)e + 0x3C) };
+        return;   // cone d'origine remplace par la vraie lumiere tournante
+    }
     void *prev = g_curEntity;
     g_curEntity = e;
     o_RenderOneNonRoad(e);
