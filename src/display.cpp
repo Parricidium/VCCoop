@@ -25,8 +25,8 @@ static int __cdecl h_SelectDevice()
 {
     int r = o_SelectDevice();
     if (!r || !g_cfg.windowed) return r;
-    int w = g_cfg.borderless ? GetSystemMetrics(SM_CXSCREEN) : 1280;
-    int h = g_cfg.borderless ? GetSystemMetrics(SM_CYSCREEN) : 720;
+    int w = g_cfg.borderless ? GetSystemMetrics(SM_CXSCREEN) : g_cfg.winW;   // TailleFenetre (1280x720 par defaut)
+    int h = g_cfg.borderless ? GetSystemMetrics(SM_CYSCREEN) : g_cfg.winH;
     int best = -1, bestDepth = 0;
     for (int i = 0, n = NumVideoModes(); i < n; i++) {
         VideoMode m;

@@ -74,8 +74,10 @@ static int ScreenW() { return *(int *)0x9B48DC; }
 static int ScreenH() { return *(int *)0x9B48E0; }
 
 // CSprite::CalcScreenCoors : point du monde -> ecran (pixels) ; faux s'il est derriere la camera.
+bool Gfx9Project(float x, float y, float z, float *sx, float *sy, float *dist);   // gfx9.cpp
 static bool ToScreen(const Vec3 &p, float &sx, float &sy, float &dist)
 {
+    if (g_cfg.renderer == 9 && Gfx9Project(p.x, p.y, p.z, &sx, &sy, &dist)) return true;   // vraie camera (camera fixe de script)
     float in[3] = { p.x, p.y, p.z }, out[3], w, h;
     if (!((bool(__cdecl *)(const float *, float *, float *, float *, bool))0x5778B0)(in, out, &w, &h, false)) return false;
     sx = out[0]; sy = out[1]; dist = out[2];

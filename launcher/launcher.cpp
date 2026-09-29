@@ -2812,6 +2812,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     for (int i = 1; i + 1 < argc; i++) {
         if (!_wcsicmp(argv[i], L"/lang")) g_fr = !_wcsicmp(argv[i + 1], L"fr");
         if (!_wcsicmp(argv[i], L"/theme")) g_dark = !_wcsicmp(argv[i + 1], L"sombre");
+        if (!_wcsicmp(argv[i], L"/echelle")) g_scale = (float)_wtof(argv[i + 1]);   // captures : rendu agrandi
         if (!_wcsicmp(argv[i], L"/testfenetre")) g_testLog = argv[i + 1];
         if (!_wcsicmp(argv[i], L"/testlancer") && i + 2 < argc) { g_testLaunch = _wtoi(argv[i + 1]); g_testLog = argv[i + 2]; }
         if (!_wcsicmp(argv[i], L"/testsalon") && i + 2 < argc) { g_testSalon = argv[i + 1]; g_testSalonLog = argv[i + 2]; g_testLog = g_testSalonLog + L".fin"; g_testLaunch = 99; }
@@ -2964,7 +2965,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
         int rc = 1;
         // tenues : attendre l'apercu et les portraits (fils de fond)
         if (g_imgOk && (st == L"tenue" || st == L"salon" || st == L"saloninvite" || st == L"mods")) {
-            g_prevW = (int)kPrevR.Width; g_prevH = (int)(kPrevR.Height - 34);
+            g_prevW = (int)(kPrevR.Width * g_scale); g_prevH = (int)((kPrevR.Height - 34) * g_scale);
             int st0 = g_state; g_state = ST_IDLE;
             if (st == L"salon" || st == L"saloninvite") { EnterCriticalSection(&g_scs); g_portraitWanted = { "player", "igken", "hfyst" }; LeaveCriticalSection(&g_scs); }
             for (int i = 0; i < 100; i++) {
@@ -2980,8 +2981,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             g_state = st0;
         }
         {
-            Bitmap out((INT)kImgW, (INT)kImgH, PixelFormat32bppPARGB);
-            RenderTo(out, 1.0f);
+            Bitmap out((INT)(kImgW * g_scale), (INT)(kImgH * g_scale), PixelFormat32bppPARGB);
+            RenderTo(out, g_scale);
             CLSID png;
             if (EncoderClsid(L"image/png", &png) && out.Save(argv[2], &png, NULL) == Ok) rc = 0;
         }   // (detruit avant GdiplusShutdown)
