@@ -116,7 +116,8 @@ bool TrackSample(const Track &tr, int src, Snap &o, bool linear)
 // m_fGenerationDistMultiplier (0x7E477C : jusqu'ou la circulation et les passants apparaissent / sont gardes).
 // On les augmente (la generation moitie moins, pour rester dans les limites du jeu : ~110 vehicules, ~140
 // personnages) ; la memoire de chargement (CStreaming::ms_memoryAvailable, 0x94DD54, 45 Mo) suit.
-float g_genBoost = 1.0f;   // facteur applique ici a 0x7E477C (population.cpp le retire pour les voitures garees)
+float g_genBoost = 1.0f;
+int ModsMemoryFloorMb();   // mods.cpp   // facteur applique ici a 0x7E477C (population.cpp le retire pour les voitures garees)
 static void ApplyDrawDistance()
 {
     // ZonePopulation : la zone de naissance et de maintien des passants et voitures, en plus (le nombre maximal suit,
@@ -124,6 +125,8 @@ static void ApplyDrawDistance()
     *(float *)0x7E477C *= g_cfg.zonePop / 100.0f;
     g_genBoost = g_cfg.zonePop / 100.0f;
     float f = g_cfg.drawDistance / 100.0f;
+    int floorMb = ModsMemoryFloorMb();   // gros pack de modeles (mods.cpp) : plus de memoire de chargement
+    if (floorMb > 0 && *(int *)0x94DD54 < floorMb * 1024 * 1024) *(int *)0x94DD54 = floorMb * 1024 * 1024;
     if (f <= 1.0f) return;
     *(float *)0x7E4778 *= f;
     float gen = 1.0f + (f - 1.0f) * 0.5f;

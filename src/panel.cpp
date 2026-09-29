@@ -723,7 +723,7 @@ void PanelDraw()
         TextA(x0 + g_u * 2, y0 + th * 0.5f - LineH(0.75f) * 0.5f, 0.75f, C_LINE, AL_LEFT, "VCCOOP");
         char who[64];
         _snprintf(who, sizeof(who), "%s%s", g_cfg.playerName, g_cfg.host ? Tr("  -  hote", "  -  host") : LocalAdmin() ? "  -  admin" : "");
-        TextA(x0 + g_u * 14, y0 + th * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_DIM, AL_LEFT, who);
+        TextA(x0 + g_u * 20, y0 + th * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_DIM, AL_LEFT, who);
         if (Button(x1 - th, y0, x1, y0 + th, "X")) g_open = false;
 
         // Onglets : selon le role.
