@@ -159,6 +159,10 @@ Modeles de voitures, armes, batiments (dff/txd) et lignes handling/carcols
 deposes dans VCCoop\mods remplacent ceux du jeu et sont envoyes tout seuls
 aux invites par l'hote (voir VCCoop\mods\LISEZMOI.txt). ModsPartages=0
 pour couper.
+Packs complets (ex. NextGen Cars Pack) : copier les dossiers data et models
+du pack dans un dossier de VCCoop\mods (ex. VCCoop\mods\nextgen86\). Ne PAS
+copier son gta_vc.dat ni son "limit adjuster" (.asi, .dll) : VCCoop releve
+lui-meme la memoire de chargement (MemoireChargement= en Mo, automatique).
 
 INTERFACE PERSONNALISEE
 -----------------------

@@ -131,6 +131,10 @@ SHARED MODS
 Car, weapon and building models (dff/txd) plus handling/carcols lines dropped
 in VCCoop\mods replace the game's and are sent automatically to the guests by
 the host (see VCCoop\mods\LISEZMOI.txt, French). ModsPartages=0 to disable.
+Full packs (e.g. NextGen Cars Pack): copy the pack's data and models folders
+into a folder of VCCoop\mods (e.g. VCCoop\mods\nextgen86\). Do NOT copy its
+gta_vc.dat nor its limit adjuster (.asi, .dll): VCCoop raises the streaming
+memory itself (MemoireChargement= in MB, automatic).
 
 CUSTOM INTERFACE
 ----------------

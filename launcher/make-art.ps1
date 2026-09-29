@@ -112,12 +112,13 @@ foreach ($dark in $false, $true) {
     $dh = 196.0; $dw = $dh * $src.Width / $src.Height
     if ($dw -gt 220) { $dw = 220.0; $dh = $dw * $src.Height / $src.Width }
     $dst = New-Object System.Drawing.RectangleF (228 - $dw / 2), 8, $dw, $dh
-    # halo blanc doux derriere le logo pour qu'il se lise sur le bureau
+    # halo doux derriere le logo pour qu'il se lise sur le bureau (blanc en clair, noir en sombre)
     for ($i = 6; $i -ge 1; $i--) {
         $ia = New-Object System.Drawing.Imaging.ImageAttributes
         $cm = New-Object System.Drawing.Imaging.ColorMatrix
-        $cm.Matrix00 = 0; $cm.Matrix11 = 0; $cm.Matrix22 = 0; $cm.Matrix33 = $(if ($dark) { 0.13 } else { 0.10 })
-        $cm.Matrix40 = 1; $cm.Matrix41 = $(if ($dark) { 0.35 } else { 1 }); $cm.Matrix42 = $(if ($dark) { 0.62 } else { 1 })   # halo blanc (clair) ou rose (sombre)
+        $cm.Matrix00 = 0; $cm.Matrix11 = 0; $cm.Matrix22 = 0; $cm.Matrix33 = $(if ($dark) { 0.17 } else { 0.10 })
+        $v = $(if ($dark) { 0 } else { 1 })
+        $cm.Matrix40 = $v; $cm.Matrix41 = $v; $cm.Matrix42 = $v   # halo blanc (clair) ou ombre noire (sombre : demande de JD, 29/09)
         $ia.SetColorMatrix($cm)
         foreach ($o in @(@(-$i, 0), @($i, 0), @(0, -$i), @(0, $i))) {
             $r = New-Object System.Drawing.Rectangle ([int]($dst.X + $o[0])), ([int]($dst.Y + $o[1])), ([int]$dst.Width), ([int]$dst.Height)

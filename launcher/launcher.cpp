@@ -19,6 +19,7 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#include <mmsystem.h>
 #include <algorithm>
 using std::min;
 using std::max;
@@ -79,6 +80,48 @@ static std::wstring g_launchInfo;
 // Salon : etat partage entre la fenetre et les fils reseau (sous g_lcs)
 enum { LB_NONE, LB_HOST, LB_CONNECTING, LB_GUEST };
 struct LobbyPeer { int id; std::string name, skin; bool ready; int mods; int ping; };   // mods : -1 sans objet, 0..100, -2 erreur
+
+// Sons du salon : arrivee, depart, pret, plus pret. Petites notes synthetisees (WAV en memoire, PlaySound).
+enum { SND_JOIN, SND_LEAVE, SND_READY, SND_UNREADY, SND_COUNT };
+static std::vector<uint8_t> g_snd[SND_COUNT];
+static void MakeSound(std::vector<uint8_t> &w, std::initializer_list<float> notes, float noteMs, float vol)
+{
+    const int rate = 22050, per = (int)(rate * noteMs / 1000.0f), tail = rate / 5;
+    int total = per * (int)notes.size() + tail;
+    std::vector<float> buf(total, 0.0f);
+    int k = 0;
+    for (float f : notes) {
+        int start = k++ * per;
+        for (int i = 0; i < per + tail && start + i < total; i++) {
+            float t = i / (float)rate;
+            float env = (i < rate / 200 ? i / (rate / 200.0f) : 1.0f) * expf(-t * 9.0f);
+            buf[start + i] += env * (sinf(6.2831853f * f * t) + 0.25f * sinf(6.2831853f * f * 2 * t));
+        }
+    }
+    uint32_t data = total * 2;
+    w.resize(44 + data);
+    uint8_t *p = w.data();
+    auto u32 = [&](int at, uint32_t v) { memcpy(p + at, &v, 4); };
+    auto u16 = [&](int at, uint16_t v) { memcpy(p + at, &v, 2); };
+    memcpy(p, "RIFF", 4); u32(4, 36 + data); memcpy(p + 8, "WAVEfmt ", 8); u32(16, 16); u16(20, 1); u16(22, 1);
+    u32(24, rate); u32(28, rate * 2); u16(32, 2); u16(34, 16); memcpy(p + 36, "data", 4); u32(40, data);
+    for (int i = 0; i < total; i++) {
+        float v = buf[i] * vol;
+        v = v > 1 ? 1 : v < -1 ? -1 : v;
+        int16_t sv = (int16_t)(v * 32000);
+        memcpy(p + 44 + i * 2, &sv, 2);
+    }
+}
+static void LobbySound(int which)
+{
+    if (g_snd[0].empty()) {
+        MakeSound(g_snd[SND_JOIN], { 523.3f, 659.3f, 784.0f }, 90, 0.30f);     // do mi sol : quelqu'un arrive
+        MakeSound(g_snd[SND_LEAVE], { 784.0f, 659.3f, 523.3f }, 90, 0.26f);    // sol mi do : il part
+        MakeSound(g_snd[SND_READY], { 987.8f, 1318.5f }, 70, 0.24f);           // si mi aigus : pret
+        MakeSound(g_snd[SND_UNREADY], { 659.3f, 493.9f }, 80, 0.22f);          // mi si graves : plus pret
+    }
+    PlaySoundW((LPCWSTR)g_snd[which].data(), NULL, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
+}
 static std::atomic<int> g_lobby(LB_NONE);
 static CRITICAL_SECTION g_lcs;
 static std::vector<LobbyPeer> g_peers;
@@ -522,8 +565,8 @@ static void Layout()
     g_fields[1].r = RectF(76, 338, 304, 36); g_fields[1].maxLen = 63; g_fields[1].address = true;
     g_btn[B_HOST].r = RectF(76, 390, 148, 46);
     g_btn[B_JOIN].r = RectF(232, 390, 148, 46);
-    g_btn[B_PLAY].r = RectF(76, 444, 304, 34);
-    g_btn[B_EXE].r = RectF(250, 484, 130, 20);
+    g_btn[B_PLAY].r = RectF(0, 0, 0, 0);          // (retire : le salon suffit, le menu COOP du jeu reste)
+    g_btn[B_EXE].r = RectF(250, 452, 130, 20);
     g_btn[B_BUY].r = RectF(236, 554, 144, 26);
     g_btn[B_CLOSE].r = RectF(938, 76, 28, 28);
     g_btn[B_MIN].r = RectF(904, 76, 28, 28);
@@ -544,6 +587,7 @@ static void UpdateButtons()
         g_btn[B_HOST].enabled = menu && (g_lobby == LB_HOST ? LobbyCanStart() : g_lobby == LB_GUEST);
     }
     g_btn[B_EXE].enabled = menu && !busy;
+    g_btn[B_PLAY].visible = false;
     g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = g_btn[B_THEME].enabled = true;
 }
 
@@ -1190,6 +1234,33 @@ static void DrawNotes(Graphics &g)
     }
 }
 
+// Salon : arrivees, departs et changements "pret" entendus (compare la liste d'une image a l'autre).
+static void LobbySoundsTick()
+{
+    static std::vector<std::pair<int, bool>> prev;
+    static bool had;
+    std::vector<std::pair<int, bool>> now;
+    if (g_lobby == LB_HOST || g_lobby == LB_GUEST) {
+        EnterCriticalSection(&g_lcs);
+        for (auto &p : g_peers) now.push_back({ p.id, p.ready });
+        LeaveCriticalSection(&g_lcs);
+    }
+    if (!had || (g_lobby != LB_HOST && g_lobby != LB_GUEST)) { prev = now; had = g_lobby == LB_HOST || g_lobby == LB_GUEST; return; }
+    int sound = -1;
+    for (auto &n : now) {
+        bool found = false;
+        for (auto &o : prev) if (o.first == n.first) { found = true; if (o.second != n.second && sound < 0) sound = n.second ? SND_READY : SND_UNREADY; }
+        if (!found) sound = SND_JOIN;
+    }
+    for (auto &o : prev) {
+        bool still = false;
+        for (auto &n : now) still |= n.first == o.first;
+        if (!still && sound != SND_JOIN) sound = SND_LEAVE;
+    }
+    prev = now;
+    if (sound >= 0 && g_testLog.empty()) LobbySound(sound);   // (modes de test : silencieux)
+}
+
 static void DrawUI(Graphics &g)
 {
     UpdateButtons();
@@ -1259,14 +1330,13 @@ static void DrawUI(Graphics &g)
         else if (g_lobby == LB_CONNECTING) { hostLabel = T(L"CONNEXION\u2026", L"CONNECTING\u2026"); joinLabel = T(L"ANNULER", L"CANCEL"); }
         DrawButton(g, B_HOST, hostLabel, true);
         DrawButton(g, B_JOIN, joinLabel, false);
-        DrawButton(g, B_PLAY, T(L"JOUER (MENU COOP)", L"PLAY (COOP MENU)"), false);
         // exe cible
         std::wstring exeLine;
         Color ec = kGrey;
         if (g_exeKind == EXE_OK) { exeLine = L"gta-vc.exe 1.0 \u2713"; ec = Color(255, 38, 150, 96); }
         else if (g_exeKind == EXE_MISSING) { exeLine = T(L"gta-vc.exe introuvable", L"gta-vc.exe not found"); ec = Color(255, 214, 48, 72); }
         else { exeLine = T(L"exe pas en 1.0", L"exe is not 1.0"); ec = Color(255, 214, 48, 72); }
-        Text(g, exeLine, RectF(78, 484, 170, 20), 12, FontStyleBold, ec, StringAlignmentNear);
+        Text(g, exeLine, RectF(78, 452, 170, 20), 12, FontStyleBold, ec, StringAlignmentNear);
         Button &eb = g_btn[B_EXE];
         const wchar_t *el = g_exeKind == EXE_OK ? T(L"Changer d'exe", L"Change exe") : T(L"Choisir l'exe\u2026", L"Choose exe\u2026");
         Color lc = Mix(g_exeKind == EXE_OK ? kGrey : kPink, kPink, eb.hover);
@@ -1573,7 +1643,7 @@ static void ScanMods(const std::string &dir, const std::string &rel, std::vector
         if (n > 5 && !_stricmp(fd.cFileName + n - 5, ".part")) continue;
         ModFile m;
         m.rel = r;
-        if (r.size() < 200 && HashFileA(dir + fd.cFileName, m.size, m.hash) && m.size < 64u * 1024 * 1024) out.push_back(m);
+        if (r.size() < 200 && HashFileA(dir + fd.cFileName, m.size, m.hash) && m.size < 1536u * 1024 * 1024) out.push_back(m);   // (archives de pack : 400 Mo et plus)
     } while (FindNextFileA(h, &fd));
     FindClose(h);
 }
@@ -2206,7 +2276,7 @@ static std::wstring SkinDisplayName(const std::string &n)
     return w;
 }
 
-struct ModEntry { std::wstring name, dff, txd; bool on; int files; uint64_t bytes; std::vector<uint32_t> thumb; bool thumbDone; };
+struct ModEntry { std::wstring name, dff, txd; bool on; int files; uint64_t bytes; std::vector<uint32_t> thumb; bool thumbDone; bool pack = false; };
 static std::vector<ModEntry> g_modList;
 static std::atomic<int> g_modSel(0), g_modGen(0);
 static const int kThumbPx = 64;
@@ -2493,6 +2563,54 @@ static bool SkinMouseDown(float x, float y, bool *drag)
 // jeu (mods.cpp) et le salon ne lisent que VCCoop\mods. Apercu 3D : le premier .dff du mod, avec son .txd (ou celui
 // du jeu du meme nom).
 static std::wstring ModsDirW(bool on) { return g_gameDir + (on ? L"VCCoop\\mods\\" : L"VCCoop\\mods-off\\"); }
+// Archive de pack (nom.img + nom.dir) : un vehicule connu en est extrait (dossier temporaire) pour l'apercu 3D.
+static bool PackPreview(const std::wstring &img, const std::wstring &dirFile, ModEntry &e)
+{
+    FILE *fd = _wfopen(dirFile.c_str(), L"rb");
+    if (!fd) return false;
+    struct Ent { uint32_t off, size; char name[24]; };
+    std::vector<Ent> ents;
+    Ent x;
+    while (fread(&x, 1, 32, fd) == 32) { x.name[23] = 0; ents.push_back(x); }
+    fclose(fd);
+    auto find = [&](const char *n) -> const Ent * { for (auto &en : ents) if (!_stricmp(en.name, n)) return &en; return nullptr; };
+    static const char *pref[] = { "infernus", "cheetah", "banshee", "stinger", "sentinel", "admiral", "voodoo", "pcj600" };
+    const Ent *dff = nullptr, *txd = nullptr;
+    for (const char *p : pref) {
+        char a[32], b[32];
+        sprintf_s(a, "%s.dff", p); sprintf_s(b, "%s.txd", p);
+        if ((dff = find(a)) && (txd = find(b))) break;
+        dff = txd = nullptr;
+    }
+    for (size_t i = 0; !dff && i < ents.size(); i++) {
+        size_t l = strlen(ents[i].name);
+        if (l < 5 || _stricmp(ents[i].name + l - 4, ".dff")) continue;
+        std::string t = std::string(ents[i].name, l - 4) + ".txd";
+        if ((txd = find(t.c_str()))) dff = &ents[i];
+    }
+    if (!dff) return false;
+    wchar_t tmp[MAX_PATH];
+    GetTempPathW(MAX_PATH, tmp);
+    std::wstring out = std::wstring(tmp) + L"VCCoop-apercu\\";
+    CreateDirectoryW(out.c_str(), NULL);
+    out += std::to_wstring(std::hash<std::wstring>()(img) & 0xFFFFFF) + L"_";
+    FILE *fi = _wfopen(img.c_str(), L"rb");
+    if (!fi) return false;
+    bool ok = true;
+    for (const Ent *en : { dff, txd }) {
+        std::wstring path = out + Widen(en->name);
+        std::vector<char> buf((size_t)en->size * 2048);
+        if (_fseeki64(fi, (int64_t)en->off * 2048, SEEK_SET) != 0 || fread(buf.data(), 1, buf.size(), fi) != buf.size()) { ok = false; break; }
+        FILE *fo = _wfopen(path.c_str(), L"wb");
+        if (!fo) { ok = false; break; }
+        fwrite(buf.data(), 1, buf.size(), fo);
+        fclose(fo);
+        (en == dff ? e.dff : e.txd) = path;
+    }
+    fclose(fi);
+    return ok;
+}
+
 static void WalkMod(const std::wstring &dir, ModEntry &e)
 {
     WIN32_FIND_DATAW fd;
@@ -2507,8 +2625,15 @@ static void WalkMod(const std::wstring &dir, ModEntry &e)
         e.bytes += ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
         std::wstring low = n;
         for (auto &c : low) c = towlower(c);
-        if (low.size() > 4 && !low.compare(low.size() - 4, 4, L".dff")) dffs.push_back(dir + n);
-        if (low.size() > 4 && !low.compare(low.size() - 4, 4, L".txd")) txds.push_back(dir + n);
+        std::wstring ldir = dir;
+        for (auto &c : ldir) c = towlower(c);
+        bool generic = ldir.find(L"\\generic\\") != std::wstring::npos;   // roues, avion lointain : pas un apercu
+        if (!generic && low.size() > 4 && !low.compare(low.size() - 4, 4, L".dff")) dffs.push_back(dir + n);
+        if (!generic && low.size() > 4 && !low.compare(low.size() - 4, 4, L".txd")) txds.push_back(dir + n);
+        if (low.size() > 4 && !low.compare(low.size() - 4, 4, L".img") && !e.pack) {
+            std::wstring d = dir + n.substr(0, n.size() - 4) + L".dir";
+            if (GetFileAttributesW(d.c_str()) != INVALID_FILE_ATTRIBUTES) { e.pack = true; e.dff.clear(); e.txd.clear(); PackPreview(dir + n, d, e); }
+        }
     } while (FindNextFileW(h, &fd));
     FindClose(h);
     if (e.dff.empty() && !dffs.empty()) {
@@ -2833,6 +2958,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM wp, LPARAM lp)
         if (wp == 3) { KillTimer(h, 3); Launch(g_testLaunch); return 0; }
         if (wp == 4) { TestSalonStep(); return 0; }
         if (wp == 2) { WriteTestLog(h); DestroyWindow(h); return 0; }
+        LobbySoundsTick();
         Tick();
         return 0;
     case WM_MOUSEMOVE: {

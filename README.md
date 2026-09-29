@@ -289,6 +289,13 @@ Only the file names matter:
   character or a building (`cheetah`, `infernus`, `colt45`...).
 - `handling.cfg` (or `handling.txt`, `*.handling`): handling lines in Vice City's `handling.cfg`
   format; each line replaces the game's line that starts with the same vehicle name (`CHEETAH ...`).
+- **Full packs** (e.g. the NextGen Cars Pack): copy the pack's `data` and `models` folders into a folder of
+  `VCCoop\mods\` (`VCCoop\mods\nextgen86\data\...`, `...\models\nextgen86.img`). Its `.img` + `.dir` archive is
+  loaded as is, files under `models\` or `data\` replace the game's file at the same path (`vehicles.col`,
+  `generic\wheels.dff`), `default.ide` lines are merged by vehicle number. Do **not** copy the pack's
+  `gta_vc.dat` nor its limit adjuster (`.asi`, `.dll`): VCCoop raises the streaming memory itself
+  (`MemoireChargement=` in MB, automatic with a big pack). Guests download the pack from the lobby, or skip it
+  if they already have the same files.
 - `carcols.dat`: colour lines (`cheetah, 1,1, 2,2 ...`), same rule.
 
 How it works: at every game start a `vccmods.img` is built at the game's root from these files and
@@ -598,6 +605,13 @@ Seul le nom des fichiers compte :
   de Vice City ; chaque ligne remplace celle du jeu qui commence par le même nom de véhicule
   (`CHEETAH ...`).
 - `carcols.dat` : lignes de couleurs (`cheetah, 1,1, 2,2 ...`), même règle.
+- **Packs complets** (ex. NextGen Cars Pack) : copiez les dossiers `data` et `models` du pack dans un dossier de
+  `VCCoop\mods\` (`VCCoop\mods\nextgen86\data\...`, `...\models\nextgen86.img`). Son archive `.img` + `.dir` est
+  chargée telle quelle, les fichiers rangés sous `models\` ou `data\` remplacent celui du jeu au même chemin
+  (`vehicles.col`, `generic\wheels.dff`), les lignes de `default.ide` sont fusionnées par numéro de véhicule. Ne
+  copiez **ni** le `gta_vc.dat` du pack **ni** son « limit adjuster » (`.asi`, `.dll`) : VCCoop relève lui-même la
+  mémoire de chargement (`MemoireChargement=` en Mo, automatique avec un gros pack). Les invités téléchargent le
+  pack depuis le salon, ou le sautent s'ils ont déjà les mêmes fichiers.
 
 Fonctionnement : à chaque lancement de partie, un `vccmods.img` est fabriqué à la racine du jeu à
 partir de ces fichiers et chargé en priorité sur `gta3.img`. Les fichiers du jeu ne sont jamais
