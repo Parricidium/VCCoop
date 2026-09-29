@@ -145,7 +145,13 @@ static char __fastcall h_ProcessOneCommand(void *script)
         OverlayBuyEnd();
     }
     bool challenge = !g_cfg.host && op == OP_START_MISSION && !Field<bool>(script, 0x85) && IsChallengeMission(MissionNumberAt(ip));
-    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && (challenge || InSideMissionVehicle() || PropertyBuyPending())) {
+    bool sideWanted = !g_cfg.host && op == OP_START_MISSION && (challenge || InSideMissionVehicle());
+    if (sideWanted && !g_sideMission && HostOnMission() && !PropertyBuyPending()) {
+        static uint32_t lastRefused;
+        if (GetTickCount() - lastRefused > 5000) { Log("script : mission secondaire refusee a l'invite (%.8s) : l'hote est en mission", (char *)script + 8); lastRefused = GetTickCount(); }
+        sideWanted = false;   // la commande est sautee plus bas, comme une mission de l'histoire
+    }
+    if (!g_cfg.host && op == OP_START_MISSION && !g_sideMission && (sideWanted || PropertyBuyPending())) {
         g_sideMission = true;
         g_buyMission = !challenge && PropertyBuyPending() && !InSideMissionVehicle();
         g_propCollectedAt = 0;

@@ -10,6 +10,8 @@
 // scapulaire et bassin rigides) et des distances minimales (coudes, genoux, tete) ; gravite ; collisions contre
 // batiments et objets (CWorld::ProcessLineOfSight 0x4D92D0 du point precedent au nouveau : point et normale
 // d'impact) ; les vehicules repoussent les points qui entrent dans leur boite et leur donnent leur vitesse.
+// Anti chewing-gum : genoux et coudes en charnieres (un seul sens), entretoises contre la torsion du tronc, distances
+// minimales (cuisses / torse, pieds / tete, jambes entre elles). Murs : KeepOnThisSide.
 // Os pilotes : repere (direction de l'os vers l'enfant, reference laterale) de depart et courant, rotation = courant
 // x depart^T appliquee a la matrice de depart ; les autres os suivent leur parent rigidement.
 //
@@ -65,7 +67,20 @@ const uint8_t kSoft[][2] = {
     { P_PELVIS, P_HEAD }, { P_CHEST, P_HEADTOP }, { P_PELVIS, P_HEADTOP }, { P_CHEST, P_RFA }, { P_CHEST, P_LFA },
 };
 enum { NS = sizeof(kSoft) / sizeof(kSoft[0]) };
-const float kSoftK = 0.07f;
+const float kSoftK = 0.16f;
+// Entretoises en diagonale epaules <-> hanches : le haut et le bas du corps ne tournent plus l'un sur l'autre autour
+// de la colonne (avant : torsion libre, corps "en chewing-gum").
+const uint8_t kTwist[][2] = { { P_RUA, P_RTH }, { P_LUA, P_LTH }, { P_RUA, P_LTH }, { P_LUA, P_RTH } };
+enum { NT = sizeof(kTwist) / sizeof(kTwist[0]) };
+const float kTwistK = 0.6f;
+// Distances minimales en fraction de la distance de depart : cuisses qui ne remontent pas dans le torse, pieds pas
+// sur la tete, genoux et pieds qui ne passent pas l'un dans l'autre.
+struct MinPair { uint8_t a, b; float frac; };
+const MinPair kMinPairs[] = {
+    { P_CHEST, P_RCA, 0.66f }, { P_CHEST, P_LCA, 0.66f }, { P_NECK, P_RFO, 0.62f }, { P_NECK, P_LFO, 0.62f },
+    { P_RCA, P_LCA, 0.45f }, { P_RFO, P_LFO, 0.40f }, { P_HEAD, P_RH, 0.30f }, { P_HEAD, P_LH, 0.30f },
+};
+enum { NMP = sizeof(kMinPairs) / sizeof(kMinPairs[0]) };
 // Poids : gravite un peu plus forte que la vraie (le corps "tombe lourd", pas en papier), air freinant, elan des
 // voitures en partie seulement transmis.
 const float kGravity = 13.0f, kAirKeep = 0.99f, kCarTransfer = 0.8f;
@@ -114,7 +129,9 @@ struct Rag {
     int pnode[NP];
     V3 p[NP], q[NP], target[NP];
     bool haveTarget;
-    float rest[NL], minDist[NM], soft[NS];
+    float rest[NL], minDist[NM], soft[NS], twist[NT], minPair[NMP];
+    float fwdSign;            // Cross(gauche, haut) pointe vers l'avant (+1) ou l'arriere (-1) du personnage
+    V3 safePelvis;            // derniere position du bassin du bon cote des murs
     Frame f0[ND];
     V3 startVel, topple;
     float startZ;
@@ -122,6 +139,7 @@ struct Rag {
     V3 wakePos;
     bool noSupportWake;   // reveille "sans support" et reste sur place : support invisible au test, on n'y regarde plus
     int endSends;
+    int waitPose;             // images attendues avant un squelette pose (Capture)
 };
 Rag g_rag[MAX_RAG];
 
@@ -134,6 +152,12 @@ void *Hier(void *ped)
 float *Mats(void *hier) { return ((float *(__cdecl *)(void *))0x646370)(hier); }   // RpHAnimHierarchyGetMatrixArray
 int IndexOf(void *hier, int tag) { return ((int(__cdecl *)(void *, int))0x646390)(hier, tag); }   // RpHAnimIDGetIndex
 inline V3 MPos(const float *m) { return { m[12], m[13], m[14] }; }
+
+float TwistDeg(const Rag &r)
+{
+    V3 lat = Norm(r.p[P_LTH] - r.p[P_RTH]), up = Norm(r.p[P_CHEST] - r.p[P_PELVIS]), latC = Norm(r.p[P_LUA] - r.p[P_RUA]);
+    return acosf(fmaxf(-1.0f, fminf(1.0f, Dot(Norm(latC - up * Dot(latC, up)), Norm(lat - up * Dot(lat, up)))))) * 57.3f;
+}
 
 bool Capture(Rag &r)
 {
@@ -172,6 +196,15 @@ bool Capture(Rag &r)
     for (int m = 0; m < NM; m++)
         r.minDist[m] = 0.62f * (Len(r.p[kMins[m].a] - r.p[kMins[m].mid]) + Len(r.p[kMins[m].mid] - r.p[kMins[m].b]));
     for (int k = 0; k < NS; k++) r.soft[k] = Len(r.p[kSoft[k][0]] - r.p[kSoft[k][1]]);
+    for (int k = 0; k < NT; k++) r.twist[k] = Len(r.p[kTwist[k][0]] - r.p[kTwist[k][1]]);
+    for (int k = 0; k < NMP; k++) r.minPair[k] = kMinPairs[k].frac * Len(r.p[kMinPairs[k].a] - r.p[kMinPairs[k].b]);
+    {
+        V3 lat = Norm(r.p[P_LTH] - r.p[P_RTH]), up = Norm(r.p[P_CHEST] - r.p[P_PELVIS]);
+        V3 pedFwd = Field<V3>(r.ped, 0x14);   // axe avant de la matrice du personnage
+        r.fwdSign = Dot(Cross(lat, up), pedFwd) >= 0 ? 1.0f : -1.0f;
+    }
+    r.safePelvis = r.p[P_PELVIS];
+    if (!_stricmp(g_cfg.autotest, "ragdoll")) Log("ragdoll : %08X capture : torsion %.0f, bassin z %.2f, sens %.0f", r.handle, TwistDeg(r), r.p[P_PELVIS].z, r.fwdSign);
     for (int d = 0; d < ND; d++) {
         const Drive &k = kDrives[d];
         V3 ref = k.parent < 0 ? r.p[k.refA] - r.p[k.refB] : r.f0[k.parent].z;
@@ -250,6 +283,15 @@ void __fastcall h_PreRender(void *ped, void *edx)
     Rag *r = FindRag(ped);
     if (!r || r->broken) return;
     if (r->pending) {
+        // Squelette pas encore pose (personnage cree ou deplace dans cette image : tous les os au meme point) :
+        // on attend l'image suivante, sinon le corps partait replie en un seul point.
+        {
+            void *hier = Hier(ped);
+            float *mats = hier ? Mats(hier) : NULL;
+            int ip = hier ? IndexOf(hier, 1) : -1, ih = hier ? IndexOf(hier, 5) : -1, il = hier ? IndexOf(hier, 32) : -1, ir = hier ? IndexOf(hier, 22) : -1;
+            bool flat = !mats || ip < 0 || ih < 0 || il < 0 || ir < 0 || Len(MPos(mats + ih * 16) - MPos(mats + ip * 16)) < 0.3f || Len(MPos(mats + il * 16) - MPos(mats + ir * 16)) < 0.1f;
+            if (flat && ++r->waitPose < 20) return;
+        }
         r->pending = false;
         if (!Capture(*r)) { r->broken = true; Log("ragdoll : squelette illisible (modele %d), animation du jeu gardee", ModelIndex(ped)); return; }
         float dt = TimeStep() / 50.0f;
@@ -359,6 +401,54 @@ void PushByVehicles(Rag &r, float stepFrac)
     }
 }
 
+// Charnieres : un genou ne plie que vers l'avant (il reste devant la ligne hanche-pied), un coude que vers l'arriere
+// (il reste derriere la ligne epaule-main) ; avant, bras et jambes pouvaient se plier des deux cotes.
+void Hinges(Rag &r)
+{
+    // (repere du corps degenere : pas de sens avant fiable, on ne touche a rien)
+    if (Len(r.p[P_LTH] - r.p[P_RTH]) < 0.05f || Len(r.p[P_CHEST] - r.p[P_PELVIS]) < 0.1f || Len(r.p[P_LUA] - r.p[P_RUA]) < 0.08f) return;
+    V3 lat = Norm(r.p[P_LTH] - r.p[P_RTH]), up = Norm(r.p[P_CHEST] - r.p[P_PELVIS]);
+    V3 fwd = Norm(Cross(lat, up)) * r.fwdSign;
+    const int legs[2][3] = { { P_RTH, P_RCA, P_RFO }, { P_LTH, P_LCA, P_LFO } };
+    for (auto &l : legs) {
+        V3 mid = (r.p[l[0]] + r.p[l[2]]) * 0.5f;
+        float d = Dot(r.p[l[1]] - mid, fwd);
+        if (d < 0.02f) r.p[l[1]] = r.p[l[1]] + fwd * (0.02f - d);
+    }
+    V3 latC = Norm(r.p[P_LUA] - r.p[P_RUA]), upC = Norm(r.p[P_NECK] - r.p[P_CHEST]);
+    V3 fwdC = Norm(Cross(latC, upC)) * r.fwdSign;
+    const int arms[2][3] = { { P_RUA, P_RFA, P_RH }, { P_LUA, P_LFA, P_LH } };
+    for (auto &a : arms) {
+        V3 mid = (r.p[a[0]] + r.p[a[2]]) * 0.5f;
+        float d = Dot(r.p[a[1]] - mid, fwdC);
+        if (d > -0.01f) r.p[a[1]] = r.p[a[1]] - fwdC * ((d + 0.01f) * 0.5f);
+    }
+}
+
+// Murs : le bassin (donc le personnage, et ce qu'il lache, comme le telephone du cuisinier) ne traverse jamais un mur
+// depuis sa derniere position sure ; s'il le fait, tout le corps revient de ce cote. Le sol reste l'affaire des
+// collisions de chaque point (Simulate).
+void KeepOnThisSide(Rag &r)
+{
+    V3 pt, n;
+    V3 pv = r.p[P_PELVIS], mv = pv - r.safePelvis;
+    float ml = Len(mv);
+    if (ml > 1e-4f && Hit(r.safePelvis, pv + mv * (0.1f / ml), pt, n) && fabsf(Norm(n).z) < 0.7f) {
+        n = Norm(n);
+        n.z = 0;
+        n = Norm(n);
+        if (Dot(n, r.safePelvis - pt) < 0) n = n * -1.0f;   // la normale regarde du cote sur
+        float over = Dot(pv - pt, n);                        // < 0 : de l'autre cote du mur
+        if (over < 0.12f) {
+            V3 back = n * (0.12f - over);
+            for (int i = 0; i < NP; i++) { r.p[i] = r.p[i] + back; r.q[i] = r.q[i] + back; }
+            r.q[P_PELVIS] = r.p[P_PELVIS];
+            if (!_stricmp(g_cfg.autotest, "ragdoll")) Log("ragdoll : %08X ramene de %.2f m du bon cote d'un mur", r.handle, 0.12f - over);
+        }
+    }
+    r.safePelvis = r.p[P_PELVIS];
+}
+
 void Simulate(Rag &r)
 {
     float dt = TimeStep() / 50.0f;
@@ -400,22 +490,72 @@ void Simulate(Rag &r)
                 V3 corr = d * (0.5f * (len - r.minDist[m]) / len);
                 a = a + corr; b = b - corr;
             }
+            for (int k = 0; k < NT; k++) {
+                V3 &a = r.p[kTwist[k][0]], &b = r.p[kTwist[k][1]];
+                V3 d = b - a;
+                float len = Len(d);
+                if (len < 1e-5f) continue;
+                V3 corr = d * (0.5f * kTwistK * (len - r.twist[k]) / len);
+                a = a + corr; b = b - corr;
+            }
+            for (int k = 0; k < NMP; k++) {
+                V3 &a = r.p[kMinPairs[k].a], &b = r.p[kMinPairs[k].b];
+                V3 d = b - a;
+                float len = Len(d);
+                if (len >= r.minPair[k] || len < 1e-5f) continue;
+                V3 corr = d * (0.5f * (len - r.minPair[k]) / len);
+                a = a + corr; b = b - corr;
+            }
+            Hinges(r);
         }
     }
     // Collisions : du point de l'image precedente au nouveau (un peu en arriere, pour ne pas partir de la surface).
-    for (int i = 0; i < NP; i++) {
-        V3 move = r.p[i] - prevFrame[i];
-        float ml = Len(move);
-        if (ml < 1e-5f) continue;
-        V3 start = prevFrame[i] - move * (0.05f / ml);
-        V3 pt, n;
-        if (!Hit(start, r.p[i] + move * (0.04f / ml), pt, n)) continue;
-        n = Norm(n);
-        r.p[i] = pt + n * 0.06f;
-        V3 v = r.p[i] - r.q[i];
-        float vn = Dot(v, n);
-        V3 vt = v - n * vn;
-        r.q[i] = r.p[i] - (vt * 0.35f - n * (vn < 0 ? 0.0f : vn));   // lourd : frottement fort, pas de rebond
+    auto collide = [&]() {
+        for (int i = 0; i < NP; i++) {
+            V3 move = r.p[i] - prevFrame[i];
+            float ml = Len(move);
+            if (ml < 1e-5f) continue;
+            V3 start = prevFrame[i] - move * (0.05f / ml);
+            V3 pt, n;
+            if (!Hit(start, r.p[i] + move * (0.04f / ml), pt, n)) continue;
+            n = Norm(n);
+            r.p[i] = pt + n * 0.06f;
+            V3 v = r.p[i] - r.q[i];
+            float vn = Dot(v, n);
+            V3 vt = v - n * vn;
+            r.q[i] = r.p[i] - (vt * 0.35f - n * (vn < 0 ? 0.0f : vn));   // lourd : frottement fort, pas de rebond
+        }
+    };
+    collide();
+    // Les collisions poussent chaque point seul : quelques passes des os rigides et des entretoises ensuite, pour que
+    // le squelette ne s'etire pas (epaules ecartees d'un metre juste apres un choc de voiture).
+    for (int it = 0; it < 4; it++) {
+        for (int l = 0; l < NL; l++) {
+            V3 &a = r.p[kLinks[l][0]], &b = r.p[kLinks[l][1]];
+            V3 d = b - a;
+            float len = Len(d);
+            if (len < 1e-5f) continue;
+            V3 corr = d * (0.5f * (len - r.rest[l]) / len);
+            a = a + corr; b = b - corr;
+        }
+        for (int k = 0; k < NT; k++) {
+            V3 &a = r.p[kTwist[k][0]], &b = r.p[kTwist[k][1]];
+            V3 d = b - a;
+            float len = Len(d);
+            if (len < 1e-5f) continue;
+            V3 corr = d * (0.5f * kTwistK * (len - r.twist[k]) / len);
+            a = a + corr; b = b - corr;
+        }
+    }
+    collide();   // (ces passes ne doivent pas enfoncer un point dans le sol)
+    KeepOnThisSide(r);
+    if (!_stricmp(g_cfg.autotest, "ragdoll")) {
+        static uint32_t last;
+        if (GetTickCount() - last > 400) {
+            last = GetTickCount();
+            Log("ragdoll : %08X suivi : bassin z %.2f, poitrine z %.2f, tete z %.2f, torsion %.0f, largeurs %.2f / %.2f", r.handle, r.p[P_PELVIS].z, r.p[P_CHEST].z, r.p[P_HEAD].z, TwistDeg(r),
+                Len(r.p[P_LUA] - r.p[P_RUA]), Len(r.p[P_LTH] - r.p[P_RTH]));
+        }
     }
     for (int i = 0; i < NP; i++) if (!Finite(r.p[i])) { r.broken = true; Log("ragdoll : simulation invalide, abandon"); return; }
     float maxMove = 0.0f;
@@ -564,11 +704,19 @@ void RagdollAfterProcess()
             if (r.p[P_PELVIS].z < r.startZ - 6.0f) {
                 float up = r.startZ - 0.8f - r.p[P_PELVIS].z;
                 for (int i = 0; i < NP; i++) { r.p[i].z += up; r.q[i] = r.p[i]; }
+                r.safePelvis = r.p[P_PELVIS];
                 r.still = 1000;
                 Log("ragdoll : %08X passait sous le sol, remonte", r.handle);
             }
             KeepPedOnBody(r);
             if (!r.alive && (r.still > 45 || now - r.startAt > 12000)) {
+                if (!_stricmp(g_cfg.autotest, "ragdoll")) {   // mesures au repos : charnieres et torsion
+                    V3 lat = Norm(r.p[P_LTH] - r.p[P_RTH]), up = Norm(r.p[P_CHEST] - r.p[P_PELVIS]), fwd = Norm(Cross(lat, up)) * r.fwdSign;
+                    float kr = Dot(r.p[P_RCA] - (r.p[P_RTH] + r.p[P_RFO]) * 0.5f, fwd), kl = Dot(r.p[P_LCA] - (r.p[P_LTH] + r.p[P_LFO]) * 0.5f, fwd);
+                    V3 latC = Norm(r.p[P_LUA] - r.p[P_RUA]);
+                    float twist = acosf(fmaxf(-1.0f, fminf(1.0f, Dot(Norm(latC - up * Dot(latC, up)), Norm(lat - up * Dot(lat, up)))))) * 57.3f;
+                    Log("ragdoll : %08X au repos : genoux %.2f %.2f (>0 = vers l'avant), torsion %.0f deg", r.handle, kr, kl, twist);
+                }
                 r.sleeping = true;
                 r.sleepAt = now;
                 if (r.lastWake && Len(r.p[P_PELVIS] - r.wakePos) < 0.1f) r.noSupportWake = true;
@@ -587,6 +735,7 @@ void RagdollAfterProcess()
                     r.startAt = now;
                     r.startZ = r.p[P_PELVIS].z;
                     r.wakePos = r.p[P_PELVIS];
+                    r.safePelvis = r.p[P_PELVIS];
                     for (int i = 0; i < NP; i++) r.q[i] = r.p[i];
                     if (g_cfg.logScripts) Log("ragdoll : %08X se remet a bouger (plus de support, ou voiture)", r.handle);
                     continue;
