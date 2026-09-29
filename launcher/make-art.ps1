@@ -7,6 +7,17 @@ $W = 1000; $H = 620
 $card = New-Object System.Drawing.RectangleF 20, 60, 960, 540
 $panel = New-Object System.Drawing.RectangleF 48, 88, 360, 484
 
+# Cadre des pixels visibles d'une image (alpha > 8)
+function AlphaBox($img) {
+    $b = New-Object System.Drawing.Bitmap $img
+    $x0 = $b.Width; $y0 = $b.Height; $x1 = -1; $y1 = -1
+    for ($y = 0; $y -lt $b.Height; $y += 2) { for ($x = 0; $x -lt $b.Width; $x += 2) {
+        if ($b.GetPixel($x, $y).A -gt 8) { if ($x -lt $x0) { $x0 = $x }; if ($x -gt $x1) { $x1 = $x }; if ($y -lt $y0) { $y0 = $y }; if ($y -gt $y1) { $y1 = $y } }
+    } }
+    $b.Dispose()
+    return New-Object System.Drawing.RectangleF ($x0 - 2), ($y0 - 2), ($x1 - $x0 + 5), ($y1 - $y0 + 5)
+}
+
 function RoundPath([System.Drawing.RectangleF]$r, [float]$rad) {
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
     $d = $rad * 2
@@ -50,6 +61,25 @@ for ($x = 20; $x -lt 580; $x += 2) {
     $vg.Dispose()
 }
 
+# Accroche a droite, facon carte postale : lettres espacees, filet degrade, sous-titre.
+function SpacedText($gr, [string]$t, $font, $brush, [float]$cx, [float]$y, [float]$gap) {
+    $sf = [System.Drawing.StringFormat]::GenericTypographic
+    $ws = @(); $tot = 0
+    foreach ($ch in $t.ToCharArray()) { $w = $gr.MeasureString([string]$ch, $font, 1000, $sf).Width; if ($ch -eq ' ') { $w = $font.Size * 0.35 }; $ws += $w; $tot += $w + $gap }
+    $x = $cx - ($tot - $gap) / 2
+    $i = 0
+    foreach ($ch in $t.ToCharArray()) { $gr.DrawString([string]$ch, $font, $brush, $x, $y, $sf); $x += $ws[$i] + $gap; $i++ }
+}
+$g.TextRenderingHint = 'AntiAliasGridFit'
+$ink = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(225, 40, 32, 48))
+$f1 = New-Object System.Drawing.Font 'Segoe UI Light', 30, ([System.Drawing.FontStyle]::Regular), ([System.Drawing.GraphicsUnit]::Pixel)
+$f2 = New-Object System.Drawing.Font 'Segoe UI', 13, ([System.Drawing.FontStyle]::Regular), ([System.Drawing.GraphicsUnit]::Pixel)
+SpacedText $g 'GREETINGS FROM' $f1 $ink 715 262 9
+SpacedText $g 'VICE CITY' $f1 $ink 715 302 13
+$lb = New-Object System.Drawing.Drawing2D.LinearGradientBrush (New-Object System.Drawing.PointF 575, 0), (New-Object System.Drawing.PointF 855, 0), ([System.Drawing.Color]::FromArgb(255, 255, 79, 139)), ([System.Drawing.Color]::FromArgb(255, 255, 138, 91))
+$g.FillRectangle($lb, 575, 350, 280, 2)
+SpacedText $g 'THE STORY MISSIONS  ·  2 TO 4 PLAYERS' $f2 (New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(210, 90, 76, 96))) 715 364 3.2
+
 # Panneau depoli : le fond sous le panneau, reduit puis agrandi (flou), voile blanc.
 $panelPath = RoundPath $panel 18
 $small = New-Object System.Drawing.Bitmap 45, 60
@@ -68,10 +98,12 @@ $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(150
 $g.DrawPath((New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(110, 255, 255, 255)), 1.5), $cardPath)
 
 # Logo : depasse du haut de la carte (la transparence du PNG le laisse flotter sur le bureau).
-$logo = [System.Drawing.Image]::FromFile((Join-Path $ui 'logo.png'))
-$src = New-Object System.Drawing.RectangleF 158, 12, 238, 248
-$dw = 196.0; $dh = $dw * $src.Height / $src.Width
-$dst = New-Object System.Drawing.RectangleF (228 - $dw / 2), 6, $dw, $dh
+# Logo du lanceur et de la page GitHub : launcher\logo.png (docs\img\logo.png), distinct du logo.png affiche en jeu.
+$logo = [System.Drawing.Image]::FromFile((Join-Path $PSScriptRoot 'logo.png'))
+$src = AlphaBox $logo
+$dh = 196.0; $dw = $dh * $src.Width / $src.Height
+if ($dw -gt 220) { $dw = 220.0; $dh = $dw * $src.Height / $src.Width }
+$dst = New-Object System.Drawing.RectangleF (228 - $dw / 2), 8, $dw, $dh
 # halo blanc doux derriere le logo pour qu'il se lise sur le bureau
 for ($i = 6; $i -ge 1; $i--) {
     $ia = New-Object System.Drawing.Imaging.ImageAttributes
@@ -93,15 +125,17 @@ $fond.Dispose(); $logo.Dispose(); $bmp.Dispose()
 "Ecrit : $out"
 
 # Icone du lanceur (launcher\vccoop.ico) : le logo, en PNG 256/48/32/16 dans un .ico.
-$logo = [System.Drawing.Image]::FromFile((Join-Path $ui 'logo.png'))
+$logo = [System.Drawing.Image]::FromFile((Join-Path $PSScriptRoot 'logo.png'))
+$box = AlphaBox $logo
+$side = [math]::Max($box.Width, $box.Height) + 8
+$cx = $box.X + $box.Width / 2; $cy = $box.Y + $box.Height / 2
 $imgs = @()
 foreach ($s in 256, 48, 32, 16) {
     $b = New-Object System.Drawing.Bitmap $s, $s, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $gg = [System.Drawing.Graphics]::FromImage($b)
     $gg.InterpolationMode = 'HighQualityBicubic'; $gg.SmoothingMode = 'AntiAlias'; $gg.PixelOffsetMode = 'HighQuality'
     $gg.Clear([System.Drawing.Color]::Transparent)
-    $side = 250.0
-    $gg.DrawImage($logo, (New-Object System.Drawing.RectangleF 0, 0, $s, $s), (New-Object System.Drawing.RectangleF (277 - $side / 2), (136 - $side / 2), $side, $side), [System.Drawing.GraphicsUnit]::Pixel)
+    $gg.DrawImage($logo, (New-Object System.Drawing.RectangleF 0, 0, $s, $s), (New-Object System.Drawing.RectangleF ($cx - $side / 2), ($cy - $side / 2), $side, $side), [System.Drawing.GraphicsUnit]::Pixel)
     $gg.Dispose()
     $ms = New-Object System.IO.MemoryStream
     $b.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
