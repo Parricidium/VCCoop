@@ -294,9 +294,16 @@ static char __fastcall h_ProcessOneCommand(void *script)
         CollectParameters(script, op >= 0x01FF ? 6 : 5);
         uint32_t car = ((uint32_t *)0x7D7438)[1];
         if (!VehicleRefValid(car)) {
+            Field<bool>(script, 0x82) = (*(uint16_t *)(ScriptSpace() + ip) & 0x8000) != 0;   // m_bNotFlag, comme le jeu
             ((void(__thiscall *)(void *, uint8_t))0x463F00)(script, 0);   // CRunningScript::UpdateCompareFlag
             static uint32_t lastLog;
-            if (GetTickCount() - lastLog > 5000) { lastLog = GetTickCount(); Log("script : %04X avec une voiture inexistante (%08X, %.8s) : condition fausse", op, car, (char *)script + 8); }
+            if (GetTickCount() - lastLog > 5000) {
+                lastLog = GetTickCount();
+                char hex[80];
+                for (int i = 0; i < 24; i++) wsprintfA(hex + i * 3, "%02X ", ScriptSpace()[ip + i]);
+                Log("script : %04X avec une voiture inexistante (%08X, %.8s @%X, suite %X) : condition fausse ; %s", op, car, (char *)script + 8, ip,
+                    Field<int>(script, 0x10), hex);
+            }
             return 0;
         }
         Field<int>(script, 0x10) = ip;
