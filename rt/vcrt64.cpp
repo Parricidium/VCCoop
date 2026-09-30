@@ -275,7 +275,7 @@ static void CreatePipeline()
     lib.DXILLibrary.pShaderBytecode = g_rtDxil; lib.DXILLibrary.BytecodeLength = sizeof(g_rtDxil);
     D3D12_HIT_GROUP_DESC hg0 = {}, hg1 = {}, hg2 = {};
     hg0.HitGroupExport = L"HgPrimary"; hg0.ClosestHitShaderImport = L"PrimaryHit"; hg0.AnyHitShaderImport = L"PrimaryAny"; hg0.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
-    hg1.HitGroupExport = L"HgShadow"; hg1.AnyHitShaderImport = L"ShadowAny"; hg1.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+    hg1.HitGroupExport = L"HgShadow"; hg1.ClosestHitShaderImport = L"ShadowHit"; hg1.AnyHitShaderImport = L"ShadowAny"; hg1.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     hg2.HitGroupExport = L"HgRadiance"; hg2.ClosestHitShaderImport = L"RadianceHit"; hg2.AnyHitShaderImport = L"RadianceAny"; hg2.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     D3D12_RAYTRACING_SHADER_CONFIG sc = { 48, 8 };   // (charge la plus grosse : rayon de camera, 48 octets)
     D3D12_RAYTRACING_PIPELINE_CONFIG pc = { 2 };
