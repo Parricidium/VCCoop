@@ -1083,6 +1083,7 @@ struct Rec {
     bool dynamic;         // vehicule ou personnage (pas de sol mouille / brillant dessus)
     DWORD tint;           // couleur de la matiere (ray tracing : peinture des voitures dans les reflets)
     bool blend;           // en transparence (ray tracing : verre des vitrines)
+    void *entity;         // entite dessinee (ray tracing : mouvement des vehicules et personnages)
     GfxDraw d;
     DWORD fvf;
     float world[16];
@@ -1378,6 +1379,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     r.caster = true;
     r.tint = 0xFFFFFFFF;
     r.blend = blend != 0;
+    r.entity = g_curEntity;
     if (g_cfg.renderer == 12) {   // eclairage du jeu avec la couleur de la matiere (et non celle des sommets)
         DWORD light = 0, src = 0;
         D3DMATERIAL9 m;
@@ -2103,7 +2105,7 @@ static void Apply()
             d.vbData = r.replayVb ? g_cpuVb.data() : NULL;
             d.ibData = r.replayIb ? (const WORD *)g_cpuIb.data() : NULL;
             d.stride = r.stride; d.fvf = r.fvf; d.d = r.d; d.world = r.world;
-            d.alphaRef = r.alphaRef; d.tint = r.tint; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic; d.blend = r.blend;
+            d.alphaRef = r.alphaRef; d.tint = r.tint; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic; d.blend = r.blend; d.entity = r.entity;
             draws.push_back(d);
         }
         RtParams p = {};
