@@ -19,11 +19,12 @@ static void *Cmd(uint32_t type, uint32_t bytes)
 static void Mesh(uint32_t id, const std::vector<float> &pos, const std::vector<uint32_t> &idx)
 {
     uint32_t nv = (uint32_t)pos.size() / 3, nt = (uint32_t)idx.size() / 3;
-    BYTE *p = (BYTE *)Cmd(RT_CMD_MESH, sizeof(RtMesh) + nv * 20 + nt * 12);
+    BYTE *p = (BYTE *)Cmd(RT_CMD_MESH, sizeof(RtMesh) + nv * RT_VERTEX_BYTES + nt * 12);
     RtMesh *m = (RtMesh *)p; m->id = id; m->vertices = nv; m->triangles = nt; m->flags = 0;
     memcpy(p + sizeof(RtMesh), pos.data(), nv * 12);
-    memset(p + sizeof(RtMesh) + nv * 12, 0, nv * 8);
-    memcpy(p + sizeof(RtMesh) + nv * 20, idx.data(), nt * 12);
+    memset(p + sizeof(RtMesh) + nv * 12, 0, nv * 20);         // pas de normales, uv 0
+    memset(p + sizeof(RtMesh) + nv * 32, 0xFF, nv * 4);       // sommets blancs
+    memcpy(p + sizeof(RtMesh) + nv * 36, idx.data(), nt * 12);
 }
 
 int main()
@@ -77,13 +78,15 @@ int main()
     memcpy(fr->view, view, 64); memcpy(fr->proj, proj, 64);
     float s[3] = { 1, 1, 1.2f }; float sl = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
     fr->sun[0] = s[0] / sl; fr->sun[1] = s[1] / sl; fr->sun[2] = s[2] / sl; fr->sun[3] = 1;
-    fr->sunAngle = 0.02f; fr->outW = W; fr->outH = H; fr->features = RT_FEAT_SUN; fr->raysPerPixel = 4;
-    fr->instanceCount = 2; fr->maxDistance = 500;
+    fr->sunAngle = 0.02f; fr->outW = W; fr->outH = H; fr->features = RT_FEAT_SUN | RT_FEAT_AO | RT_FEAT_REFL | RT_FEAT_GI; fr->raysPerPixel = 4;
+    fr->instanceCount = 2; fr->maxDistance = 500; fr->aoRadius = 1.5f; fr->wetness = 1;
+    for (int k = 0; k < 3; k++) { fr->sunColor[k] = 1; fr->ambient[k] = 0.4f; fr->skyTop[k] = 0.3f; fr->skyBottom[k] = 0.8f; }
     RtInstance *in = (RtInstance *)(fr + 1);
     memset(in, 0, 2 * sizeof(RtInstance));
     float id[12] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
     memcpy(in[0].transform, id, 48); in[0].mesh = 1;
     memcpy(in[1].transform, id, 48); in[1].transform[11] = 1; in[1].mesh = 2;   // cube pose sur le sol
+    in[0].tint = 0xFFFFFFFF; in[1].tint = 0xFFFF2020; in[1].flags = RT_INST_VEHICLE;   // cube rouge, "carrosserie" 
 
     h->cmdBytes = g_off;
     h->frameSeq = 1;
@@ -101,7 +104,16 @@ int main()
         putchar('\n');
     }
     const uint16_t *c = px + ((H / 2) * W + W / 2) * 4;
-    printf("centre : visibilite %.2f, profondeur %.2f (attendu ~%.1f)\n", half(c[0]), half(c[1]), zl);
+    printf("centre : visibilite %.2f, profondeur %.2f (attendu ~%.1f), occlusion %.2f\n", half(c[0]), half(c[1]), zl, half(c[2]));
+    const BYTE *refl = g_base + RT_OUT_OFFSET + W * H * 8, *gi = refl + W * H * 4;
+    uint32_t ci = (H / 2) * W + W / 2, gp = (H - 4) * W + W / 2 - 6;   // cube ; sol pres du cube
+    printf("reflet du cube : %u %u %u poids %u ; lumiere renvoyee au sol pres du cube : %u %u %u\n",
+           refl[ci * 4 + 2], refl[ci * 4 + 1], refl[ci * 4], refl[ci * 4 + 3], gi[gp * 4 + 2], gi[gp * 4 + 1], gi[gp * 4]);
+    // occlusion en caracteres
+    for (uint32_t yy = 0; yy < H; yy++) {
+        for (uint32_t xx = 0; xx < W; xx++) { float a = half(px[(yy * W + xx) * 4 + 2]); putchar(a > 0.9f ? '.' : a > 0.6f ? '+' : '#'); }
+        putchar('\n');
+    }
     TerminateProcess(pi.hProcess, 0);
     return 0;
 }

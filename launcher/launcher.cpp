@@ -819,6 +819,15 @@ static void BuildOptions()
     C(TAB_RENDER, "RTResolution", 50, { 50, 100 }, L"R\u00E9solution des rayons", L"Ray resolution", { L"Demie", L"Pleine" }, { L"Half", L"Full" }, L"",
       L"Pleine : plus fin, quatre fois plus de rayons.", L"Full: finer, four times as many rays.");
     g_opts.back().rend = 2;
+    T2(TAB_RENDER, "RTReflets", 1, L"Reflets trac\u00E9s", L"Ray-traced reflections", L"La rue, le ciel et les voitures se refl\u00E8tent vraiment sur les carrosseries et les sols mouill\u00E9s.",
+       L"The street, the sky and cars really reflect on car bodies and wet ground.");
+    g_opts.back().rend = 2;
+    T2(TAB_RENDER, "RTLumiere", 1, L"Lumi\u00E8re trac\u00E9e", L"Ray-traced lighting", L"Les murs et le sol \u00E9clair\u00E9s renvoient leur lumi\u00E8re et leur couleur autour d'eux (un rebond).",
+       L"Lit walls and ground bounce their light and color around them (one bounce).");
+    g_opts.back().rend = 2;
+    T2(TAB_RENDER, "RTOcclusion", 1, L"Occlusion trac\u00E9e", L"Ray-traced occlusion", L"Coins, pieds des murs et dessous des voitures assombris par de vrais rayons.",
+       L"Corners, wall bases and car undersides darkened by real rays.");
+    g_opts.back().rend = 2;
     T2(TAB_RENDER, "EauModerne", 1, L"Eau moderne", L"Modern water", L"Turquoise selon la profondeur, fond visible, vagues et \u00E9cume sur les rives.",
        L"Turquoise by depth, visible sea floor, waves and foam on the shores.");
     T2(TAB_RENDER, "RefletsEau", 1, L"Reflets sur l'eau", L"Water reflections", L"Quais, bateaux, palmiers et immeubles se refl\u00E8tent dans l'eau.",
@@ -830,6 +839,7 @@ static void BuildOptions()
     T2(TAB_RENDER, "OmbresLune", 1, L"Ombres de la lune", L"Moon shadows", L"La lune (0 h \u00E0 6 h) projette des ombres plus faibles.", L"The moon (midnight to 6 am) casts fainter shadows.");
     T2(TAB_RENDER, "OcclusionAmbiante", 1, L"Occlusion ambiante", L"Ambient occlusion", L"Coins, pieds des murs et dessous des voitures un peu assombris.",
        L"Corners, wall bases and car undersides slightly darkened.");
+    g_opts.back().rend = 1;   // (ray tracing : occlusion tracee)
     // EFFETS
     T2(TAB_FX, "SMAA", 1, L"SMAA", L"SMAA", L"Bords en escalier liss\u00E9s sur toute l'image.", L"Jagged edges smoothed over the whole picture.");
     T2(TAB_FX, "Eclat", 1, L"\u00C9clat", L"Bloom", L"N\u00E9ons, soleil et phares d\u00E9bordent en lumi\u00E8re douce.", L"Neons, sun and headlights glow softly.");
@@ -846,7 +856,9 @@ static void BuildOptions()
     T2(TAB_FX, "FaisceauxPhares", 1, L"Faisceaux des phares", L"Headlight beams", L"Faisceaux visibles dans la pluie et le brouillard.", L"Beams visible in rain and fog.");
     T2(TAB_FX, "Brume", 1, L"Brume", L"Haze", L"Brume au loin qui suit l'heure.", L"Distant haze that follows the time of day.");
     T2(TAB_FX, "RefletsVoitures", 1, L"Reflets des voitures", L"Car reflections", L"La ville se refl\u00E8te sur les carrosseries (pas sur les pneus).", L"The city reflects on car bodies (not on tyres).");
+    g_opts.back().rend = 1;   // (ray tracing : reflets traces)
     T2(TAB_FX, "LumiereIndirecte", 1, L"Lumi\u00E8re indirecte", L"Indirect light", L"Les surfaces color\u00E9es renvoient leur couleur autour d'elles.", L"Colored surfaces bounce their color around.");
+    g_opts.back().rend = 1;   // (ray tracing : lumiere tracee)
     // COOP
     T2(TAB_COOP, "TirAmi", 1, L"Tir ami", L"Friendly fire", L"Les joueurs peuvent se blesser entre eux (coups, balles, voiture).", L"Players can hurt each other (punches, bullets, cars).", W_HOST);
     T2(TAB_COOP, "ArgentPartage", 1, L"Argent partag\u00E9", L"Shared money", L"L'argent des missions va aussi aux invit\u00E9s.", L"Mission money also goes to guests.", W_HOST);
