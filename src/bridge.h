@@ -55,7 +55,7 @@ struct RtDraw {
 struct RtParams {
     const float *view, *proj;
     float sun[4], sunColor[4], ambient[4], skyTop[4], skyBottom[4];
-    float sunAngle, maxDist, wetness, aoRadius;
+    float sunAngle, maxDist, wetness, aoRadius, history;
     unsigned features;
     bool reset;
     UINT outW, outH;

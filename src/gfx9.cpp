@@ -298,6 +298,7 @@ sampler2D sRTRefl : register(s5);
 sampler2D sRTGI : register(s6);
 float4 gRT : register(c191);        // largeur, hauteur de l'image tracee, 1/largeur, 1/hauteur
 float4 gRTFlags : register(c192);   // x : ombre tracee, y : occlusion tracee, z : force de la lumiere indirecte, w : force de l'occlusion
+float4 gRTRefl : register(c193);    // x : force des reflets
 
 float RTWeight(float4 s, float2 o, float z) {
   float err = abs(s.y - z) / (z * 0.02 + 0.05);
@@ -350,16 +351,21 @@ float4 PsRTGI(float2 vpos : VPOS) : COLOR {
   float2 st = uv * gRT.xy - 0.5;
   float2 base = floor(st);
   float2 f = st - base;
+  // Filtre large et clairseme (4x4 lectures un texel sur deux : 8x8 texels) : lumiere douce, bruit efface.
   float3 sum = 0, nearGi = 0; float wsum = 0, nearErr = 1e9;
-  [unroll] for (int y = -1; y <= 2; y++) {
-    [unroll] for (int x = -1; x <= 2; x++) {
-      float2 t = (base + float2(x, y) + 0.5) * gRT.zw;
+  [unroll] for (int y = 0; y < 4; y++) {
+    [unroll] for (int x = 0; x < 4; x++) {
+      float2 o = float2(x, y) * 2 - 3;
+      float2 tx = floor(st + o) + 0.5;
+      float2 t = tx * gRT.zw;
       float4 s = tex2Dlod(sRT, float4(t, 0, 0));
       float3 g = tex2Dlod(sRTGI, float4(t, 0, 0)).rgb;
-      float w = RTWeight(s, (float2(x, y) - f) * 0.7, z);
+      float err = abs(s.y - z) / (z * 0.04 + 0.08);
+      float2 d2 = (tx - 0.5 - st) * 0.3;
+      float w = exp(-dot(d2, d2)) * exp(-err * err) * (s.y > 0 ? 1 : 0);
       sum += g * w; wsum += w;
-      float err = abs(s.y - z);
-      if (s.y > 0 && err < nearErr) { nearErr = err; nearGi = g; }
+      float e2 = abs(s.y - z);
+      if (s.y > 0 && e2 < nearErr) { nearErr = e2; nearGi = g; }
     }
   }
   float3 gi = (wsum > 0.02 ? sum / wsum : nearGi) * 4;
@@ -388,7 +394,9 @@ float4 PsRTRefl(float2 vpos : VPOS) : COLOR {
       sum += tex2Dlod(sRTRefl, float4(t, 0, 0)) * w; wsum += w;
     }
   }
-  return sum / wsum;
+  float4 r = sum / wsum;
+  r.a = saturate(r.a * gRTRefl.x);
+  return r;
 }
 
 // ---- lumieres dynamiques : l'image est multipliee par (1 + lumiere recue)
@@ -2076,11 +2084,14 @@ static void Apply()
         float top[3] = { SkyChan(0xA0CE98), SkyChan(0xA0FD70), SkyChan(0x978D1C) };
         float bot[3] = { SkyChan(0xA0D958), SkyChan(0x97F208), SkyChan(0x9B6DF4) };
         for (int k = 0; k < 3; k++) { p.skyTop[k] = top[k]; p.skyBottom[k] = bot[k]; p.ambient[k] = bot[k] * 0.8f; }
-        p.sunAngle = g_moon ? 0.012f : 0.02f;
-        p.maxDist = 700.0f;
+        static const float soft[3] = { 0.006f, 0.02f, 0.05f }, gloss[3] = { 0.0f, 0.25f, 0.6f }, hist[3] = { 1.6f, 1.0f, 0.5f };
+        p.sunAngle = soft[g_cfg.rtSoft] * (g_moon ? 0.6f : 1.0f);   // taille apparente du soleil : douceur de la penombre
+        p.maxDist = g_cfg.rtDist + 100.0f > 700.0f ? g_cfg.rtDist + 100.0f : 700.0f;
         float wet = Outdoors() ? WeatherF(0x9B6A9C) : 0.0f;
-        p.wetness = wet > 1 ? 1 : wet;
+        if (wet > 1) wet = 1;
+        p.wetness = wet > gloss[g_cfg.rtGloss] ? wet : gloss[g_cfg.rtGloss];
         p.aoRadius = 1.5f;
+        p.history = hist[g_cfg.rtSmooth];
         p.features = rtFeat;
         // Coupure de camera (cinematique, reapparition, teleportation) : pas d'historique.
         p.reset = GetTickCount() - g_lastVPAt > 500 || (cam.x - g_lastCam.x) * (cam.x - g_lastCam.x) + (cam.y - g_lastCam.y) * (cam.y - g_lastCam.y) + (cam.z - g_lastCam.z) * (cam.z - g_lastCam.z) > 64.0f;
@@ -2227,11 +2238,14 @@ static void Apply()
             g_dev->SetSamplerState(4 + k, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
             g_dev->SetSamplerState(4 + k, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
         }
-        float fl[4] = { rtShadow ? 1.0f : 0.0f, rtAO ? 1.0f : 0.0f, 0.55f + 0.2f * g_night, 0.85f };
+        float aoK = 0.85f * g_cfg.rtAOK / 100.0f;
+        float fl[4] = { rtShadow ? 1.0f : 0.0f, rtAO ? 1.0f : 0.0f, (0.55f - 0.15f * g_night) * g_cfg.rtGIK / 100.0f, aoK > 1 ? 1 : aoK };   // (nuit : neons deja forts)
         g_dev->SetPixelShaderConstantF(192, fl, 1);
+        float rk[4] = { g_cfg.rtReflK / 100.0f, 0, 0, 0 };
+        g_dev->SetPixelShaderConstantF(193, rk, 1);
     }
     if ((rtShadow || rtAO) && g_debugMask != 2 && g_debugMask != 3) {
-        float fogRt[4] = { fogStart, farClip, 600.0f, 480.0f };   // ombres tracees jusqu'a 600 m
+        float fogRt[4] = { fogStart, farClip, (float)g_cfg.rtDist, g_cfg.rtDist * 0.8f };   // ombres tracees jusqu'a RTDistance
         g_dev->SetPixelShaderConstantF(26, fogRt, 1);
         g_dev->SetPixelShader(g_psRTMask);
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);

@@ -81,6 +81,14 @@ static void LoadConfig()
     g_cfg.rtAO = GetPrivateProfileIntA("VCCoop", "RTOcclusion", 1, ini) != 0;
     g_cfg.rtRefl = GetPrivateProfileIntA("VCCoop", "RTReflets", 1, ini) != 0;
     g_cfg.rtGI = GetPrivateProfileIntA("VCCoop", "RTLumiere", 1, ini) != 0;
+    auto clampi = [](int v, int a, int b) { return v < a ? a : v > b ? b : v; };
+    g_cfg.rtSoft = clampi(GetPrivateProfileIntA("VCCoop", "RTDouceur", 1, ini), 0, 2);
+    g_cfg.rtDist = clampi(GetPrivateProfileIntA("VCCoop", "RTDistance", 600, ini), 100, 1500);
+    g_cfg.rtReflK = clampi(GetPrivateProfileIntA("VCCoop", "RTRefletsForce", 100, ini), 0, 300);
+    g_cfg.rtGloss = clampi(GetPrivateProfileIntA("VCCoop", "RTRefletsSol", 0, ini), 0, 2);
+    g_cfg.rtGIK = clampi(GetPrivateProfileIntA("VCCoop", "RTLumiereForce", 100, ini), 0, 300);
+    g_cfg.rtAOK = clampi(GetPrivateProfileIntA("VCCoop", "RTOcclusionForce", 100, ini), 0, 300);
+    g_cfg.rtSmooth = clampi(GetPrivateProfileIntA("VCCoop", "RTLissage", 1, ini), 0, 2);
     g_cfg.modernWater = GetPrivateProfileIntA("VCCoop", "EauModerne", 1, ini) != 0;
     g_cfg.waterReflections = GetPrivateProfileIntA("VCCoop", "RefletsEau", 1, ini) != 0;
     g_cfg.dynLights = GetPrivateProfileIntA("VCCoop", "LumieresDynamiques", 1, ini) != 0;

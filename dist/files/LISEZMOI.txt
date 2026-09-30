@@ -55,7 +55,9 @@ LANCEUR
   memes que le menu COOP du jeu), pris au prochain lancement. RENDU et EFFETS
   n'apparaissent qu'avec le moteur Direct3D 9 ou Ray tracing. Ray tracing
   (DXR) : vrais rayons par la carte graphique (RTX 20, RX 6000 et plus
-  recentes), traces par VCCoop\vcrt64.exe ; grise si la carte ne sait pas. Les reglages marques HOTE
+  recentes), traces par VCCoop\vcrt64.exe ; grise si la carte ne sait pas.
+  Ses reglages : onglet RAY TRACING du lanceur, et en direct en jeu dans
+  l'onglet RAY TRACING du menu F10. Les reglages marques HOTE
   comptent chez celui qui heberge, INVITE chez celui qui rejoint.
 - Langue : francais si Windows est en francais, sinon anglais. Pour forcer :
   Langue=fr ou Langue=en dans la section [Lanceur] de vccoop-launcher.ini.

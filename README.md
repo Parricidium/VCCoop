@@ -249,7 +249,11 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   the game's models, Fresnel) and on wet ground in the rain. **Ray-traced lighting** (`RTLumiere`): one bounce
   of light from lit walls and ground, with their color (texture × the game's baked vertex lighting × paint).
   **Ray-traced occlusion** (`RTOcclusion`) replaces the screen-space one. Noise is averaged from frame to frame
-  (reprojection with the previous camera, reset on camera cuts).
+  (reprojection with the previous camera, reset on camera cuts). Everything is set in the launcher's
+  **RAY TRACING** tab (shown with this renderer) and live in game in the **RAY TRACING** tab of the F10 menu:
+  shadow softness and distance, reflection / lighting / occlusion strength, shiny ground (rain only, light,
+  mirrors), noise smoothing (`RTDouceur`, `RTDistance`, `RTRefletsForce`, `RTLumiereForce`, `RTOcclusionForce`,
+  `RTRefletsSol`, `RTLissage`).
   Without a DXR card the launcher greys the choice out, and the game falls back to Direct3D 9 on its own.
 - **Sun shadows** (modern renderer): 4 cascades (sharp up close, up to ~220 m) rendered from the game's
   own sun (`CTimeCycle`) in the same frame, a soft 25-tap filter, a single full-screen pass (no more
@@ -572,7 +576,10 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   pluie. **Lumière tracée** (`RTLumiere`) : un rebond de la lumière des murs et du sol éclairés, avec leur couleur
   (texture × éclairage « cuit » du jeu × peinture). **Occlusion tracée** (`RTOcclusion`) à la place de celle
   d'écran. Le bruit est moyenné d'une image à l'autre (reprojection avec la caméra précédente, remise à zéro aux
-  coupures de caméra). Sans carte DXR, le lanceur grise le choix et le jeu repasse seul en Direct3D 9.
+  coupures de caméra). Tout se règle dans l'onglet **RAY TRACING** du lanceur (visible avec ce moteur) et en
+  direct en jeu dans l'onglet **RAY TRACING** du menu F10 : douceur et portée des ombres, force des reflets, de la
+  lumière et de l'occlusion, sols brillants (pluie seulement, légers, miroirs), lissage du bruit (`RTDouceur`,
+  `RTDistance`, `RTRefletsForce`, `RTLumiereForce`, `RTOcclusionForce`, `RTRefletsSol`, `RTLissage`). Sans carte DXR, le lanceur grise le choix et le jeu repasse seul en Direct3D 9.
 - **Ombres du soleil** (rendu moderne) : 4 cascades (nettes de près, jusqu'à ~220 m) calculées depuis le
   soleil du jeu (`CTimeCycle`) dans la même image, filtre doux à 25 échantillons, une seule passe plein écran
   (plus de doubles dessins qui clignotent), intensité selon le cycle du jour du jeu (heure et météo) et son

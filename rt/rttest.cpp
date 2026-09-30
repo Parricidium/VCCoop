@@ -79,7 +79,7 @@ int main()
     float s[3] = { 1, 1, 1.2f }; float sl = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
     fr->sun[0] = s[0] / sl; fr->sun[1] = s[1] / sl; fr->sun[2] = s[2] / sl; fr->sun[3] = 1;
     fr->sunAngle = 0.02f; fr->outW = W; fr->outH = H; fr->features = RT_FEAT_SUN | RT_FEAT_AO | RT_FEAT_REFL | RT_FEAT_GI; fr->raysPerPixel = 4;
-    fr->instanceCount = 2; fr->maxDistance = 500; fr->aoRadius = 1.5f; fr->wetness = 1;
+    fr->instanceCount = 2; fr->maxDistance = 500; fr->aoRadius = 1.5f; fr->wetness = 1; fr->history = 1;
     for (int k = 0; k < 3; k++) { fr->sunColor[k] = 1; fr->ambient[k] = 0.4f; fr->skyTop[k] = 0.3f; fr->skyBottom[k] = 0.8f; }
     RtInstance *in = (RtInstance *)(fr + 1);
     memset(in, 0, 2 * sizeof(RtInstance));

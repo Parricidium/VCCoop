@@ -598,6 +598,7 @@ static void Render(const RtFrame &f, const RtInstance *inst)
     memcpy(c.ambient, f.ambient, 12); c.ambient[3] = histOk ? 1.0f : 0.0f;
     memcpy(c.skyTop, f.skyTop, 16); memcpy(c.skyBottom, f.skyBottom, 16);
     c.params[0] = f.sunAngle; c.params[1] = (float)f.raysPerPixel; c.params[2] = (float)(f.frameIndex & 0xFFFF);
+    c.params[3] = f.history > 0.05f && f.history <= 4 ? f.history : 1.0f;
     c.size[0] = f.outW; c.size[1] = f.outH; c.size[2] = f.features;
     memcpy(g_constsPtr, &c, sizeof c);
     memcpy(g_prevVP, vp, 64);

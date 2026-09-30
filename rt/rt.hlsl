@@ -18,7 +18,7 @@ struct Frame {
     float4 sunColor;                  // w : portee de l'occlusion (m)
     float4 ambient;                   // w : 1 si l'historique est utilisable
     float4 skyTop, skyBottom;
-    float4 params;                    // x = demi-angle du soleil, y = rayons par pixel, z = numero d'image
+    float4 params;                    // x = demi-angle du soleil, y = rayons par pixel, z = numero d'image, w = lissage (1 normal)
     uint4 size;                       // largeur, hauteur, fonctions (1 soleil, 2 occlusion, 4 reflets, 8 lumiere indirecte)
 };
 ConstantBuffer<Frame> gFrame : register(b0);
@@ -228,20 +228,28 @@ void RayGen() {
         }
     }
 
-    // Occlusion ambiante : 2 rayons courts.
+    // Occlusion ambiante : 4 rayons courts.
     float ao = 1;
     if (feat & 2) {
         float R = gFrame.sunColor.w, sum = 0;
-        for (uint i = 0; i < 2; i++) sum += ShadowRay(P + N * eps, CosineDir(N, seed), R, mask);
-        ao = sum / 2;
+        for (uint i = 0; i < 4; i++) sum += ShadowRay(P + N * eps, CosineDir(N, seed), R, mask);
+        ao = sum / 4;
     }
 
     // Lumiere renvoyee par le decor (le ciel est deja la lumiere ambiante du jeu : un rayon qui s'echappe ne compte pas).
+    // 2 rayons ; un impact tres lumineux (neon, enseigne) est plafonne : sinon des points brillants isoles scintillent
+    // ("lucioles", JD 30/09 : facade de l'Ocean View la nuit couverte de grains).
     float3 gi = 0;
     if (feat & 8) {
-        float ht;
-        float3 c = RadianceRay(P + N * eps, CosineDir(N, seed), 80, ht);
-        gi = ht > 0 ? c : 0;
+        for (uint i = 0; i < 2; i++) {
+            float ht;
+            float3 c = RadianceRay(P + N * eps, CosineDir(N, seed), 80, ht);
+            if (ht > 0) {
+                float l = dot(c, float3(0.3, 0.59, 0.11));
+                gi += l > 0.6 ? c * (0.6 / l) : c;
+            }
+        }
+        gi *= 0.5;
     }
 
     // Accumulation : meme point dans l'image precedente (profondeur coherente) -> moyenne glissante.
@@ -254,11 +262,11 @@ void RayGen() {
             uint4 h = gHistIn.Load4((q.y * W + q.x) * 16);
             uint hc = h.w >> 16;
             if (hc > 0 && abs(asfloat(h.y) - pc.w) < pc.w * 0.03 + 0.08) {
-                float k = 1.0 / (hc + 1);
-                vis = lerp(f16tof32(h.x), vis, max(k, ped || vehicle ? 0.5 : 0.25));   // objets qui bougent : peu d'historique
-                ao = lerp(f16tof32(h.x >> 16), ao, max(k, 0.15));
-                gi = lerp(float3(f16tof32(h.z), f16tof32(h.z >> 16), f16tof32(h.w)), gi, max(k, 0.08));
-                count = min(hc + 1, 32);
+                float k = 1.0 / (hc + 1), hs = gFrame.params.w;   // lissage choisi (plus petit : plus long)
+                vis = lerp(f16tof32(h.x), vis, max(k, (ped || vehicle ? 0.5 : 0.25) * hs));   // objets qui bougent : peu d'historique
+                ao = lerp(f16tof32(h.x >> 16), ao, max(k, (ped || vehicle ? 0.25 : 0.08) * hs));
+                gi = lerp(float3(f16tof32(h.z), f16tof32(h.z >> 16), f16tof32(h.w)), gi, max(k, (ped || vehicle ? 0.2 : 0.04) * hs));
+                count = min(hc + 1, 64);
             }
         }
     }
