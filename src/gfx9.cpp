@@ -1317,7 +1317,8 @@ void Gfx9DeviceCreated(IDirect3DDevice9 *dev, UINT width, UINT height, bool msaa
 }
 static void ReleasePostResources();
 void UiRelease();
-void Gfx9BeforeReset() { UiRelease(); RtBeforeReset(); SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
+void ThumbRelease();
+void Gfx9BeforeReset() { ThumbRelease(); UiRelease(); RtBeforeReset(); SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
 void Gfx9AfterReset(UINT width, UINT height, bool msaa) { g_width = width; g_height = height; g_msaa = msaa; }
 
 void Gfx9BeginScene()

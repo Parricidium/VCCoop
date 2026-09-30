@@ -19,6 +19,8 @@ void UiGlass(float x0, float y0, float x1, float y1, float r, uint32_t tint, uin
 // Ombre douce autour d'un rectangle arrondi.
 void UiShadow(float x0, float y0, float x1, float y1, float r, float spread, uint32_t color);
 void UiTri(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t color);
+// Image de l'atlas des vignettes 3D (thumbs.h) : uv = u0, v0, u1, v1 ; tint multiplie (0xFFFFFFFF : telle quelle).
+void UiImage(float x0, float y0, float x1, float y1, const float uv[4], uint32_t tint = 0xFFFFFFFF);
 // Texte (Windows-1252) ; y : haut de la ligne ; px : hauteur de la police. Rend la largeur.
 float UiText(float x, float y, float px, uint32_t color, int align, const char *s, bool bold = false);
 float UiTextWidth(const char *s, float px, bool bold = false);

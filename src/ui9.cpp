@@ -10,6 +10,7 @@
 #include "vccoop.h"
 #include "bridge.h"
 #include "ui9.h"
+#include "thumbs.h"
 #include <d3d9.h>
 #include <d3dcompiler.h>
 #include <math.h>
@@ -32,7 +33,7 @@ struct UiVtx {
     DWORD c0, c1;          // remplissage, liserÃ©
     float lx, ly;          // position par rapport au centre de la forme (pixels)
     float hw, hh, r, bw;   // demi-largeur, demi-hauteur, rayon, epaisseur du liserÃ©
-    float mode, spread, u, v;   // mode : 0 forme, 1 verre, 2 texte, 3 aplat, 4 ombre
+    float mode, spread, u, v;   // mode : 0 forme, 1 verre, 2 texte, 3 aplat, 4 ombre, 5 vignette 3D
 };
 static const DWORD kFvf = D3DFVF_XYZW | D3DFVF_DIFFUSE | D3DFVF_SPECULAR | D3DFVF_TEX3 |
                           D3DFVF_TEXCOORDSIZE2(0) | D3DFVF_TEXCOORDSIZE4(1) | D3DFVF_TEXCOORDSIZE4(2);
@@ -158,11 +159,13 @@ VOut Vs(VIn i) {
 
 sampler2D sFont : register(s0);
 sampler2D sGlass : register(s1);
+sampler2D sImg : register(s2);   // vignettes 3D (premultipliees)
 float Sd(float2 p, float2 b, float r) { float2 q = abs(p) - b + r; return length(max(q, 0)) + min(max(q.x, q.y), 0) - r; }
 
 float4 Ps(float4 c0 : COLOR0, float4 c1 : COLOR1, float2 lp : TEXCOORD0, float4 rect : TEXCOORD1, float4 m : TEXCOORD2, float2 vpos : VPOS) : COLOR {
   if (m.x > 1.5 && m.x < 2.5) return float4(c0.rgb, c0.a * tex2D(sFont, m.zw).a);   // texte
   if (m.x > 2.5 && m.x < 3.5) return c0;                                              // aplat
+  if (m.x > 4.5) { float4 c = tex2D(sImg, m.zw); return float4(c.rgb / max(c.a, 0.004) * c0.rgb, c.a * c0.a); }   // vignette
   float d = Sd(lp, rect.xy, rect.z);
   if (m.x > 3.5) { float s = saturate(1 - max(d, 0) / m.y); return float4(c0.rgb, c0.a * s * s); }   // ombre
   float4 col = c0;
@@ -285,6 +288,17 @@ void UiShadow(float x0, float y0, float x1, float y1, float r, float spread, uin
 {
     Shape(x0, y0, x1, y1, r, Argb(color), Argb(color), Argb(color), Argb(color), 0, 0, 4, spread, spread);
 }
+void UiImage(float x0, float y0, float x1, float y1, const float uv[4], uint32_t tint)
+{
+    DWORD c = Argb(tint);
+    Push(x0, y0, c, 0, 0, 0, 0, 0, 0, 0, 5, 0, uv[0], uv[1]);
+    Push(x1, y0, c, 0, 0, 0, 0, 0, 0, 0, 5, 0, uv[2], uv[1]);
+    Push(x0, y1, c, 0, 0, 0, 0, 0, 0, 0, 5, 0, uv[0], uv[3]);
+    Push(x0, y1, c, 0, 0, 0, 0, 0, 0, 0, 5, 0, uv[0], uv[3]);
+    Push(x1, y0, c, 0, 0, 0, 0, 0, 0, 0, 5, 0, uv[2], uv[1]);
+    Push(x1, y1, c, 0, 0, 0, 0, 0, 0, 0, 5, 0, uv[2], uv[3]);
+}
+
 void UiTri(float x0, float y0, float x1, float y1, float x2, float y2, uint32_t color)
 {
     DWORD c = Argb(color);
@@ -366,6 +380,7 @@ static bool BlurBackground(IDirect3DSurface9 *rt, UINT W, UINT H)
 
 void UiEnd()
 {
+    ThumbFrame();   // (vignettes finies : a la carte avant le dessin)
     if (g_v.empty()) return;
     if (!g_sharedOk || !g_dev) { g_v.clear(); return; }
     FpuGuard fpu;
@@ -388,7 +403,7 @@ void UiEnd()
     g_dev->SetRenderState(D3DRS_COLORWRITEENABLE, 0xF);
     g_dev->SetVertexShader(g_vs);
     g_dev->SetFVF(kFvf);
-    for (int s = 0; s < 2; s++) {
+    for (int s = 0; s < 3; s++) {
         g_dev->SetSamplerState(s, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
         g_dev->SetSamplerState(s, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR);
         g_dev->SetSamplerState(s, D3DSAMP_MIPFILTER, s == 0 ? D3DTEXF_LINEAR : D3DTEXF_NONE);
@@ -412,6 +427,7 @@ void UiEnd()
     g_dev->SetSamplerState(0, D3DSAMP_MIPMAPLODBIAS, *(DWORD *)&bias);
     g_dev->SetTexture(0, g_font);
     g_dev->SetTexture(1, glass ? g_bg[0] : NULL);
+    g_dev->SetTexture(2, ThumbAtlas());
     const UINT chunk = 3 * 20000;
     for (UINT i = 0; i < g_v.size(); i += chunk) {
         UINT n = (UINT)g_v.size() - i;
@@ -420,6 +436,7 @@ void UiEnd()
     }
     g_dev->SetTexture(0, NULL);
     g_dev->SetTexture(1, NULL);
+    g_dev->SetTexture(2, NULL);
     g_state->Apply();
     rt->Release();
     g_v.clear();
