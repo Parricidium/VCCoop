@@ -298,6 +298,18 @@ static void CloseMenu(bool keep)
 }
 
 bool SkinMenuOpen() { return g_menuOpen; }
+int SkinCount() { return g_skinCount; }
+const char *SkinName(int i) { return i >= 0 && i < g_skinCount ? g_skins[i] : ""; }
+int SkinIndex() { return g_menuIndex; }
+void SkinChoose(int i)
+{
+    if (!g_menuOpen || i < 0 || i >= g_skinCount || i == g_menuIndex) return;
+    g_menuIndex = i;
+    ApplySkin(g_skins[i]);
+    MenuCamera();
+}
+void SkinMenuClose(bool keep) { if (g_menuOpen) CloseMenu(keep); }
+void SkinMenuOpenNow() { if (!g_menuOpen) OpenMenu(); }
 
 static bool KeyEdge(int vk, bool &was)
 {
@@ -548,9 +560,10 @@ static void DrawPlayerList()
 }
 
 // ======================================================================= Dessin (avant l'interface du jeu)
+bool UiReady();   // ui9.cpp : menu moderne (le panneau des portraits remplace ce texte)
 static void DrawSkinMenu()
 {
-    if (!g_menuOpen) return;
+    if (!g_menuOpen || UiReady()) return;
     wchar_t line[128];
     bool fr = *(int *)(0x869630 + 0x50) == 1;
     FontSetup(0.9f);

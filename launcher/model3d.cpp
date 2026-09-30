@@ -21,6 +21,8 @@ std::wstring g_dir;
 std::map<std::string, Entry> g_img;              // nom du fichier en minuscules -> place dans gta3.img
 std::vector<std::string> g_dffOrder;             // modeles dans l'ordre de gta3.dir
 std::map<std::string, std::wstring> g_mods;      // VCCoop\mods : nom en minuscules -> chemin
+std::vector<std::wstring> g_packImgs;            // packs de vehicules (vccpkN.img a la racine du jeu, voir mods.cpp du mod)
+std::map<std::string, std::pair<int, Entry>> g_pack;   // nom -> (archive, place) ; le dernier pack l'emporte
 std::vector<std::string> g_pedNames;             // default.ide, section peds : index = numero du modele
 std::map<std::string, float> g_wheelScale;       // default.ide, section cars : taille des roues de chaque vehicule
 
@@ -68,6 +70,8 @@ bool GetFile(const std::string &name, std::vector<uint8_t> &out)
     std::string n = Lower(name);
     auto m = g_mods.find(n);
     if (m != g_mods.end()) return ReadRange(m->second, 0, 0xFFFFFFFF, out);
+    auto p = g_pack.find(n);
+    if (p != g_pack.end()) return ReadRange(g_packImgs[p->second.first], (uint64_t)p->second.second.off * 2048, p->second.second.size * 2048, out);
     auto e = g_img.find(n);
     if (e == g_img.end()) return false;
     return ReadRange(g_dir + L"models\\gta3.img", (uint64_t)e->second.off * 2048, e->second.size * 2048, out);
@@ -425,6 +429,30 @@ bool ImgOpen(const std::wstring &gameDir)
         }
     }
     ScanMods(gameDir + L"VCCoop\\mods\\");
+    // Packs de vehicules : archives vccpkN.img / .dir posees a la racine du jeu par le mod (en jeu seulement).
+    g_packImgs.clear(); g_pack.clear();
+    {
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileW((gameDir + L"vccpk*.dir").c_str(), &fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                std::wstring dir = gameDir + fd.cFileName, img = dir.substr(0, dir.size() - 4) + L".img";
+                std::vector<uint8_t> pd;
+                if (GetFileAttributesW(img.c_str()) == INVALID_FILE_ATTRIBUTES || !ReadRange(dir, 0, 0xFFFFFFFF, pd)) continue;
+                int k = (int)g_packImgs.size();
+                g_packImgs.push_back(img);
+                for (size_t i = 0; i + 32 <= pd.size(); i += 32) {
+                    Entry e;
+                    memcpy(&e.off, &pd[i], 4);
+                    memcpy(&e.size, &pd[i + 4], 4);
+                    char name[25] = {};
+                    memcpy(name, &pd[i + 8], 24);
+                    g_pack[Lower(name)] = { k, e };
+                }
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+    }
     // default.ide, section peds : "numero, nom, txd, ..."
     std::vector<uint8_t> ide;
     if (ReadRange(gameDir + L"data\\default.ide", 0, 0xFFFFFFFF, ide)) {

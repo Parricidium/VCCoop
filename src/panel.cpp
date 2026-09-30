@@ -11,6 +11,7 @@
 #include "game.h"
 #include "panel.h"
 #include "ui9.h"
+#include "thumbs.h"
 #include "players.h"
 #include "mirror.h"
 #include "vehicles.h"
@@ -51,6 +52,10 @@ static float g_mx = -1, g_my;
 static long g_accX, g_accY, g_accWheel;
 static bool g_left, g_prevLeft, g_click;
 static int g_scroll, g_vehCat;
+static bool g_help;           // aide (F1)
+static bool g_outfitUi;       // panneau des portraits du menu de tenue (F7, menu moderne)
+static int g_outfitScroll, g_outfitSeen = -1;
+static uint32_t g_welcomeAt;  // message d'accueil : 10 s apres l'arrivee en jeu, une fois par lancement
 static uint8_t g_adminMask;   // bit i : le joueur i est admin (l'hote, bit 0, l'est toujours)
 static bool g_noPolice;
 static char g_input[100];
@@ -374,8 +379,8 @@ static void EndTyping(bool send)
 }
 
 // ======================================================================= Entrees
-bool PanelWantsMouse() { return g_open; }
-bool PanelCapturesKeys() { return g_open || g_typing; }
+bool PanelWantsMouse() { return g_open || g_help || g_outfitUi; }
+bool PanelCapturesKeys() { return g_open || g_typing || g_help; }
 
 void PanelMouse(long dx, long dy, long wheel, bool left)
 {
@@ -420,6 +425,15 @@ bool PanelWndProc(UINT msg, WPARAM wp, LPARAM lp)
     }
     if (g_open) {
         if (down && wp == VK_ESCAPE) { g_open = false; Log("menu jeu : ferme (Echap)"); }
+        return msg == WM_KEYDOWN || msg == WM_CHAR;
+    }
+    // Aide : F1 (l'ancienne touche du replay, coupe par le mod) l'ouvre et la ferme, Echap aussi.
+    if ((down || up) && wp == VK_F1) {
+        if (down && !repeat) { g_help = !g_help; if (g_help && g_mx < 0) { g_mx = ScreenW() * 0.5f; g_my = ScreenH() * 0.5f; } Log("aide : %s", g_help ? "ouverte" : "fermee"); }
+        return true;
+    }
+    if (g_help) {
+        if (down && wp == VK_ESCAPE) g_help = false;
         return msg == WM_KEYDOWN || msg == WM_CHAR;
     }
     if (msg == WM_KEYDOWN && !repeat && wp == (WPARAM)g_chatKey && GameHasFocus()) {
@@ -608,7 +622,7 @@ static void DrawPlayersTab(float x0, float y0, float x1, float y1)
 static void DrawVehiclesTab(float x0, float y0, float x1, float y1)
 {
     LoadVehicleList();
-    static const char *catFr[] = { "VOITURES", "MOTOS", "BATEAUX", "AERIENS" }, *catEn[] = { "CARS", "BIKES", "BOATS", "AIRCRAFT" };
+    static const char *catFr[] = { "VOITURES", "MOTOS", "BATEAUX", "A\xC9" "RIENS" }, *catEn[] = { "CARS", "BIKES", "BOATS", "AIRCRAFT" };
     float bw = (x1 - x0 - g_u * 5) / 4, bh = g_u * 4.2f, y = y0 + g_u;
     for (int c = 0; c < CAT_COUNT; c++) {
         float bx = x0 + g_u + c * (bw + g_u);
@@ -623,6 +637,39 @@ static void DrawVehiclesTab(float x0, float y0, float x1, float y1)
     int idx[160], n = 0;
     for (int i = 0; i < g_vehCount; i++) if (g_vehList[i].cat == g_vehCat) idx[n++] = i;
     const int cols = 4;
+    if (g_modern) {   // cartes avec le vehicule en 3D (vignette : jeu, mods et packs), son nom dessous
+        float cw = (x1 - x0 - g_u * (cols + 1)) / cols, ih = cw * 0.56f, ch = ih + LineH(0.5f) + g_u * 1.2f;
+        int rows = (int)((y1 - y - g_u) / (ch + g_u * 0.8f));
+        if (rows < 1) rows = 1;
+        int maxScroll = (n + cols - 1) / cols - rows;
+        if (maxScroll < 0) maxScroll = 0;
+        if (g_scroll > maxScroll) g_scroll = maxScroll;
+        if (g_scroll < 0) g_scroll = 0;
+        for (int r = 0; r < rows; r++)
+            for (int c = 0; c < cols; c++) {
+                int k = (g_scroll + r) * cols + c;
+                if (k >= n) break;
+                const VehEntry &v = g_vehList[idx[k]];
+                float bx = x0 + g_u + c * (cw + g_u), by = y + r * (ch + g_u * 0.8f);
+                bool hot = !blocked && Inside(bx, by, bx + cw, by + ch);
+                UiRect(bx, by, bx + cw, by + ch, g_u * 1.0f, hot ? 0xFFFFFF2C : 0xFFFFFF14, hot ? 0xFFFFFF1E : 0xFFFFFF0A, hot ? K_PINK : 0xFFFFFF20, hot ? 1.8f : 1.1f);
+                float uv[4], asp = 1.6f;
+                float ix0 = bx + g_u * 0.6f, iy0 = by + g_u * 0.5f, iw = cw - g_u * 1.2f, ihh = ih - g_u * 0.2f;
+                if (ThumbGet(THUMB_VEHICLE, v.name, uv, &asp)) {
+                    float w = iw, h = w / asp;
+                    if (h > ihh) { h = ihh; w = h * asp; }
+                    UiImage(ix0 + (iw - w) * 0.5f, iy0 + (ihh - h) * 0.5f, ix0 + (iw + w) * 0.5f, iy0 + (ihh + h) * 0.5f, uv, blocked ? 0xFFFFFF70 : 0xFFFFFFFF);
+                } else UiLine(bx + cw * 0.5f, iy0 + ihh * 0.5f - LineH(0.45f) * 0.5f, 0.45f, 0xFFFFFF50, AL_CENTER, "...", false);
+                UiLine(bx + cw * 0.5f, by + ch - LineH(0.5f) - g_u * 0.55f, 0.5f, blocked ? 0xFFFFFF60 : 0xFFFFFFFF, AL_CENTER, v.name, true);
+                if (hot && g_click) { g_click = false; Queue(A_SPAWN, idx[k]); }
+            }
+        if (maxScroll > 0) {
+            char s[32];
+            _snprintf(s, sizeof(s), "%d / %d", g_scroll + 1, maxScroll + 1);
+            TextA(x1 - g_u * 6, y1 - LineH(0.45f) - g_u * 0.3f, 0.45f, C_DIM, AL_CENTER, s);
+        }
+        return;
+    }
     float cw = (x1 - x0 - g_u * (cols + 1)) / cols, ch = g_u * 4.2f;
     int rows = (int)((y1 - y - g_u) / (ch + g_u * 0.8f));
     if (rows < 1) rows = 1;
@@ -804,6 +851,156 @@ static void DrawRtTab(float x0, float y0, float x1, float y1)
     }
 }
 
+// Menu de tenue (F7) en moderne : a droite, un panneau de verre avec tous les personnages en 3D (comme l'onglet TENUE
+// du lanceur) ; clic : essayer, GARDER / ANNULER (ou Entree / Retour, Gauche / Droite comme avant).
+static void DrawOutfitPanel()
+{
+    bool fr = French();
+    float W = (float)ScreenW(), H = (float)ScreenH();
+    float pw = H * 0.5f, x1 = W - g_u * 2, x0 = x1 - pw, y0 = H * 0.07f, y1 = H * 0.93f, th = g_u * 5.5f;
+    UiShadow(x0, y0 + g_u * 0.6f, x1, y1 + g_u * 0.6f, g_u * 2.4f, g_u * 3.5f, 0x00000080);
+    UiGlass(x0, y0, x1, y1, g_u * 2.4f, 0x160A2AC8, 0xFFFFFF38, 1.3f);
+    TextA(x0 + g_u * 2, y0 + th * 0.5f - LineH(0.75f) * 0.5f, 0.75f, K_PINK, AL_LEFT, Tr("TENUES", "OUTFITS"));
+    int n = SkinCount(), cur = SkinIndex();
+    char cnt[32];
+    _snprintf(cnt, sizeof(cnt), "%d / %d", cur + 1, n);
+    UiLine(x1 - g_u * 2 - UiTextWidth(cnt, LineH(0.5f) * 1.12f, false), y0 + th * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_DIM, AL_LEFT, cnt, false);
+    UiRectH(x0 + g_u * 2, y0 + th - 1.0f, x1 - g_u * 2, y0 + th + 1.0f, 1.0f, K_PINK, K_ORANGE);
+    const int cols = 3;
+    float gx0 = x0 + g_u * 1.2f, gy0 = y0 + th + g_u, gy1 = y1 - g_u * 10.5f;
+    float cw = (pw - g_u * 2.4f - g_u * (cols - 1)) / cols;
+    // Hauteur des cartes : autant de rangees entieres que la place en permet (cartes de 1,15 a 1,45 fois leur largeur).
+    int rows = (int)((gy1 - gy0) / (cw * 1.15f + LineH(0.42f) + g_u * 1.6f));
+    if (rows < 1) rows = 1;
+    float ch = (gy1 - gy0) / rows - g_u * 0.7f, ih = ch - LineH(0.42f) - g_u * 0.9f;
+    if (ih > cw * 1.45f) { ih = cw * 1.45f; ch = ih + LineH(0.42f) + g_u * 0.9f; }
+    int maxScroll = (n + cols - 1) / cols - rows;
+    if (maxScroll < 0) maxScroll = 0;
+    if (cur != g_outfitSeen) {   // tenue changee au clavier : garder la carte en vue
+        g_outfitSeen = cur;
+        int row = cur / cols;
+        if (row < g_outfitScroll) g_outfitScroll = row;
+        if (row >= g_outfitScroll + rows) g_outfitScroll = row - rows + 1;
+    }
+    if (g_outfitScroll > maxScroll) g_outfitScroll = maxScroll;
+    if (g_outfitScroll < 0) g_outfitScroll = 0;
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            int k = (g_outfitScroll + r) * cols + c;
+            if (k >= n) break;
+            float bx = gx0 + c * (cw + g_u), by = gy0 + r * (ch + g_u * 0.7f);
+            bool hot = Inside(bx, by, bx + cw, by + ch), sel = k == cur;
+            if (sel) UiRectH(bx - 1.5f, by - 1.5f, bx + cw + 1.5f, by + ch + 1.5f, g_u * 1.1f, K_PINK, K_ORANGE);
+            UiRect(bx, by, bx + cw, by + ch, g_u * 1.0f, sel ? 0x2A1840F0 : hot ? 0xFFFFFF2C : 0xFFFFFF12, sel ? 0x1C1030F0 : hot ? 0xFFFFFF1E : 0xFFFFFF08, hot && !sel ? K_PINK : 0xFFFFFF1C, 1.1f);
+            float uv[4], asp = 0.66f;
+            if (ThumbGet(THUMB_PED, SkinName(k), uv, &asp)) {
+                float h = ih - g_u * 0.4f, w = h * asp;
+                if (w > cw - g_u * 0.6f) { w = cw - g_u * 0.6f; h = w / asp; }
+                float ix = bx + (cw - w) * 0.5f, iy = by + g_u * 0.3f + (ih - g_u * 0.4f - h) * 0.5f;
+                UiImage(ix, iy, ix + w, iy + h, uv);
+            } else UiLine(bx + cw * 0.5f, by + ih * 0.5f - LineH(0.45f) * 0.5f, 0.45f, 0xFFFFFF50, AL_CENTER, "...", false);
+            UiLine(bx + cw * 0.5f, by + ch - LineH(0.42f) - g_u * 0.45f, 0.42f, sel ? K_PINK : 0xFFFFFFE0, AL_CENTER, SkinName(k), sel);
+            if (hot && g_click) { g_click = false; SkinChoose(k); }
+        }
+    if (maxScroll > 0) {   // barre de defilement
+        float track = gy1 - gy0, bar = track * rows / (rows + maxScroll), yb = gy0 + (track - bar) * g_outfitScroll / maxScroll;
+        UiRect(x1 - g_u * 0.9f, yb, x1 - g_u * 0.5f, yb + bar, g_u * 0.2f, 0xFF4F8BA0, 0xFF4F8BA0);
+    }
+    float by0 = y1 - g_u * 9.3f, bh = g_u * 4.2f, bw = (pw - g_u * 3.4f) / 2;
+    if (Button(x0 + g_u * 1.2f, by0, x0 + g_u * 1.2f + bw, by0 + bh, Tr("GARDER", "KEEP"), true)) { SkinMenuClose(true); g_outfitUi = false; }
+    if (Button(x1 - g_u * 1.2f - bw, by0, x1 - g_u * 1.2f, by0 + bh, Tr("ANNULER", "CANCEL"))) { SkinMenuClose(false); g_outfitUi = false; }
+    TextA((x0 + x1) * 0.5f, y1 - g_u * 3.9f, 0.42f, C_DIM, AL_CENTER,
+          Tr("Clic : essayer   </> aussi   Entr\xE9" "e : garder   Retour : annuler", "Click: try on   Left/Right too   Enter: keep   Backspace: cancel"));
+}
+
+static const char *KeyLabel(int vk)
+{
+    static char b[4][16];
+    static int k;
+    char *s = b[k++ & 3];
+    if (vk >= VK_F1 && vk <= VK_F12) wsprintfA(s, "F%d", vk - VK_F1 + 1);
+    else if (vk == VK_TAB) lstrcpyA(s, "Tab");
+    else { s[0] = (char)vk; s[1] = 0; }
+    return s;
+}
+
+// Aide (F1) : ce que le mod permet, touche par touche.
+static void DrawHelp()
+{
+    bool fr = French();
+    float W = (float)ScreenW(), H = (float)ScreenH();
+    float pw = W * 0.62f;
+    if (pw > H * 1.25f) pw = H * 1.25f;
+    float ph = H * 0.74f, x0 = (W - pw) * 0.5f, y0 = H * 0.12f, x1 = x0 + pw, y1 = y0 + ph, th = g_u * 5.5f;
+    if (g_modern) {
+        UiShadow(x0, y0 + g_u * 0.6f, x1, y1 + g_u * 0.6f, g_u * 2.4f, g_u * 3.5f, 0x00000080);
+        UiGlass(x0, y0, x1, y1, g_u * 2.4f, 0x160A2AC8, 0xFFFFFF38, 1.3f);
+        UiRectH(x0 + g_u * 2, y0 + th - 1.0f, x1 - g_u * 2, y0 + th + 1.0f, 1.0f, K_PINK, K_ORANGE);
+    } else {
+        Rect(x0, y0, x1, y1, C_BG);
+        Frame(x0, y0, x1, y1, g_u * 0.2f, C_LINE);
+    }
+    TextA(x0 + g_u * 2, y0 + th * 0.5f - LineH(0.75f) * 0.5f, 0.75f, g_modern ? K_PINK : C_LINE, AL_LEFT, Tr("AIDE VCCOOP", "VCCOOP HELP"));
+    if (g_modern ? Button(x1 - th + g_u * 0.8f, y0 + g_u * 0.8f, x1 - g_u * 0.8f, y0 + th - g_u * 0.8f, "X") : Button(x1 - th, y0, x1, y0 + th, "X")) g_help = false;
+    struct K { const char *key, *fr, *en; } keys[] = {
+        { KeyLabel(g_menuKey), "Menu : joueurs (se t\xE9l\xE9porter), v\xE9hicules, outils, monde, h\xF4te, ray tracing", "Menu: players (teleport), vehicles, tools, world, host, ray tracing" },
+        { KeyLabel(g_chatKey), "Tchat : Tommy sort son t\xE9l\xE9phone, tout le monde le voit", "Chat: Tommy takes out his phone, everybody sees it" },
+        { "F7", "Tenue : n'importe quel personnage, portraits \xE0 droite", "Outfit: any character, portraits on the right" },
+        { KeyLabel(g_cfg.fpsKey), "Vue \xE0 la premi\xE8re personne, \xE0 pied et en v\xE9hicule", "First-person view, on foot and in vehicles" },
+        { "Tab", "(maintenu) Liste des joueurs : sant\xE9, ping, distance", "(held) Player list: health, ping, distance" },
+        { "B", "Point de rendez-vous, vu de tous ; B encore pour l'enlever", "Meeting point, seen by all; B again to remove it" },
+        { "F / G", "Pr\xE8s du v\xE9hicule d'un joueur : monter \xE0 la place libre", "Near a player's vehicle: take the free seat" },
+        { "Souris", "En v\xE9hicule : cam\xE9ra libre ; clic droit : viser", "In a vehicle: free camera; right click: aim" },
+        { "F1", "Cette aide", "This help" },
+    };
+    float y = y0 + th + g_u * 1.4f, kw = pw * 0.14f, row = LineH(0.5f) + g_u * 1.25f;
+    TextA(x0 + g_u * 2, y, 0.55f, C_DIM, AL_LEFT, Tr("TOUCHES", "KEYS"));
+    y += LineH(0.55f) + g_u * 0.8f;
+    for (auto &k : keys) {
+        if (g_modern) UiRect(x0 + g_u * 2, y - g_u * 0.35f, x0 + g_u * 2 + kw, y + LineH(0.5f) + g_u * 0.35f, g_u * 0.8f, 0xFF4F8B38, 0xFF8A5B30, 0xFF4F8B90, 1.0f);
+        TextA(x0 + g_u * 2 + kw * 0.5f, y, 0.5f, 0xFFFFFFFF, AL_CENTER, k.key);
+        TextA(x0 + g_u * 3.2f + kw, y, 0.5f, C_TEXT, AL_LEFT, fr ? k.fr : k.en);
+        y += row;
+    }
+    y += g_u * 0.8f;
+    TextA(x0 + g_u * 2, y, 0.55f, C_DIM, AL_LEFT, Tr("BON \xC0 SAVOIR", "GOOD TO KNOW"));
+    y += LineH(0.55f) + g_u * 0.6f;
+    const char *tips[][2] = {
+        { "L'h\xF4te lance les missions ; les invit\xE9s les jouent avec lui.", "The host starts the missions; guests play them with the host." },
+        { "Argent, \xE9toiles, tir ami : options de l'h\xF4te (onglet H\xD4TE du menu).", "Money, wanted stars, friendly fire: the host's options (HOST tab)." },
+        { "Les mods de VCCoop\\mods sont envoy\xE9s tout seuls aux invit\xE9s.", "Mods in VCCoop\\mods are sent to guests automatically." },
+        { "Rendu, ray tracing et mods se r\xE8glent dans le lanceur (VCCoop.exe).", "Rendering, ray tracing and mods are set in the launcher (VCCoop.exe)." },
+    };
+    for (auto &t : tips) { TextA(x0 + g_u * 2, y, 0.47f, C_TEXT, AL_LEFT, fr ? t[0] : t[1]); y += LineH(0.47f) + g_u * 0.7f; }
+    TextA((x0 + x1) * 0.5f, y1 - g_u * 2.9f, 0.45f, C_DIM, AL_CENTER, Tr("F1 ou \xC9" "chap : fermer", "F1 or Esc: close"));
+}
+
+// Accueil : des que le joueur a les commandes en main (1,5 s stables) (pas pendant l'intro ni une cinematique : le jeu rend la
+// main un instant avant l'intro), une fois par lancement, 9 s a l'ecran.
+static void DrawWelcome()
+{
+    uint32_t now = GetTickCount();
+    static uint32_t freeSince;
+    if (!g_welcomeAt) {
+        if (!PlayerFree()) { freeSince = 0; return; }
+        if (!freeSince) freeSince = now;
+        if (now - freeSince >= 1500) g_welcomeAt = now;   // (des que le joueur a la main, JD : pas 10 s, deja en voiture)
+        return;
+    }
+    if (now < g_welcomeAt || now > g_welcomeAt + 9000 || g_help || !PlayerFree()) return;
+    float t = (now - g_welcomeAt) / 9000.0f, a = t < 0.06f ? t / 0.06f : t > 0.9f ? (1 - t) / 0.1f : 1;
+    const char *txt = Tr("Bienvenue dans VCCOOP !   Appuyez sur F1 pour ouvrir l'aide", "Welcome to VCCOOP!   Press F1 to open the help");
+    float W = (float)ScreenW(), H = (float)ScreenH(), size = 0.62f;
+    float tw = g_modern ? UiTextWidth(txt, LineH(size) * 1.12f, true) : W * 0.42f, bw = tw + g_u * 6, bh = LineH(size) + g_u * 2.6f;
+    float x0 = (W - bw) * 0.5f, y0 = H * 0.16f - (1 - a) * g_u * 2;
+    uint32_t alpha = (uint32_t)(a * 255);
+    if (g_modern) {
+        UiShadow(x0, y0 + g_u * 0.4f, x0 + bw, y0 + bh + g_u * 0.4f, bh * 0.5f, g_u * 2.5f, 0x00000000 | (alpha * 0x60 / 255));
+        UiGlass(x0, y0, x0 + bw, y0 + bh, bh * 0.5f, 0x160A2A00 | (alpha * 0xC0 / 255), 0xFF4F8B00 | alpha, 1.6f);
+    } else Rect(x0, y0, x0 + bw, y0 + bh, 0x0D0A1400 | (alpha * 0xD0 / 255));
+    TextA(W * 0.5f, y0 + bh * 0.5f - LineH(size) * 0.5f, size, 0xFFFFFF00 | alpha, AL_CENTER, txt);
+}
+
 static void DrawChat()
 {
     uint32_t now = GetTickCount();
@@ -835,8 +1032,10 @@ void PanelDraw()
     if (!InGameNow()) { g_click = false; return; }
     g_modern = UiReady();
     if (g_modern) UiBegin();
-    DrawChat();
-    if (g_open) {
+    g_outfitUi = g_modern && SkinMenuOpen() && !g_open;
+    if (g_outfitUi && g_mx < 0) { g_mx = ScreenW() * 0.8f; g_my = ScreenH() * 0.5f; }
+    bool mouseUi = g_open || g_help || g_outfitUi;
+    if (mouseUi) {   // souris : menu, aide, portraits des tenues
         float W = (float)ScreenW(), H = (float)ScreenH();
         g_mx += g_accX * H / 900.0f;
         g_my += g_accY * H / 900.0f;
@@ -845,7 +1044,14 @@ void PanelDraw()
         if (g_my < 0) g_my = 0; if (g_my > H - 1) g_my = H - 1;
         g_click = g_left && !g_prevLeft;
         g_prevLeft = g_left;
-        if (g_accWheel) { g_scroll += g_accWheel > 0 ? -1 : 1; g_accWheel = 0; }
+        if (g_accWheel) { if (g_open) g_scroll += g_accWheel > 0 ? -1 : 1; else if (g_outfitUi) g_outfitScroll += g_accWheel > 0 ? -1 : 1; g_accWheel = 0; }
+    } else g_accX = g_accY = g_accWheel = 0;
+    DrawChat();
+    DrawWelcome();
+    if (g_outfitUi) DrawOutfitPanel();
+    if (g_help && !g_open) DrawHelp();
+    if (g_open) {
+        float W = (float)ScreenW(), H = (float)ScreenH();
 
         float pw = W * 0.62f;
         if (pw > H * 1.25f) pw = H * 1.25f;
@@ -900,7 +1106,8 @@ void PanelDraw()
         g_click = false;
     }
     ((void(__cdecl *)())0x550250)();   // CFont::DrawFonts : nos textes, par-dessus nos rectangles
-    if (g_open) DrawCursor();
+    if (mouseUi) DrawCursor();
+    g_click = false;
     if (g_modern) UiEnd();
 }
 
@@ -981,7 +1188,7 @@ static void TestPanel(bool inGame)
     if (mode <= 0 || !inGame) return;
     static uint32_t start, step;
     uint32_t now = GetTickCount();
-    if (!PlayerFree()) { if (!step) start = 0; return; }
+    if (!PlayerFree() && !(mode == 5 && step > 0)) { if (!step) start = 0; return; }   // (5 : le menu de tenue retire la main)
     if (!start) start = now;
     uint32_t t = now - start;
     if (mode == 2) {   // TestMenuJeu=2 : tchat seul, 10 s de saisie toutes les 25 s (telephone vu par les autres)
@@ -993,6 +1200,13 @@ static void TestPanel(bool inGame)
     if (mode == 4) {   // TestMenuJeu=4 : onglet RAY TRACING, clics simules sur quelques valeurs
         if (step == 0 && t > 3000) { step = 1; g_open = true; g_tab = 5; Log("test menu : ray tracing (clics)"); }
         else if (step >= 1 && step <= 6 && t > 3000 + step * 2500) { static const int rows[6] = { 2, 2, 9, 0, 4, 11 }; g_testClickRow = rows[step - 1]; step++; }
+        return;
+    }
+    if (mode == 5) {   // TestMenuJeu=5 : tenues (F7) avec les portraits, un essai au clic, puis l'aide (F1)
+        if (step == 0 && t > 13000) { step = 1; SkinMenuOpenNow(); Log("test menu : tenues"); }
+        else if (step == 1 && t > 19000) { step = 2; SkinChoose(4); Log("test menu : tenue 4 essayee"); }
+        else if (step == 2 && t > 24000) { step = 3; SkinMenuClose(false); g_help = true; Log("test menu : aide"); }
+        else if (step == 3 && t > 30000) { step = 4; g_help = false; g_open = true; g_tab = 1; Log("test menu : vehicules"); }
         return;
     }
     if (mode == 3) {   // TestMenuJeu=3 : onglet RAY TRACING ouvert, sols en miroirs au bout de 10 s (reglage en direct)
