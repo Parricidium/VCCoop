@@ -47,8 +47,8 @@ SamplerState gSamp : register(s0);
 
 // n : face, sn : normale lissee ; verre traverse avant la surface : glassT (distance) et glassN.
 struct PrimaryPayload { float t; float3 n; float3 sn; uint flags; float glassT; float3 glassN; };
-struct ShadowPayload { float vis; };
-struct RadiancePayload { float3 color; float t; };
+struct ShadowPayload { float vis; uint dyn; };             // dyn : l'obstacle est un vehicule ou un personnage
+struct RadiancePayload { float3 color; float t; uint dyn; };
 
 // ---------------------------------------------------------------- utilitaires
 uint Hash(uint x) { x ^= x >> 16; x *= 0x7feb352d; x ^= x >> 15; x *= 0x846ca68b; x ^= x >> 16; return x; }
@@ -111,14 +111,17 @@ float3 CosineDir(float3 n, inout uint seed) {
     return normalize(tx * (r * cos(phi)) + ty * (r * sin(phi)) + n * sqrt(max(0, 1 - r * r)));
 }
 
-float ShadowRay(float3 o, float3 d, float tmax, uint mask) {
+// dyn : mis a 1 si le rayon est arrete par un objet mobile (vehicule, personnage) : pas de long historique la.
+float ShadowRay(float3 o, float3 d, float tmax, uint mask, inout uint dyn) {
     if (tmax <= 0.002) return 1;
     RayDesc s;
     s.Origin = o; s.Direction = d; s.TMin = 0.001; s.TMax = tmax;
-    ShadowPayload sp; sp.vis = 0;
-    TraceRay(gScene, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, mask, 1, 3, 1, s, sp);
+    ShadowPayload sp; sp.vis = 0; sp.dyn = 0;
+    TraceRay(gScene, RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, mask, 1, 3, 1, s, sp);
+    dyn |= sp.dyn;
     return sp.vis;
 }
+float ShadowRay(float3 o, float3 d, float tmax, uint mask) { uint dyn = 0; return ShadowRay(o, d, tmax, mask, dyn); }
 
 // ---------------------------------------------------------------- rayons de camera
 [shader("closesthit")]
@@ -149,6 +152,11 @@ void ShadowAny(inout ShadowPayload p, in BuiltInTriangleIntersectionAttributes a
     InstInfo ii = gInst[InstanceID()];
     if ((ii.flags & 0x400) || !AlphaPass(ii, a.barycentrics)) IgnoreHit();   // (le verre laisse passer la lumiere)
 }
+[shader("closesthit")]
+void ShadowHit(inout ShadowPayload p, in BuiltInTriangleIntersectionAttributes a) {
+    p.vis = 0;
+    p.dyn = (gInst[InstanceID()].flags & 0x302) ? 1 : 0;   // vehicule, personnage, maillage de l'image
+}
 [shader("miss")]
 void ShadowMiss(inout ShadowPayload p) { p.vis = 1; }
 
@@ -173,6 +181,7 @@ void RadianceHit(inout RadiancePayload p, in BuiltInTriangleIntersectionAttribut
     float base = 0.35 + 0.65 * (1 - saturate(sunK));   // de nuit : l'eclairage cuit du jeu (neons, fenetres) seul
     p.color = albedo * (vcol * base + gFrame.ambient.rgb * 0.25 + gFrame.sunColor.rgb * sunK * direct * 0.9);
     p.t = RayTCurrent();
+    p.dyn = (ii.flags & 0x302) ? 1 : 0;
 }
 [shader("anyhit")]
 void RadianceAny(inout RadiancePayload p, in BuiltInTriangleIntersectionAttributes a) {
@@ -182,14 +191,16 @@ void RadianceAny(inout RadiancePayload p, in BuiltInTriangleIntersectionAttribut
 [shader("miss")]
 void RadianceMiss(inout RadiancePayload p) { p.color = Sky(WorldRayDirection()); p.t = -1; }
 
-float3 RadianceRay(float3 o, float3 d, float tmax, out float hitT) {
+float3 RadianceRay(float3 o, float3 d, float tmax, out float hitT, inout uint dyn) {
     RayDesc r;
     r.Origin = o; r.Direction = d; r.TMin = 0.002; r.TMax = tmax;
-    RadiancePayload rp; rp.color = 0; rp.t = -1;
+    RadiancePayload rp; rp.color = 0; rp.t = -1; rp.dyn = 0;
     TraceRay(gScene, RAY_FLAG_NONE, 0xFF, 2, 3, 2, r, rp);
     hitT = rp.t;
+    dyn |= rp.dyn;
     return rp.color;
 }
+float3 RadianceRay(float3 o, float3 d, float tmax, out float hitT) { uint dyn = 0; return RadianceRay(o, d, tmax, hitT, dyn); }
 
 // Rayon de camera du pixel (resolution W x H).
 RayDesc CameraRay(uint2 px, uint W, uint H) {
@@ -211,7 +222,7 @@ PrimaryPayload TracePrimary(RayDesc r) {
 
 // Lampes du jeu (meme lumiere que la passe d'ecran de gfx9 : attenuation, face, cone), chacune avec un rayon d'ombre
 // vers un point de son ampoule (30 cm) ; il s'arrete avant l'ampoule (la tete du lampadaire ne fait pas d'ombre).
-float3 LampLight(float3 P, float3 N, float3 face, float eps, bool ped, uint mask, inout uint seed) {
+float3 LampLight(float3 P, float3 N, float3 face, float eps, bool ped, uint mask, inout uint seed, inout uint dyn) {
     float3 sum = 0;
     uint n = min(gFrame.size.w, 48);
     for (uint i = 0; i < n; i++) {
@@ -229,7 +240,7 @@ float3 LampLight(float3 P, float3 N, float3 face, float eps, bool ped, uint mask
         float3 target = a.xyz + (float3(Rand(seed), Rand(seed), Rand(seed)) - 0.5) * 0.3;
         float3 d = target - o;
         float dl = length(d);
-        sum += l * ShadowRay(o, d / dl, dl - min(0.6, dl * 0.3), mask);
+        sum += l * ShadowRay(o, d / dl, dl - min(0.6, dl * 0.3), mask, dyn);
     }
     return sum;
 }
@@ -261,6 +272,7 @@ void RayGen() {
     uint seed = Hash(px.x * 1973 + px.y * 9277 + (uint)gFrame.params.z * 26699);
     float eps = 0.01 + pp.t * 0.0015;
     uint mask = ped ? 0x01 : 0xFF;   // personnages : ni auto-ombre ni auto-occlusion (facettes)
+    uint dyn = 0;                    // un rayon a touche un objet mobile (voiture, passant) : ombre qui bouge
 
     // Soleil. Personnages : peu de triangles, lisses par l'eclairage du jeu : pas de test de face.
     float vis = 1;
@@ -272,7 +284,7 @@ void RayGen() {
             uint n = max((uint)gFrame.params.y, 1);
             float3 origin = P + (ped ? L * 0.05 : N * eps);
             float sum = 0;
-            for (uint i = 0; i < n; i++) sum += ShadowRay(origin, ConeDir(L, gFrame.params.x, seed), 600, mask);
+            for (uint i = 0; i < n; i++) sum += ShadowRay(origin, ConeDir(L, gFrame.params.x, seed), 600, mask, dyn);
             vis = sum / n;
         }
     }
@@ -281,7 +293,7 @@ void RayGen() {
     float ao = 1;
     if (feat & 2) {
         float R = gFrame.sunColor.w, sum = 0;
-        for (uint i = 0; i < 4; i++) sum += ShadowRay(P + N * eps, CosineDir(N, seed), R, mask);
+        for (uint i = 0; i < 4; i++) sum += ShadowRay(P + N * eps, CosineDir(N, seed), R, mask, dyn);
         ao = sum / 4;
     }
 
@@ -291,7 +303,7 @@ void RayGen() {
     if (feat & 8) {
         for (uint i = 0; i < 2; i++) {
             float ht;
-            float3 c = RadianceRay(P + N * eps, CosineDir(N, seed), 80, ht);
+            float3 c = RadianceRay(P + N * eps, CosineDir(N, seed), 80, ht, dyn);
             if (ht > 0) {
                 float l = dot(c, float3(0.3, 0.59, 0.11));
                 gi += l > 0.6 ? c * (0.6 / l) : c;
@@ -302,10 +314,12 @@ void RayGen() {
 
     // Lampes : leur lumiere, ombres tracees comprises.
     float3 lamp = 0;
-    if (feat & 16) lamp = LampLight(P, pp.sn, N, eps, ped, mask, seed);
+    if (feat & 16) lamp = LampLight(P, pp.sn, N, eps, ped, mask, seed, dyn);
 
     // Accumulation : meme point dans l'image precedente (profondeur coherente) -> moyenne glissante.
-    uint count = 1;
+    // Ghosting (JD, 30/09 : traines sombres derriere les roues d'une voiture qui roule) : l'historique suppose un decor
+    // immobile ; la ou un objet mobile fait de l'ombre (ou en faisait il y a peu : age), historique tres court.
+    uint count = 1, age = dyn ? 8 : 0;
     if (gFrame.ambient.w > 0.5) {
         float4 pc = mul(float4(P, 1), gFrame.prevViewProj);
         float2 puv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
@@ -313,11 +327,12 @@ void RayGen() {
             uint2 q = min((uint2)(puv * float2(W, H)), uint2(W - 1, H - 1));
             uint hi = (q.y * W + q.x) * 32;
             uint4 h = gHistIn.Load4(hi);
-            uint hc = h.w >> 16;
+            uint hc = (h.w >> 16) & 0xFF, hage = (h.w >> 24) & 0xF;
             if (hc > 0 && abs(asfloat(h.y) - pc.w) < pc.w * 0.03 + 0.08) {
                 uint4 h2 = gHistIn.Load4(hi + 16);
                 float k = 1.0 / (hc + 1), hs = gFrame.params.w;   // lissage choisi (plus petit : plus long)
-                bool moving = ped || vehicle;
+                if (!dyn && hage > 0) age = hage - 1;
+                bool moving = ped || vehicle || age > 0;
                 vis = lerp(f16tof32(h.x), vis, max(k, (moving ? 0.5 : 0.25) * hs));   // objets qui bougent : peu d'historique
                 ao = lerp(f16tof32(h.x >> 16), ao, max(k, (moving ? 0.25 : 0.08) * hs));
                 gi = lerp(float3(f16tof32(h.z), f16tof32(h.z >> 16), f16tof32(h.w)), gi, max(k, (moving ? 0.2 : 0.04) * hs));
@@ -326,7 +341,7 @@ void RayGen() {
             }
         }
     }
-    gHistOut.Store4(idx * 32, uint4(f32tof16(vis) | (f32tof16(ao) << 16), asuint(depth), f32tof16(gi.r) | (f32tof16(gi.g) << 16), f32tof16(gi.b) | (count << 16)));
+    gHistOut.Store4(idx * 32, uint4(f32tof16(vis) | (f32tof16(ao) << 16), asuint(depth), f32tof16(gi.r) | (f32tof16(gi.g) << 16), f32tof16(gi.b) | (count << 16) | (age << 24)));
     gHistOut.Store4(idx * 32 + 16, uint4(f32tof16(lamp.r) | (f32tof16(lamp.g) << 16), f32tof16(lamp.b), 0, 0));
 
     gOut.Store2(idx * 8, PackHalf4(float4(vis, depth, ao, 0)));
