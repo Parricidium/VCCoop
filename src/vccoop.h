@@ -1,8 +1,8 @@
-// VCCoop : coop des missions de GTA Vice City (gta-vc.exe 1.0 uniquement).
+﻿// VCCoop : coop des missions de GTA Vice City (gta-vc.exe 1.0 uniquement).
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.30l"
+#define VCCOOP_VERSION "2026.09.30m"
 struct Config {
     bool windowed;
     bool borderless;
@@ -43,7 +43,7 @@ struct Config {
     bool smaa;          // SMAA=1 : anticrenelage d'image (bords en escalier), en plus ou a la place du MSAA
     bool bloom;         // Eclat=1 : neons, soleil, phares debordent en lumiere douce
     int grade;          // Etalonnage=1 : 0 Original, 1 Vice (couleurs "Miami 80"), 2 Film
-    int sharpen;        // Nettete=40 (0 a 100) : netteté adaptative des textures
+    int sharpen;        // Nettete=40 (0 a 100) : nettetÃ© adaptative des textures
     bool softParticles; // ParticulesDouces=1 : fumee, poussiere, explosions sans coupure nette contre le decor
     bool lampLights;
     bool wetRoads;      // RoutesMouillees=1 : sol sombre et brillant sous la pluie (reflets, flaques), sols brillants des interieurs
