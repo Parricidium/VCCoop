@@ -89,6 +89,7 @@ static void LoadConfig()
     g_cfg.rtGIK = clampi(GetPrivateProfileIntA("VCCoop", "RTLumiereForce", 100, ini), 0, 300);
     g_cfg.rtAOK = clampi(GetPrivateProfileIntA("VCCoop", "RTOcclusionForce", 100, ini), 0, 300);
     g_cfg.rtSmooth = clampi(GetPrivateProfileIntA("VCCoop", "RTLissage", 1, ini), 0, 2);
+    g_cfg.rtLamps = GetPrivateProfileIntA("VCCoop", "RTLampes", 1, ini) != 0;
     g_cfg.modernWater = GetPrivateProfileIntA("VCCoop", "EauModerne", 1, ini) != 0;
     g_cfg.waterReflections = GetPrivateProfileIntA("VCCoop", "RefletsEau", 1, ini) != 0;
     g_cfg.dynLights = GetPrivateProfileIntA("VCCoop", "LumieresDynamiques", 1, ini) != 0;

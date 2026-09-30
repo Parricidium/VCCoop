@@ -1,13 +1,15 @@
 // Rayons de vcrt64.exe (DXR, lib_6_3). Compile par build.cmd (dxc -T lib_6_3 -Fh rt\rt_dxil.h).
 //
-// Par pixel de l'image demandee : un rayon de camera trouve la surface (memes triangles et memes matrices que ce que
-// le jeu a dessine), puis :
+// RayGen (resolution des rayons) : un rayon de camera trouve la surface (memes triangles et memes matrices que ce
+// que le jeu a dessine), puis :
 //   - rayons vers le disque du soleil : visibilite (ombres douces) ;
 //   - rayons courts dans l'hemisphere : occlusion ambiante ;
-//   - un rayon diffus : lumiere renvoyee par le decor (lumiere indirecte, 1 rebond) ;
-//   - un rayon miroir sur les carrosseries et les sols mouilles : reflet.
+//   - deux rayons diffus : lumiere renvoyee par le decor (lumiere indirecte, 1 rebond) ;
+//   - un rayon vers chaque lampe proche (lampadaires, neons, phares) : sa lumiere, ombre comprise.
+// RayGenRefl (resolution de l'ecran : bords nets) : reflets des carrosseries, des sols mouilles et des vitrines.
 // Accumulation d'une image a l'autre (reprojection avec la camera precedente) : moins de bruit.
-// Feuillages et grillages : test alpha de leur texture dans le "any hit".
+// Feuillages et grillages : test alpha de leur texture dans le "any hit". Verre (vitrines) : note au passage du
+// rayon de camera (reflet), transparent pour tous les autres rayons.
 
 struct Frame {
     row_major float4x4 invViewProj;   // clip -> monde (vecteurs lignes)
@@ -19,7 +21,9 @@ struct Frame {
     float4 ambient;                   // w : 1 si l'historique est utilisable
     float4 skyTop, skyBottom;
     float4 params;                    // x = demi-angle du soleil, y = rayons par pixel, z = numero d'image, w = lissage (1 normal)
-    uint4 size;                       // largeur, hauteur, fonctions (1 soleil, 2 occlusion, 4 reflets, 8 lumiere indirecte)
+    uint4 size;                       // largeur, hauteur, fonctions (1 soleil, 2 occlusion, 4 reflets, 8 lumiere indirecte, 16 lampes), nombre de lampes
+    uint4 size2;                      // largeur, hauteur de l'image des reflets
+    float4 lights[48 * 3];            // par lampe : position + portee, couleur + cone (1), direction + cosinus
 };
 ConstantBuffer<Frame> gFrame : register(b0);
 
@@ -27,7 +31,7 @@ struct InstInfo {
     uint idxOff, uvOff, posOff, colOff;   // indices (uint), uv (float2), positions (float3), couleurs (D3DCOLOR)
     uint tex;                             // case + 1 (0 : aucune)
     float alphaRef;
-    uint flags;                           // 1 : test alpha, 2 : vehicule, 0x100 : maillage de l'image, 0x200 : personnage
+    uint flags;                           // 1 : test alpha, 2 : vehicule, 0x100 : maillage de l'image, 0x200 : personnage, 0x400 : verre
     uint tint;                            // couleur de la matiere (D3DCOLOR)
     uint nrmOff, pad0, pad1, pad2;        // normales des sommets (float3 ; 0,0,0 : aucune)
 };
@@ -41,7 +45,8 @@ Texture2D gTex[8192] : register(t0, space1);
 ByteAddressBuffer gGeo[10] : register(t0, space2);   // 0-4 : indices, uv, positions, couleurs, normales ; 5-9 : ceux de l'image
 SamplerState gSamp : register(s0);
 
-struct PrimaryPayload { float t; float3 n; float3 sn; uint flags; };   // n : face, sn : normale lissee
+// n : face, sn : normale lissee ; verre traverse avant la surface : glassT (distance) et glassN.
+struct PrimaryPayload { float t; float3 n; float3 sn; uint flags; float glassT; float3 glassN; };
 struct ShadowPayload { float vis; };
 struct RadiancePayload { float3 color; float t; };
 
@@ -53,9 +58,7 @@ uint PackBgra(float3 c, float a) {
     uint3 v = (uint3)(saturate(c) * 255 + 0.5);
     return v.z | (v.y << 8) | (v.x << 16) | ((uint)(saturate(a) * 255 + 0.5) << 24);   // A8R8G8B8 en memoire
 }
-uint4 HistWord(float vis, float ao, float depth, float3 gi, uint count) {
-    return uint4(f32tof16(vis) | (f32tof16(ao) << 16), asuint(depth), f32tof16(gi.r) | (f32tof16(gi.g) << 16), f32tof16(gi.b) | (count << 16));
-}
+uint2 PackHalf4(float4 v) { return uint2(f32tof16(v.x) | (f32tof16(v.y) << 16), f32tof16(v.z) | (f32tof16(v.w) << 16)); }
 
 uint GeoBase(InstInfo ii) { return (ii.flags & 0x100) ? 5 : 0; }
 uint3 TriIndices(InstInfo ii, uint prim) { return gGeo[GeoBase(ii)].Load3((ii.idxOff + prim * 3) * 4); }
@@ -69,8 +72,7 @@ float2 HitUv(InstInfo ii, uint3 t, float2 bary) {
     return VertUv(ii, t.x) * w.x + VertUv(ii, t.y) * w.y + VertUv(ii, t.z) * w.z;
 }
 
-bool AlphaPass(float2 bary) {
-    InstInfo ii = gInst[InstanceID()];
+bool AlphaPass(InstInfo ii, float2 bary) {
     if (!(ii.flags & 1) || ii.tex == 0) return true;
     uint3 t = TriIndices(ii, PrimitiveIndex());
     float a = gTex[NonUniformResourceIndex(ii.tex - 1)].SampleLevel(gSamp, HitUv(ii, t, bary), 0).a;
@@ -110,6 +112,7 @@ float3 CosineDir(float3 n, inout uint seed) {
 }
 
 float ShadowRay(float3 o, float3 d, float tmax, uint mask) {
+    if (tmax <= 0.002) return 1;
     RayDesc s;
     s.Origin = o; s.Direction = d; s.TMin = 0.001; s.TMax = tmax;
     ShadowPayload sp; sp.vis = 0;
@@ -129,7 +132,13 @@ void PrimaryHit(inout PrimaryPayload p, in BuiltInTriangleIntersectionAttributes
 }
 [shader("anyhit")]
 void PrimaryAny(inout PrimaryPayload p, in BuiltInTriangleIntersectionAttributes a) {
-    if (!AlphaPass(a.barycentrics)) IgnoreHit();
+    InstInfo ii = gInst[InstanceID()];
+    if (ii.flags & 0x400) {   // verre : on le note (le plus proche) et on passe au travers
+        float t = RayTCurrent();
+        if (t < p.glassT) { p.glassT = t; p.glassN = GeomNormal(ii, TriIndices(ii, PrimitiveIndex())); }
+        IgnoreHit();
+    }
+    if (!AlphaPass(ii, a.barycentrics)) IgnoreHit();
 }
 [shader("miss")]
 void PrimaryMiss(inout PrimaryPayload p) { p.t = -1; }
@@ -137,7 +146,8 @@ void PrimaryMiss(inout PrimaryPayload p) { p.t = -1; }
 // ---------------------------------------------------------------- rayons d'ombre (et d'occlusion)
 [shader("anyhit")]
 void ShadowAny(inout ShadowPayload p, in BuiltInTriangleIntersectionAttributes a) {
-    if (!AlphaPass(a.barycentrics)) IgnoreHit();
+    InstInfo ii = gInst[InstanceID()];
+    if ((ii.flags & 0x400) || !AlphaPass(ii, a.barycentrics)) IgnoreHit();   // (le verre laisse passer la lumiere)
 }
 [shader("miss")]
 void ShadowMiss(inout ShadowPayload p) { p.vis = 1; }
@@ -164,6 +174,11 @@ void RadianceHit(inout RadiancePayload p, in BuiltInTriangleIntersectionAttribut
     p.color = albedo * (vcol * base + gFrame.ambient.rgb * 0.25 + gFrame.sunColor.rgb * sunK * direct * 0.9);
     p.t = RayTCurrent();
 }
+[shader("anyhit")]
+void RadianceAny(inout RadiancePayload p, in BuiltInTriangleIntersectionAttributes a) {
+    InstInfo ii = gInst[InstanceID()];
+    if ((ii.flags & 0x400) || !AlphaPass(ii, a.barycentrics)) IgnoreHit();
+}
 [shader("miss")]
 void RadianceMiss(inout RadiancePayload p) { p.color = Sky(WorldRayDirection()); p.t = -1; }
 
@@ -176,33 +191,67 @@ float3 RadianceRay(float3 o, float3 d, float tmax, out float hitT) {
     return rp.color;
 }
 
-// ---------------------------------------------------------------- generation
-[shader("raygeneration")]
-void RayGen() {
-    uint2 px = DispatchRaysIndex().xy;
-    uint W = gFrame.size.x, H = gFrame.size.y, feat = gFrame.size.z;
-    uint idx = px.y * W + px.x;
-    uint plane1 = W * H * 8, plane2 = W * H * 12;
+// Rayon de camera du pixel (resolution W x H).
+RayDesc CameraRay(uint2 px, uint W, uint H) {
     float2 uv = (px + 0.5) / float2(W, H);
     float2 ndc = float2(uv.x * 2 - 1, 1 - uv.y * 2);
     float4 a = mul(float4(ndc, 0, 1), gFrame.invViewProj);
     float4 b = mul(float4(ndc, 1, 1), gFrame.invViewProj);
     float3 o = a.xyz / a.w, e = b.xyz / b.w;
-
     RayDesc r;
-    r.Origin = o;
-    r.Direction = normalize(e - o);
-    r.TMin = 0;
-    r.TMax = gFrame.camPos.w;
+    r.Origin = o; r.Direction = normalize(e - o); r.TMin = 0; r.TMax = gFrame.camPos.w;
+    return r;
+}
+PrimaryPayload TracePrimary(RayDesc r) {
     PrimaryPayload pp;
-    pp.t = -1; pp.n = 0; pp.sn = 0; pp.flags = 0;
+    pp.t = -1; pp.n = 0; pp.sn = 0; pp.flags = 0; pp.glassT = 1e30; pp.glassN = 0;
     TraceRay(gScene, RAY_FLAG_NONE, 0xFF, 0, 3, 0, r, pp);
+    return pp;
+}
+
+// Lampes du jeu (meme lumiere que la passe d'ecran de gfx9 : attenuation, face, cone), chacune avec un rayon d'ombre
+// vers un point de son ampoule (30 cm) ; il s'arrete avant l'ampoule (la tete du lampadaire ne fait pas d'ombre).
+float3 LampLight(float3 P, float3 N, float3 face, float eps, bool ped, uint mask, inout uint seed) {
+    float3 sum = 0;
+    uint n = min(gFrame.size.w, 48);
+    for (uint i = 0; i < n; i++) {
+        float4 a = gFrame.lights[i * 3], b = gFrame.lights[i * 3 + 1], c = gFrame.lights[i * 3 + 2];
+        float3 L = a.xyz - P;
+        float dist = length(L);
+        if (dist >= a.w) continue;
+        L /= max(dist, 0.001);
+        float att = saturate(1 - dist / a.w); att *= att;
+        float ndl = saturate(dot(N, L) * 0.8 + 0.2);
+        float spot = b.w > 0.5 ? smoothstep(c.w, c.w + (1 - c.w) * 0.6, dot(-L, c.xyz)) : 1;
+        float3 l = b.rgb * att * ndl * spot;
+        if (dot(l, 1) < 0.002) continue;
+        float3 o = P + (ped ? L * 0.05 : face * eps);
+        float3 target = a.xyz + (float3(Rand(seed), Rand(seed), Rand(seed)) - 0.5) * 0.3;
+        float3 d = target - o;
+        float dl = length(d);
+        sum += l * ShadowRay(o, d / dl, dl - min(0.6, dl * 0.3), mask);
+    }
+    return sum;
+}
+
+// ---------------------------------------------------------------- generation (resolution des rayons)
+[shader("raygeneration")]
+void RayGen() {
+    uint2 px = DispatchRaysIndex().xy;
+    uint W = gFrame.size.x, H = gFrame.size.y, feat = gFrame.size.z;
+    uint idx = px.y * W + px.x;
+    uint RW = gFrame.size2.x, RH = gFrame.size2.y;
+    uint plane2 = W * H * 8 + RW * RH * 4, plane3 = plane2 + W * H * 4;
+
+    RayDesc r = CameraRay(px, W, H);
+    PrimaryPayload pp = TracePrimary(r);
 
     if (pp.t < 0) {   // ciel
-        gOut.Store2(idx * 8, uint2(f32tof16(1.0), f32tof16(1.0)));
-        gOut.Store(plane1 + idx * 4, 0);
+        gOut.Store2(idx * 8, PackHalf4(float4(1, 0, 1, 0)));
         gOut.Store(plane2 + idx * 4, 0);
-        gHistOut.Store4(idx * 16, uint4(0, 0, 0, 0));
+        gOut.Store2(plane3 + idx * 8, uint2(0, 0));
+        gHistOut.Store4(idx * 32, uint4(0, 0, 0, 0));
+        gHistOut.Store4(idx * 32 + 16, uint4(0, 0, 0, 0));
         return;
     }
     float3 P = r.Origin + r.Direction * pp.t;
@@ -236,7 +285,6 @@ void RayGen() {
         ao = sum / 4;
     }
 
-    // Lumiere renvoyee par le decor (le ciel est deja la lumiere ambiante du jeu : un rayon qui s'echappe ne compte pas).
     // 2 rayons ; un impact tres lumineux (neon, enseigne) est plafonne : sinon des points brillants isoles scintillent
     // ("lucioles", JD 30/09 : facade de l'Ocean View la nuit couverte de grains).
     float3 gi = 0;
@@ -252,6 +300,10 @@ void RayGen() {
         gi *= 0.5;
     }
 
+    // Lampes : leur lumiere, ombres tracees comprises.
+    float3 lamp = 0;
+    if (feat & 16) lamp = LampLight(P, pp.sn, N, eps, ped, mask, seed);
+
     // Accumulation : meme point dans l'image precedente (profondeur coherente) -> moyenne glissante.
     uint count = 1;
     if (gFrame.ambient.w > 0.5) {
@@ -259,36 +311,58 @@ void RayGen() {
         float2 puv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
         if (pc.w > 0.05 && all(puv > 0) && all(puv < 1)) {
             uint2 q = min((uint2)(puv * float2(W, H)), uint2(W - 1, H - 1));
-            uint4 h = gHistIn.Load4((q.y * W + q.x) * 16);
+            uint hi = (q.y * W + q.x) * 32;
+            uint4 h = gHistIn.Load4(hi);
             uint hc = h.w >> 16;
             if (hc > 0 && abs(asfloat(h.y) - pc.w) < pc.w * 0.03 + 0.08) {
+                uint4 h2 = gHistIn.Load4(hi + 16);
                 float k = 1.0 / (hc + 1), hs = gFrame.params.w;   // lissage choisi (plus petit : plus long)
-                vis = lerp(f16tof32(h.x), vis, max(k, (ped || vehicle ? 0.5 : 0.25) * hs));   // objets qui bougent : peu d'historique
-                ao = lerp(f16tof32(h.x >> 16), ao, max(k, (ped || vehicle ? 0.25 : 0.08) * hs));
-                gi = lerp(float3(f16tof32(h.z), f16tof32(h.z >> 16), f16tof32(h.w)), gi, max(k, (ped || vehicle ? 0.2 : 0.04) * hs));
+                bool moving = ped || vehicle;
+                vis = lerp(f16tof32(h.x), vis, max(k, (moving ? 0.5 : 0.25) * hs));   // objets qui bougent : peu d'historique
+                ao = lerp(f16tof32(h.x >> 16), ao, max(k, (moving ? 0.25 : 0.08) * hs));
+                gi = lerp(float3(f16tof32(h.z), f16tof32(h.z >> 16), f16tof32(h.w)), gi, max(k, (moving ? 0.2 : 0.04) * hs));
+                lamp = lerp(float3(f16tof32(h2.x), f16tof32(h2.x >> 16), f16tof32(h2.y)), lamp, max(k, (moving ? 0.5 : 0.2) * hs));   // (phares qui bougent)
                 count = min(hc + 1, 64);
             }
         }
     }
-    gHistOut.Store4(idx * 16, HistWord(vis, ao, depth, gi, count));
+    gHistOut.Store4(idx * 32, uint4(f32tof16(vis) | (f32tof16(ao) << 16), asuint(depth), f32tof16(gi.r) | (f32tof16(gi.g) << 16), f32tof16(gi.b) | (count << 16)));
+    gHistOut.Store4(idx * 32 + 16, uint4(f32tof16(lamp.r) | (f32tof16(lamp.g) << 16), f32tof16(lamp.b), 0, 0));
 
-    // Reflets : carrosseries (vernis), sols mouilles sous la pluie.
+    gOut.Store2(idx * 8, PackHalf4(float4(vis, depth, ao, 0)));
+    gOut.Store(plane2 + idx * 4, PackBgra(gi / 4, 1));
+    gOut.Store2(plane3 + idx * 8, PackHalf4(float4(lamp, 0)));
+}
+
+// ---------------------------------------------------------------- reflets (resolution de l'ecran)
+// Carrosseries (vernis), sols mouilles sous la pluie, vitrines (verre note au passage du rayon de camera).
+[shader("raygeneration")]
+void RayGenRefl() {
+    uint2 px = DispatchRaysIndex().xy;
+    uint W = gFrame.size.x, H = gFrame.size.y, RW = gFrame.size2.x, RH = gFrame.size2.y;
+    uint idx = px.y * RW + px.x;
+    uint plane1 = W * H * 8;
+    RayDesc r = CameraRay(px, RW, RH);
+    PrimaryPayload pp = TracePrimary(r);
     float3 refl = 0; float rw = 0;
-    if (feat & 4) {
-        float3 SN = pp.sn;
+    bool glass = pp.glassT < (pp.t >= 0 ? pp.t : 1e29);
+    float3 P = 0, N = float3(0, 0, 1), SN = N;
+    if (glass) { P = r.Origin + r.Direction * pp.glassT; N = pp.glassN; SN = N; }
+    else if (pp.t >= 0) { P = r.Origin + r.Direction * pp.t; N = pp.n; SN = pp.sn; }
+    if (glass || pp.t >= 0) {
+        bool ped = (pp.flags & 0x200) != 0, vehicle = (pp.flags & 2) != 0;
         float cosT = saturate(dot(-r.Direction, SN));
         float F = 0.04 + 0.96 * pow(1 - cosT, 5);
-        if (vehicle) rw = 0.12 + 0.7 * F;
+        if (glass) rw = 0.1 + 0.75 * F;
+        else if (vehicle) rw = 0.12 + 0.7 * F;
         else if (!ped && gFrame.camFwd.w > 0.01 && N.z > 0.85) rw = gFrame.camFwd.w * (0.06 + 0.85 * F);
         if (rw > 0.01) {
             float ht;
             float3 R = reflect(r.Direction, SN);
             if (dot(R, N) < 0.02) R = normalize(R + N * (0.02 - dot(R, N)));   // (normale lissee : ne pas repartir dans la surface)
-            refl = RadianceRay(P + N * eps, R, 400, ht);
+            float t = glass ? pp.glassT : pp.t;
+            refl = RadianceRay(P + N * (0.01 + t * 0.0015), R, 400, ht);
         }
     }
-
-    gOut.Store2(idx * 8, uint2(f32tof16(vis) | (f32tof16(depth) << 16), f32tof16(ao)));
     gOut.Store(plane1 + idx * 4, PackBgra(refl, rw));
-    gOut.Store(plane2 + idx * 4, PackBgra(gi / 4, 1));
 }

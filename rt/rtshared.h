@@ -9,16 +9,17 @@
 #include <stdint.h>
 
 #define RT_MAGIC 0x31545256u   // "VRT1"
-#define RT_PROTOCOL 4
+#define RT_PROTOCOL 5
 
 enum {
     RT_CMD_OFFSET = 4096,            // commandes d'une image (envois + dessins + camera)
     RT_CMD_SIZE = 40 << 20,
     RT_OUT_OFFSET = RT_CMD_OFFSET + RT_CMD_SIZE,   // images rendues
-    RT_OUT_SIZE = 34 << 20,
+    RT_OUT_SIZE = 58 << 20,   // 1920x1080 x 20 + 2560x1440 x 4 = 56 Mo au plus
     RT_MAP_SIZE = RT_OUT_OFFSET + RT_OUT_SIZE,     // taille de la memoire partagee
-    RT_MAX_OUT_W = 1920, RT_MAX_OUT_H = 1080,      // 16 octets par pixel : 33 Mo au plus
-    RT_OUT_BPP = 16,
+    RT_MAX_OUT_W = 1920, RT_MAX_OUT_H = 1080,      // images a la resolution des rayons : 20 octets par pixel
+    RT_MAX_REFL_W = 2560, RT_MAX_REFL_H = 1440,    // reflets a la resolution de l'ecran : 4 octets par pixel
+    RT_OUT_BPP = 20,
 };
 
 // En-tete au debut de la memoire partagee.
@@ -29,6 +30,7 @@ struct RtHeader {
     volatile uint32_t doneSeq;       // programme -> jeu : image rendue
     uint32_t cmdBytes;               // taille des commandes de l'image
     uint32_t outW, outH;             // taille des images rendues
+    uint32_t reflW, reflH;           // taille de l'image des reflets
     float gpuMs;                     // temps de la derniere image (diagnostic)
     uint32_t meshCount, texCount;    // objets en memoire chez le programme (diagnostic)
     char error[256];
@@ -52,7 +54,7 @@ enum { RT_VERTEX_BYTES = 12 + 12 + 8 + 4 };
 enum { RT_TEX_BGRA8 = 0, RT_TEX_BC1 = 1, RT_TEX_BC2 = 2, RT_TEX_BC3 = 3 };
 struct RtTex { uint32_t id, format, width, height; };
 
-enum { RT_INST_ALPHA = 1, RT_INST_VEHICLE = 2, RT_INST_DYNAMIC = 4 };
+enum { RT_INST_ALPHA = 1, RT_INST_VEHICLE = 2, RT_INST_DYNAMIC = 4, RT_INST_GLASS = 8 };   // verre : vitrines (reflet, ni ombre ni obstacle)
 struct RtInstance {
     float transform[12];   // 3x4, lignes (x' = ligne 0 . (x, y, z, 1))
     uint32_t mesh, tex;    // tex 0 : aucune
@@ -62,7 +64,14 @@ struct RtInstance {
     uint32_t pad[3];
 };
 
-enum { RT_FEAT_SUN = 1, RT_FEAT_AO = 2, RT_FEAT_REFL = 4, RT_FEAT_GI = 8 };
+enum { RT_FEAT_SUN = 1, RT_FEAT_AO = 2, RT_FEAT_REFL = 4, RT_FEAT_GI = 8, RT_FEAT_LIGHTS = 16 };
+enum { RT_MAX_LIGHTS = 48 };
+// Lumiere du jeu (lampadaire, neon, phare, explosion) : ombre tracee par un rayon vers elle.
+struct RtLight {
+    float pos[3], range;
+    float color[3], spot;          // spot : 1 = cone (phare)
+    float dir[3], cone;            // direction et cosinus du cone
+};
 struct RtFrame {
     float view[16], proj[16];     // camera principale du jeu (conventions Direct3D : vecteurs lignes)
     float sun[4];                 // vers le soleil (ou la lune), w = force
@@ -80,10 +89,14 @@ struct RtFrame {
     float aoRadius;               // portee de l'occlusion (m)
     uint32_t reset;               // 1 : pas d'historique (changement de camera brutal, cinematique)
     float history;                // lissage d'une image a l'autre : 1 normal, < 1 plus long (moins de bruit, plus de trainee)
+    uint32_t reflW, reflH;        // taille de l'image des reflets (ecran)
+    uint32_t lightCount, pad2;
+    RtLight lights[RT_MAX_LIGHTS];
 };
 
-// Images rendues, a la suite (outW x outH chacune) :
-//   0 : 4 demi-flottants : x = visibilite du soleil, y = profondeur le long de l'axe de vue (m, 0 : ciel),
+// Images rendues, a la suite :
+//   0 (outW x outH) : 4 demi-flottants : x = visibilite du soleil, y = profondeur le long de l'axe de vue (m, 0 : ciel),
 //       z = occlusion ambiante (1 : degage), w = reserve ;
-//   1 : RGBA 8 bits : reflet (rgb) et son poids (a) ;
-//   2 : RGBA 8 bits : lumiere indirecte recue (rgb, x 4 : 255 = 4.0), a = reserve.
+//   1 (reflW x reflH) : RGBA 8 bits : reflet (rgb) et son poids (a) ;
+//   2 (outW x outH) : RGBA 8 bits : lumiere indirecte recue (rgb, x 4 : 255 = 4.0), a = reserve ;
+//   3 (outW x outH) : 4 demi-flottants : lumiere des lampes recue, ombres tracees comprises (rgb), w = reserve.

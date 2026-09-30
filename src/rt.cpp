@@ -21,8 +21,8 @@ static HANDLE g_helper;
 static bool g_started, g_dead;
 static bool g_pending;
 static uint32_t g_seq;
-static IDirect3DTexture9 *g_result[3];
-static UINT g_resW, g_resH;
+static IDirect3DTexture9 *g_result[4];
+static UINT g_resW, g_resH, g_reflW, g_reflH;
 static bool g_haveResult;
 static CRITICAL_SECTION g_lock;
 struct RtLock { RtLock() { EnterCriticalSection(&g_lock); } ~RtLock() { LeaveCriticalSection(&g_lock); } };
@@ -88,9 +88,9 @@ void RtBeforeReset()
 {
     for (auto &t : g_result) if (t) { t->Release(); t = NULL; }
     g_haveResult = false;
-    g_resW = g_resH = 0;
+    g_resW = g_resH = g_reflW = g_reflH = 0;
 }
-IDirect3DTexture9 *RtResult(int plane) { return g_haveResult && plane >= 0 && plane < 3 ? g_result[plane] : NULL; }
+IDirect3DTexture9 *RtResult(int plane) { return g_haveResult && plane >= 0 && plane < 4 ? g_result[plane] : NULL; }
 void RtResultSize(float *w, float *h) { *w = (float)g_resW; *h = (float)g_resH; }
 
 // ---------------------------------------------------------------- caches
@@ -112,7 +112,7 @@ struct MeshVal { uint32_t id; uint8_t state; };
 static std::unordered_map<MeshKey, MeshVal, MeshKeyHash> g_meshCache;
 static std::unordered_map<uint32_t, MeshKey> g_meshKeys;
 static std::unordered_map<void *, std::vector<uint32_t>> g_bufMeshes;
-struct TexVal { uint32_t id; uint8_t state; };
+struct TexVal { uint32_t id; uint8_t state; bool translucent; };
 static std::unordered_map<void *, TexVal> g_texCache;
 static std::vector<uint32_t> g_meshDel, g_texDel;
 static uint32_t g_nextMesh = 1, g_nextTex = 1;
@@ -246,8 +246,10 @@ static bool WriteMesh(uint32_t id, bool transient)
 }
 
 // Texture : niveau d'au plus 256 texels de cote ; DXT tel quel, le reste converti en BGRA 8 bits.
+static bool g_texTranslucent;   // resultat de WriteTexture : texture surtout translucide (verre)
 static int WriteTexture(uint32_t id, IDirect3DBaseTexture9 *bt)
 {
+    g_texTranslucent = false;
     if (bt->GetType() != D3DRTYPE_TEXTURE) return ST_BAD;
     IDirect3DTexture9 *t = (IDirect3DTexture9 *)bt;
     DWORD levels = t->GetLevelCount();
@@ -301,47 +303,63 @@ static int WriteTexture(uint32_t id, IDirect3DBaseTexture9 *bt)
         }
     }
     t->UnlockRect(level);
+    // Verre : la plupart des texels ni transparents ni opaques (vitrines, vitres) ; un feuillage decoupe est surtout
+    // 0 ou 255. DXT1 : alpha d'un bit, jamais du verre ; DXT3 : alpha sur 4 bits ; DXT5 : bornes des blocs.
+    {
+        UINT mid = 0, total = 0;
+        const BYTE *q = dst;
+        if (fmt == RT_TEX_BGRA8) { for (UINT i = 0; i < w * h; i++) { BYTE a = q[i * 4 + 3]; mid += a > 25 && a < 230; total++; } }
+        else if (fmt == RT_TEX_BC2) { for (UINT b = 0; b < rows * rowBytes / 16; b++) for (int k = 0; k < 8; k++) { BYTE v = q[b * 16 + k]; int a0 = v & 15, a1 = v >> 4; mid += (a0 > 1 && a0 < 14) + (a1 > 1 && a1 < 14); total += 2; } }
+        else if (fmt == RT_TEX_BC3) { for (UINT b = 0; b < rows * rowBytes / 16; b++) { BYTE a0 = q[b * 16], a1 = q[b * 16 + 1]; mid += (a0 > 25 && a0 < 230) + (a1 > 25 && a1 < 230); total += 2; } }
+        g_texTranslucent = total && mid * 2 > total;
+    }
     return ST_SENT;
 }
 
 // ---------------------------------------------------------------- image
 static std::vector<RtInstance> g_inst;
 static uint32_t g_frameIndex;
-static int g_statSent, g_statTexSent, g_statDrawn, g_statSkipped, g_statTimeouts, g_statAlpha, g_statAlphaTex;
+static int g_statSent, g_statTexSent, g_statDrawn, g_statSkipped, g_statTimeouts, g_statAlpha, g_statAlphaTex, g_statGlass;
 
 static void Collect()
 {
     g_pending = false;
-    UINT w = g_hdr->outW, h = g_hdr->outH;
-    if (!w || !h || w > RT_MAX_OUT_W || h > RT_MAX_OUT_H) return;
+    UINT w = g_hdr->outW, h = g_hdr->outH, rw = g_hdr->reflW, rh = g_hdr->reflH;
+    if (!w || !h || w > RT_MAX_OUT_W || h > RT_MAX_OUT_H || rw > RT_MAX_REFL_W || rh > RT_MAX_REFL_H) return;
+    if (!rw || !rh) rw = w, rh = h;
     IDirect3DDevice9 *dev = BridgeDevice9();
     if (!dev) return;
-    if (!g_result[0] || g_resW != w || g_resH != h) {
+    if (!g_result[0] || g_resW != w || g_resH != h || g_reflW != rw || g_reflH != rh) {
         for (auto &t : g_result) if (t) { t->Release(); t = NULL; }
-        static const D3DFORMAT fmt[3] = { D3DFMT_A16B16G16R16F, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8 };
-        for (int k = 0; k < 3; k++)
-            if (FAILED(dev->CreateTexture(w, h, 1, D3DUSAGE_DYNAMIC, fmt[k], D3DPOOL_DEFAULT, &g_result[k], NULL))) {
+        static const D3DFORMAT fmt[4] = { D3DFMT_A16B16G16R16F, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8, D3DFMT_A16B16G16R16F };
+        for (int k = 0; k < 4; k++)
+            if (FAILED(dev->CreateTexture(k == 1 ? rw : w, k == 1 ? rh : h, 1, D3DUSAGE_DYNAMIC, fmt[k], D3DPOOL_DEFAULT, &g_result[k], NULL))) {
                 Log("ray tracing : textures du resultat impossibles (%ux%u)", w, h);
                 for (auto &t : g_result) if (t) { t->Release(); t = NULL; }
                 g_haveResult = false; return;
             }
-        g_resW = w; g_resH = h;
+        g_resW = w; g_resH = h; g_reflW = rw; g_reflH = rh;
     }
     const BYTE *src = g_base + RT_OUT_OFFSET;
-    static const UINT bpp[3] = { 8, 4, 4 };
-    for (int k = 0; k < 3; k++) {
+    static const UINT bpp[4] = { 8, 4, 4, 8 };
+    for (int k = 0; k < 4; k++) {
+        UINT pw = k == 1 ? rw : w, ph = k == 1 ? rh : h;
         D3DLOCKED_RECT lr;
         if (FAILED(g_result[k]->LockRect(0, &lr, NULL, D3DLOCK_DISCARD))) return;
-        for (UINT y = 0; y < h; y++) memcpy((BYTE *)lr.pBits + (size_t)y * lr.Pitch, src + (size_t)y * w * bpp[k], w * bpp[k]);
+        for (UINT y = 0; y < ph; y++) memcpy((BYTE *)lr.pBits + (size_t)y * lr.Pitch, src + (size_t)y * pw * bpp[k], pw * bpp[k]);
         g_result[k]->UnlockRect(0);
-        src += (size_t)w * h * bpp[k];
+        src += (size_t)pw * ph * bpp[k];
     }
     g_haveResult = true;
 }
 
 bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
 {
-    UINT outW = prm.outW, outH = prm.outH;
+    UINT outW = prm.outW, outH = prm.outH, reflW = prm.reflW, reflH = prm.reflH;
+    if (reflW > RT_MAX_REFL_W || reflH > RT_MAX_REFL_H) {   // (ecran 4K : reflets ramenes a 2560x1440)
+        float k = min((float)RT_MAX_REFL_W / reflW, (float)RT_MAX_REFL_H / reflH);
+        reflW = (UINT)(reflW * k); reflH = (UINT)(reflH * k);
+    }
     if (!RtReady()) return false;
     RtLock lock;
     if (g_pending) {
@@ -394,10 +412,15 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
         }
         if (!mesh) { g_statSkipped++; continue; }
         uint32_t tex = 0;
+        bool glass = false;
         if (d.tex) {
             auto t = g_texCache.find(d.tex);
             if (t == g_texCache.end()) t = g_texCache.emplace(d.tex, TexVal{ g_nextTex++, ST_NEW }).first;
-            if (t->second.state == ST_NEW) { t->second.state = (uint8_t)WriteTexture(t->second.id, d.tex); if (t->second.state == ST_SENT) g_statTexSent++; }
+            if (t->second.state == ST_NEW) {
+                t->second.state = (uint8_t)WriteTexture(t->second.id, d.tex);
+                if (t->second.state == ST_SENT) { g_statTexSent++; t->second.translucent = g_texTranslucent; }
+            }
+            if (t->second.state == ST_SENT && d.blend && t->second.translucent) glass = true;
             if (t->second.state == ST_SENT) tex = t->second.id;
         }
         RtInstance in;
@@ -408,7 +431,8 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
         in.tint = d.tint; in.pad[0] = in.pad[1] = in.pad[2] = 0;
         static int dbg = GetPrivateProfileIntA("VCCoop", "RTDebug", 0, IniPath());   // 1 : test alpha coupe (diagnostic)
         if (dbg == 1) tex = 0;
-        in.flags = (d.alphaTest && tex ? RT_INST_ALPHA : 0) | (d.vehicle ? RT_INST_VEHICLE : 0) | (d.dynamic ? RT_INST_DYNAMIC : 0);
+        in.flags = (d.alphaTest && tex ? RT_INST_ALPHA : 0) | (d.vehicle ? RT_INST_VEHICLE : 0) | (d.dynamic ? RT_INST_DYNAMIC : 0) | (glass ? RT_INST_GLASS : 0);
+        if (glass) g_statGlass++;
         if (d.alphaTest) { g_statAlpha++; if (tex) g_statAlphaTex++; }
         g_inst.push_back(in);
     }
@@ -431,6 +455,15 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
     f->aoRadius = prm.aoRadius;
     f->reset = prm.reset ? 1 : 0;
     f->history = prm.history;
+    f->reflW = (prm.features & RT_FEAT_REFL) ? reflW : 0; f->reflH = (prm.features & RT_FEAT_REFL) ? reflH : 0;
+    f->lightCount = 0;
+    for (int i = 0; i < prm.lampCount && f->lightCount < RT_MAX_LIGHTS; i++) {
+        const RtLamp &l = prm.lamps[i];
+        RtLight &o = f->lights[f->lightCount++];
+        o.pos[0] = l.x; o.pos[1] = l.y; o.pos[2] = l.z; o.range = l.range;
+        o.color[0] = l.r; o.color[1] = l.g; o.color[2] = l.b; o.spot = l.spot;
+        o.dir[0] = l.dx; o.dir[1] = l.dy; o.dir[2] = l.dz; o.cone = l.cone;
+    }
     if (!g_inst.empty()) memcpy(f + 1, g_inst.data(), g_inst.size() * sizeof(RtInstance));
     g_statDrawn += (int)g_inst.size();
 
@@ -452,9 +485,9 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
     static DWORD lastLog;
     if (GetTickCount() - lastLog > 10000) {
         lastLog = GetTickCount();
-        Log("ray tracing : %d dessins envoyes (%d sans maillage, %d avec test alpha dont %d avec texture), %d maillages et %d textures nouveaux, %d en retard ; vcrt64 : %u maillages, %u textures, %.2f ms, image %ux%u",
-            g_statDrawn, g_statSkipped, g_statAlpha, g_statAlphaTex, g_statSent, g_statTexSent, g_statTimeouts, g_hdr->meshCount, g_hdr->texCount, g_hdr->gpuMs, g_hdr->outW, g_hdr->outH);
-        g_statDrawn = g_statSkipped = g_statSent = g_statTexSent = g_statTimeouts = g_statAlpha = g_statAlphaTex = 0;
+        Log("ray tracing : %d dessins envoyes (%d sans maillage, %d avec test alpha dont %d avec texture, %d en verre), %d maillages et %d textures nouveaux, %d en retard ; vcrt64 : %u maillages, %u textures, %.2f ms, image %ux%u, reflets %ux%u, %d lampes",
+            g_statDrawn, g_statSkipped, g_statAlpha, g_statAlphaTex, g_statGlass, g_statSent, g_statTexSent, g_statTimeouts, g_hdr->meshCount, g_hdr->texCount, g_hdr->gpuMs, g_hdr->outW, g_hdr->outH, g_hdr->reflW, g_hdr->reflH, prm.lampCount);
+        g_statDrawn = g_statSkipped = g_statSent = g_statTexSent = g_statTimeouts = g_statAlpha = g_statAlphaTex = g_statGlass = 0;
     }
     return g_haveResult;
 }

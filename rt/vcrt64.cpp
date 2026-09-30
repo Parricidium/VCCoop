@@ -276,8 +276,8 @@ static void CreatePipeline()
     D3D12_HIT_GROUP_DESC hg0 = {}, hg1 = {}, hg2 = {};
     hg0.HitGroupExport = L"HgPrimary"; hg0.ClosestHitShaderImport = L"PrimaryHit"; hg0.AnyHitShaderImport = L"PrimaryAny"; hg0.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     hg1.HitGroupExport = L"HgShadow"; hg1.AnyHitShaderImport = L"ShadowAny"; hg1.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
-    hg2.HitGroupExport = L"HgRadiance"; hg2.ClosestHitShaderImport = L"RadianceHit"; hg2.AnyHitShaderImport = L"PrimaryAny"; hg2.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
-    D3D12_RAYTRACING_SHADER_CONFIG sc = { 32, 8 };   // (charge la plus grosse : rayon de camera, 32 octets)
+    hg2.HitGroupExport = L"HgRadiance"; hg2.ClosestHitShaderImport = L"RadianceHit"; hg2.AnyHitShaderImport = L"RadianceAny"; hg2.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+    D3D12_RAYTRACING_SHADER_CONFIG sc = { 48, 8 };   // (charge la plus grosse : rayon de camera, 48 octets)
     D3D12_RAYTRACING_PIPELINE_CONFIG pc = { 2 };
     D3D12_GLOBAL_ROOT_SIGNATURE gr = { g_rootSig };
     D3D12_STATE_SUBOBJECT so[] = {
@@ -289,11 +289,12 @@ static void CreatePipeline()
     CK(g_dev->CreateStateObject(&sod, IID_PPV_ARGS(&g_pso)));
     ID3D12StateObjectProperties *props = NULL;
     CK(g_pso->QueryInterface(IID_PPV_ARGS(&props)));
-    // Table : generation (0), echecs (64 : camera, 96 : ombre, 128 : couleur), impacts (192, 224, 256).
-    BYTE table[320] = {};
-    const wchar_t *names[7] = { L"RayGen", L"PrimaryMiss", L"ShadowMiss", L"RadianceMiss", L"HgPrimary", L"HgShadow", L"HgRadiance" };
-    const UINT offs[7] = { 0, 64, 96, 128, 192, 224, 256 };
-    for (int i = 0; i < 7; i++) {
+    // Table : generation (0 : rayons, 64 : reflets a la taille de l'ecran), echecs (128 : camera, 160 : ombre,
+    // 192 : couleur), impacts (256, 288, 320).
+    BYTE table[384] = {};
+    const wchar_t *names[8] = { L"RayGen", L"RayGenRefl", L"PrimaryMiss", L"ShadowMiss", L"RadianceMiss", L"HgPrimary", L"HgShadow", L"HgRadiance" };
+    const UINT offs[8] = { 0, 64, 128, 160, 192, 256, 288, 320 };
+    for (int i = 0; i < 8; i++) {
         void *id = props->GetShaderIdentifier(names[i]);
         if (!id) Fatal("shader %ls introuvable", names[i]);
         memcpy(table + offs[i], id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
@@ -318,7 +319,7 @@ static void CreateResources()
     g_staging = Buffer(kStagingSize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     g_instDescs = Buffer(MAX_INST * sizeof(D3D12_RAYTRACING_INSTANCE_DESC), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     g_instInfo = Buffer(MAX_INST * sizeof(InstInfo), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    g_consts = Buffer(512, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+    g_consts = Buffer(4096, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     if (!g_staging || !g_instDescs || !g_instInfo || !g_consts) Fatal("memoire insuffisante (tampons d'envoi)");
     g_stagingPtr = (BYTE *)MapAll(g_staging);
     g_instDescPtr = (D3D12_RAYTRACING_INSTANCE_DESC *)MapAll(g_instDescs);
@@ -524,13 +525,14 @@ static void Render(const RtFrame &f, const RtInstance *inst)
         d.InstanceID = n; d.InstanceMask = ped ? 0x02 : 0x01; d.InstanceContributionToHitGroupIndex = 0;
         auto tx = s.tex ? g_texs.find(s.tex) : g_texs.end();
         bool alpha = (s.flags & RT_INST_ALPHA) && tx != g_texs.end();
-        d.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | (alpha ? 0 : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
+        bool glass = (s.flags & RT_INST_GLASS) != 0;
+        d.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | (alpha || glass ? 0 : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
         d.AccelerationStructure = (m.transient ? g_tblas : g_blas)->GetGPUVirtualAddress() + m.blasOff;
         InstInfo &ii = g_instInfoPtr[n];
         ii.idxOff = (uint32_t)m.off[GEO_IDX]; ii.uvOff = (uint32_t)m.off[GEO_UV]; ii.posOff = (uint32_t)m.off[GEO_POS]; ii.colOff = (uint32_t)m.off[GEO_COL];
         ii.tex = tx != g_texs.end() ? tx->second.slot + 1 : 0;
         ii.alphaRef = s.alphaRef;
-        ii.flags = (alpha ? 1 : 0) | ((s.flags & RT_INST_VEHICLE) ? 2 : 0) | (m.transient ? 0x100 : 0) | (ped ? 0x200 : 0);
+        ii.flags = (alpha ? 1 : 0) | ((s.flags & RT_INST_VEHICLE) ? 2 : 0) | (m.transient ? 0x100 : 0) | (ped ? 0x200 : 0) | (glass ? 0x400 : 0);
         ii.tint = s.tint;
         ii.nrmOff = (uint32_t)m.off[GEO_NRM];
         n++;
@@ -579,15 +581,16 @@ static void Render(const RtFrame &f, const RtInstance *inst)
         for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) iv[r * 4 + c] = (float)a[r][c + 4];
     }
     // Historique : meme taille d'image, pas de coupure demandee par le jeu.
-    UINT64 histBytes = (UINT64)f.outW * f.outH * 16;
+    UINT64 histBytes = (UINT64)f.outW * f.outH * 32;
     if (!g_hist[0] || g_histSize != histBytes) {
         for (auto &h : g_hist) { if (h) g_releaseAfterFrame.push_back(h); h = Buffer(histBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true); if (!h) Fatal("memoire insuffisante (historique)"); }
         g_histSize = histBytes; g_histValid = false;
     }
     bool histOk = g_histValid && !f.reset;
 
-    struct Consts { float invVP[16], prevVP[16]; float camPos[4], camFwd[4], sun[4], sunColor[4], ambient[4], skyTop[4], skyBottom[4], params[4]; uint32_t size[4]; } c = {};
-    static_assert(sizeof(Consts) <= 512, "constantes");
+    struct Consts { float invVP[16], prevVP[16]; float camPos[4], camFwd[4], sun[4], sunColor[4], ambient[4], skyTop[4], skyBottom[4], params[4];
+                    uint32_t size[4], size2[4]; float lights[RT_MAX_LIGHTS * 12]; } c = {};
+    static_assert(sizeof(Consts) <= 4096, "constantes");
     memcpy(c.invVP, inv, 64);
     memcpy(c.prevVP, g_prevVP, 64);
     c.camPos[0] = iv[12]; c.camPos[1] = iv[13]; c.camPos[2] = iv[14]; c.camPos[3] = f.maxDistance;
@@ -600,11 +603,20 @@ static void Render(const RtFrame &f, const RtInstance *inst)
     c.params[0] = f.sunAngle; c.params[1] = (float)f.raysPerPixel; c.params[2] = (float)(f.frameIndex & 0xFFFF);
     c.params[3] = f.history > 0.05f && f.history <= 4 ? f.history : 1.0f;
     c.size[0] = f.outW; c.size[1] = f.outH; c.size[2] = f.features;
+    c.size[3] = f.lightCount < RT_MAX_LIGHTS ? f.lightCount : RT_MAX_LIGHTS;
+    c.size2[0] = f.reflW; c.size2[1] = f.reflH;
+    for (uint32_t i = 0; i < c.size[3]; i++) {
+        const RtLight &l = f.lights[i];
+        float *q = c.lights + i * 12;
+        q[0] = l.pos[0]; q[1] = l.pos[1]; q[2] = l.pos[2]; q[3] = l.range;
+        q[4] = l.color[0]; q[5] = l.color[1]; q[6] = l.color[2]; q[7] = l.spot;
+        q[8] = l.dir[0]; q[9] = l.dir[1]; q[10] = l.dir[2]; q[11] = l.cone;
+    }
     memcpy(g_constsPtr, &c, sizeof c);
     memcpy(g_prevVP, vp, 64);
     g_histValid = true;
 
-    UINT64 outBytes = (UINT64)f.outW * f.outH * RT_OUT_BPP;
+    UINT64 outBytes = (UINT64)f.outW * f.outH * RT_OUT_BPP + (UINT64)f.reflW * f.reflH * 4;
     if (!g_out || g_outSize < outBytes) {
         if (g_out) { g_releaseAfterFrame.push_back(g_out); g_releaseAfterFrame.push_back(g_readback); }
         g_outSize = outBytes;
@@ -632,10 +644,15 @@ static void Render(const RtFrame &f, const RtInstance *inst)
     D3D12_DISPATCH_RAYS_DESC dr = {};
     D3D12_GPU_VIRTUAL_ADDRESS t = g_shaderTable->GetGPUVirtualAddress();
     dr.RayGenerationShaderRecord = { t, 64 };
-    dr.MissShaderTable = { t + 64, 96, 32 };
-    dr.HitGroupTable = { t + 192, 96, 32 };
+    dr.MissShaderTable = { t + 128, 96, 32 };
+    dr.HitGroupTable = { t + 256, 96, 32 };
     dr.Width = f.outW; dr.Height = f.outH; dr.Depth = 1;
     g_cl->DispatchRays(&dr);
+    if (f.reflW && f.reflH) {   // reflets a la resolution de l'ecran (bords nets)
+        dr.RayGenerationShaderRecord = { t + 64, 64 };
+        dr.Width = f.reflW; dr.Height = f.reflH;
+        g_cl->DispatchRays(&dr);
+    }
     Barrier(histIn, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     g_histCur ^= 1;
     Barrier(g_out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -739,7 +756,9 @@ int main(int argc, char **argv)
             off += sizeof(RtCmd) + ((c->bytes + 15) & ~15u);
         }
         GeoToRead();
-        bool render = frame && frame->outW && frame->outH && frame->outW <= RT_MAX_OUT_W && frame->outH <= RT_MAX_OUT_H;
+        bool render = frame && frame->outW && frame->outH && frame->outW <= RT_MAX_OUT_W && frame->outH <= RT_MAX_OUT_H &&
+                      frame->reflW <= RT_MAX_REFL_W && frame->reflH <= RT_MAX_REFL_H &&
+                      (UINT64)frame->outW * frame->outH * RT_OUT_BPP + (UINT64)frame->reflW * frame->reflH * 4 <= RT_OUT_SIZE;
         if (render) Render(*frame, inst);
         else BuildPending();
         CK(g_cl->Close());
@@ -749,9 +768,10 @@ int main(int argc, char **argv)
         for (IUnknown *u : g_releaseAfterFrame) u->Release();
         g_releaseAfterFrame.clear();
         if (render) {
-            void *p = NULL; D3D12_RANGE rr = { 0, (SIZE_T)frame->outW * frame->outH * RT_OUT_BPP };
+            void *p = NULL; D3D12_RANGE rr = { 0, (SIZE_T)frame->outW * frame->outH * RT_OUT_BPP + (SIZE_T)frame->reflW * frame->reflH * 4 };
             if (SUCCEEDED(g_readback->Map(0, &rr, &p))) { memcpy(out, p, rr.End); D3D12_RANGE none = { 0, 0 }; g_readback->Unmap(0, &none); }
             g_hdr->outW = frame->outW; g_hdr->outH = frame->outH;
+            g_hdr->reflW = frame->reflW; g_hdr->reflH = frame->reflH;
         }
         QueryPerformanceCounter(&t1);
         double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;

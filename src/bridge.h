@@ -50,7 +50,10 @@ struct RtDraw {
     float alphaRef;
     DWORD tint;          // couleur de la matiere (peinture des voitures)
     bool alphaTest, vehicle, dynamic;
+    bool blend;          // dessin en transparence (verre des vitrines si sa texture est translucide)
 };
+// Lampe du jeu pour le ray tracing (lampadaire, neon, phare, explosion).
+struct RtLamp { float x, y, z, range, r, g, b, spot, dx, dy, dz, cone; };
 // Une image : camera, lumieres, fonctions (1 soleil, 2 occlusion, 4 reflets, 8 lumiere indirecte).
 struct RtParams {
     const float *view, *proj;
@@ -59,6 +62,9 @@ struct RtParams {
     unsigned features;
     bool reset;
     UINT outW, outH;
+    UINT reflW, reflH;           // reflets : a la resolution de l'ecran
+    const RtLamp *lamps;
+    int lampCount;
 };
 bool RtHelperPresent();       // VCCoop\vcrt64.exe present
 void RtStart();               // Rendu=12 : lance vcrt64.exe (a la creation du peripherique)
@@ -67,7 +73,7 @@ void RtBeforeReset();
 void RtForgetResource(void *real);   // tampon ou texture Direct3D 9 libere ou reecrit (bridge.cpp)
 // Envoie l'image ; vrai si une image tracee est disponible (celle-ci, ou la precedente si vcrt64 est en retard).
 bool RtTrace(const RtDraw *draws, int count, const RtParams &p);
-// 0 : x = visibilite du soleil, y = profondeur (m), z = occlusion (demi-flottants) ; 1 : reflet (rgb) et son poids (a) ;
-// 2 : lumiere indirecte (rgb x 4).
+// 0 : x = visibilite du soleil, y = profondeur (m), z = occlusion (demi-flottants) ; 1 : reflet (rgb) et son poids (a),
+// a la taille de l'ecran ; 2 : lumiere indirecte (rgb x 4) ; 3 : lumiere des lampes, ombres tracees (demi-flottants).
 struct IDirect3DTexture9 *RtResult(int plane = 0);
 void RtResultSize(float *w, float *h);

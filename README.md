@@ -248,7 +248,10 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   **Ray-traced reflections** (`RTReflets`): the street, the sky and other cars on car paint (smooth normals of
   the game's models, Fresnel) and on wet ground in the rain. **Ray-traced lighting** (`RTLumiere`): one bounce
   of light from lit walls and ground, with their color (texture × the game's baked vertex lighting × paint).
-  **Ray-traced occlusion** (`RTOcclusion`) replaces the screen-space one. Noise is averaged from frame to frame
+  **Ray-traced occlusion** (`RTOcclusion`) replaces the screen-space one. **Ray-traced lamps** (`RTLampes`): every
+  street lamp, neon, headlight and explosion lights up with a real shadow (one ray to each nearby lamp), instead
+  of four shadow maps. Reflections are traced at screen resolution (sharp edges) and also cover **shop windows**
+  (glass is found as the camera ray passes through it; it lets light through). Noise is averaged from frame to frame
   (reprojection with the previous camera, reset on camera cuts). Everything is set in the launcher's
   **RAY TRACING** tab (shown with this renderer) and live in game in the **RAY TRACING** tab of the F10 menu:
   shadow softness and distance, reflection / lighting / occlusion strength, shiny ground (rain only, light,
@@ -575,7 +578,10 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   voitures sur les carrosseries (normales lissées des modèles du jeu, effet Fresnel) et sur le sol mouillé sous la
   pluie. **Lumière tracée** (`RTLumiere`) : un rebond de la lumière des murs et du sol éclairés, avec leur couleur
   (texture × éclairage « cuit » du jeu × peinture). **Occlusion tracée** (`RTOcclusion`) à la place de celle
-  d'écran. Le bruit est moyenné d'une image à l'autre (reprojection avec la caméra précédente, remise à zéro aux
+  d'écran. **Lampes tracées** (`RTLampes`) : chaque lampadaire, néon, phare et explosion éclaire avec une vraie
+  ombre (un rayon vers chaque lampe proche), au lieu de quatre cartes d'ombre. Les reflets sont tracés à la
+  résolution de l'écran (bords nets) et couvrent aussi les **vitrines** (le verre est repéré au passage du rayon de
+  caméra ; il laisse passer la lumière). Le bruit est moyenné d'une image à l'autre (reprojection avec la caméra précédente, remise à zéro aux
   coupures de caméra). Tout se règle dans l'onglet **RAY TRACING** du lanceur (visible avec ce moteur) et en
   direct en jeu dans l'onglet **RAY TRACING** du menu F10 : douceur et portée des ombres, force des reflets, de la
   lumière et de l'occlusion, sols brillants (pluie seulement, légers, miroirs), lissage du bruit (`RTDouceur`,
