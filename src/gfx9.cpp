@@ -374,30 +374,14 @@ float4 PsRTGI(float2 vpos : VPOS) : COLOR {
   return float4(gi * gRTFlags.z * fade, 1);
 }
 
-// Reflets traces (carrosseries, sols mouilles) : melange selon leur poids.
+// Reflets traces (carrosseries, sols mouilles, vitrines), a la taille de l'ecran : melange selon leur poids.
 float4 PsRTRefl(float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
-  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
-  if (d >= 0.999) return 0;
-  float z = d * gProj.z;
-  float2 st = uv * gRT.xy - 0.5;
-  float2 base = floor(st);
-  float2 f = st - base;
-  float4 sum = 0; float wsum = 0;
-  [unroll] for (int y = 0; y <= 1; y++) {
-    [unroll] for (int x = 0; x <= 1; x++) {
-      float2 t = (base + float2(x, y) + 0.5) * gRT.zw;
-      float4 s = tex2Dlod(sRT, float4(t, 0, 0));
-      float2 o = float2(x, y) - f;
-      float err = abs(s.y - z) / (z * 0.02 + 0.05);
-      float w = (1 - abs(o.x)) * (1 - abs(o.y)) * exp(-err * err) * (s.y > 0 ? 1 : 0) + 1e-4;
-      sum += tex2Dlod(sRTRefl, float4(t, 0, 0)) * w; wsum += w;
-    }
-  }
-  float4 r = sum / wsum;
+  float4 r = tex2Dlod(sRTRefl, float4(uv, 0, 0));
   r.a = saturate(r.a * gRTRefl.x);
   return r;
 }
+
 
 // ---- lumieres dynamiques : l'image est multipliee par (1 + lumiere recue)
 float4 gLightPos[48] : register(c30);    // position + portee
@@ -477,6 +461,37 @@ float4 PsLights(float2 vpos : VPOS) : COLOR {
   if (gLShadow.z > 0.5) return float4(light, 1);   // OmbresDebug=2 : lumiere recue seule
   // Couleur propre de la surface : l'image divisee par la clarte ambiante (la nuit, tout est assombri), en partie
   // desaturee (sinon un neon rose teintait tout ce qu'un phare eclaire).
+  float lum = dot(scene, float3(0.3, 0.59, 0.11));
+  float3 albedo = saturate(lerp(scene, lum, 0.45) / gLightCount.w);
+  return float4(scene + albedo * light, 1);
+}
+
+// Lampes tracees : meme melange que PsLights (image x (1 + lumiere), couleur de la surface estimee), la lumiere venant
+// de vcrt64 (toutes les lampes, ombres comprises), filtree 4x4 selon la profondeur.
+sampler2D sRTLamp : register(s7);
+float4 PsRTLights(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float3 scene = tex2Dlod(sScene, float4(uv, 0, 0)).rgb;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return float4(gLShadow.z > 0.5 ? 0 : scene, 1);
+  float z = d * gProj.z;
+  float2 st = uv * gRT.xy - 0.5;
+  float2 base = floor(st);
+  float2 f = st - base;
+  float3 sum = 0, nearL = 0; float wsum = 0, nearErr = 1e9;
+  [unroll] for (int y = -1; y <= 2; y++) {
+    [unroll] for (int x = -1; x <= 2; x++) {
+      float2 t = (base + float2(x, y) + 0.5) * gRT.zw;
+      float4 s = tex2Dlod(sRT, float4(t, 0, 0));
+      float3 l = tex2Dlod(sRTLamp, float4(t, 0, 0)).rgb;
+      float w = RTWeight(s, float2(x, y) - f, z);
+      sum += l * w; wsum += w;
+      float e2 = abs(s.y - z);
+      if (s.y > 0 && e2 < nearErr) { nearErr = e2; nearL = l; }
+    }
+  }
+  float3 light = (wsum > 0.02 ? sum / wsum : nearL) * gLightCount.y;
+  if (gLShadow.z > 0.5) return float4(light, 1);   // OmbresDebug=2 : lumiere recue seule
   float lum = dot(scene, float3(0.3, 0.59, 0.11));
   float3 albedo = saturate(lerp(scene, lum, 0.45) / gLightCount.w);
   return float4(scene + albedo * light, 1);
@@ -920,8 +935,8 @@ static IUnknown *CompileShader(const char *entry, const char *target, bool noUv)
 // ======================================================================= Ressources
 enum { CASCADES = 4 };
 static IDirect3DVertexShader9 *g_vsLight[2], *g_vsView[2], *g_vsQuad;   // [0] avec uv, [1] sans
-static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater, *g_psRTMask, *g_psRTGI, *g_psRTRefl;
-static bool g_rtReflOn, g_rtGIOn;   // image en cours : reflets / lumiere indirecte traces (les passes d'ecran s'effacent)
+static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater, *g_psRTMask, *g_psRTGI, *g_psRTRefl, *g_psRTLights;
+static bool g_rtReflOn, g_rtGIOn, g_rtLampsOn;   // image en cours : reflets / lumiere indirecte traces (les passes d'ecran s'effacent)
 static IDirect3DVertexShader9 *g_vsWater, *g_vsSpot[2];
 static IDirect3DTexture9 *g_lightAtlas;
 static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
@@ -967,6 +982,7 @@ static bool CreateShaders()
         g_psRTMask = (IDirect3DPixelShader9 *)CompileShader("PsRTMask", "ps_3_0", false);
         g_psRTGI = (IDirect3DPixelShader9 *)CompileShader("PsRTGI", "ps_3_0", false);
         g_psRTRefl = (IDirect3DPixelShader9 *)CompileShader("PsRTRefl", "ps_3_0", false);
+        g_psRTLights = (IDirect3DPixelShader9 *)CompileShader("PsRTLights", "ps_3_0", false);
     }
     g_psLights = (IDirect3DPixelShader9 *)CompileShader("PsLights", "ps_3_0", false);
     for (int v = 0; v < 2; v++) g_vsSpot[v] = (IDirect3DVertexShader9 *)CompileShader("VsSpot", "vs_3_0", v == 1);
@@ -1066,6 +1082,7 @@ struct Rec {
     bool vehicle;         // dessin d'un vehicule (reflets des carrosseries)
     bool dynamic;         // vehicule ou personnage (pas de sol mouille / brillant dessus)
     DWORD tint;           // couleur de la matiere (ray tracing : peinture des voitures dans les reflets)
+    bool blend;           // en transparence (ray tracing : verre des vitrines)
     GfxDraw d;
     DWORD fvf;
     float world[16];
@@ -1357,6 +1374,7 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     r.receiver = false;   // fixe par ChooseMainView
     r.caster = true;
     r.tint = 0xFFFFFFFF;
+    r.blend = blend != 0;
     if (g_cfg.renderer == 12) {   // eclairage du jeu avec la couleur de la matiere (et non celle des sommets)
         DWORD light = 0, src = 0;
         D3DMATERIAL9 m;
@@ -2055,13 +2073,14 @@ static void Apply()
     // soleil (a la place des cascades), l'occlusion, les reflets et la lumiere renvoyee. Sans reponse (carte sans DXR,
     // programme arrete) : rendu Direct3D 9 habituel.
     bool rtShadow = false, rtAO = false;
-    g_rtReflOn = g_rtGIOn = false;
+    g_rtReflOn = g_rtGIOn = g_rtLampsOn = false;
     unsigned rtFeat = 0;
     if (g_cfg.renderer == 12 && g_psRTMask && RtReady()) {
         if (shadows && g_cfg.rtShadows) rtFeat |= 1;
         if (g_cfg.rtAO) rtFeat |= 2;
         if (g_cfg.rtRefl && g_psRTRefl) rtFeat |= 4;
         if (g_cfg.rtGI && g_psRTGI) rtFeat |= 8;
+        if (g_cfg.rtLamps && lights && g_psRTLights) rtFeat |= 16;
     }
     if (rtFeat) {
         static std::vector<RtDraw> draws;
@@ -2073,7 +2092,7 @@ static void Apply()
             d.vbData = r.replayVb ? g_cpuVb.data() : NULL;
             d.ibData = r.replayIb ? (const WORD *)g_cpuIb.data() : NULL;
             d.stride = r.stride; d.fvf = r.fvf; d.d = r.d; d.world = r.world;
-            d.alphaRef = r.alphaRef; d.tint = r.tint; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic;
+            d.alphaRef = r.alphaRef; d.tint = r.tint; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic; d.blend = r.blend;
             draws.push_back(d);
         }
         RtParams p = {};
@@ -2097,17 +2116,28 @@ static void Apply()
         // Coupure de camera (cinematique, reapparition, teleportation) : pas d'historique.
         p.reset = GetTickCount() - g_lastVPAt > 500 || (cam.x - g_lastCam.x) * (cam.x - g_lastCam.x) + (cam.y - g_lastCam.y) * (cam.y - g_lastCam.y) + (cam.z - g_lastCam.z) * (cam.z - g_lastCam.z) > 64.0f;
         p.outW = g_width * g_cfg.rtScale / 100; p.outH = g_height * g_cfg.rtScale / 100;
+        p.reflW = g_width; p.reflH = g_height;
+        static RtLamp lamps[MAX_LIGHTS];
+        p.lamps = lamps; p.lampCount = 0;
+        if (rtFeat & 16)
+            for (int i = 0; i < g_lightCount; i++) {   // (memes portees que la passe d'ecran)
+                const DynLight &l = g_lightList[i];
+                bool spot = l.type == 1;
+                Vec3 dir = Norm({ l.dx, l.dy, l.dz });
+                lamps[p.lampCount++] = { l.x, l.y, l.z, spot ? l.radius * 2.2f : l.radius * 1.6f, l.r, l.g, l.b, spot ? 1.0f : 0.0f, dir.x, dir.y, dir.z, l.cone };
+            }
         if (RtTrace(draws.data(), (int)draws.size(), p) && RtResult(0)) {
             rtShadow = (rtFeat & 1) != 0;
             rtAO = (rtFeat & 2) != 0;
             g_rtReflOn = (rtFeat & 4) != 0;
             g_rtGIOn = (rtFeat & 8) != 0;
+            g_rtLampsOn = (rtFeat & 16) != 0;
             if (rtAO) ao = false;   // (occlusion d'ecran remplacee)
         }
         static unsigned logged;
         if ((rtShadow | rtAO | g_rtReflOn | g_rtGIOn) && logged != rtFeat) {
             logged = rtFeat;
-            Log("rendu : ray tracing actif : ombres %d, occlusion %d, reflets %d, lumiere indirecte %d", rtShadow, rtAO, g_rtReflOn, g_rtGIOn);
+            Log("rendu : ray tracing actif : ombres %d, occlusion %d, reflets %d, lumiere indirecte %d, lampes %d", rtShadow, rtAO, g_rtReflOn, g_rtGIOn, g_rtLampsOn);
         }
     }
 
@@ -2134,7 +2164,7 @@ static void Apply()
 
     // 1b. Cartes d'ombre des lumieres les plus importantes (au plus 4, dans l'atlas 2x2).
     g_shadowLights = 0;
-    if (lights) PrepareLightShadows(cam);
+    if (lights && !g_rtLampsOn) PrepareLightShadows(cam);
 
     // 2. Profondeur de la scene vue de la camera (l'eau comprise : elle recoit ombres et lumieres).
     const float depthScale = kDepthScale;
@@ -2228,16 +2258,17 @@ static void Apply()
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
     // 3a. Images tracees : ombre et occlusion (multiplient l'image), lumiere renvoyee (image x (1 + lumiere)).
-    if (rtShadow || rtAO || g_rtGIOn || g_rtReflOn) {
+    if (rtShadow || rtAO || g_rtGIOn || g_rtReflOn || g_rtLampsOn) {
         float rs[4]; RtResultSize(&rs[0], &rs[1]); rs[2] = 1.0f / rs[0]; rs[3] = 1.0f / rs[1];
         g_dev->SetPixelShaderConstantF(191, rs, 1);
-        for (int k = 0; k < 3; k++) {
-            g_dev->SetTexture(4 + k, RtResult(k));
-            g_dev->SetSamplerState(4 + k, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-            g_dev->SetSamplerState(4 + k, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
-            g_dev->SetSamplerState(4 + k, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-            g_dev->SetSamplerState(4 + k, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
-            g_dev->SetSamplerState(4 + k, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+        for (int k = 0; k < 4; k++) {   // s4 : ombre/profondeur, s5 : reflets, s6 : lumiere renvoyee, s7 : lampes
+            int st = k == 3 ? 7 : 4 + k;
+            g_dev->SetTexture(st, RtResult(k));
+            g_dev->SetSamplerState(st, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(st, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(st, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+            g_dev->SetSamplerState(st, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            g_dev->SetSamplerState(st, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
         }
         float aoK = 0.85f * g_cfg.rtAOK / 100.0f;
         float fl[4] = { rtShadow ? 1.0f : 0.0f, rtAO ? 1.0f : 0.0f, (0.55f - 0.15f * g_night) * g_cfg.rtGIK / 100.0f, aoK > 1 ? 1 : aoK };   // (nuit : neons deja forts)
@@ -2330,7 +2361,7 @@ static void Apply()
         g_dev->SetSamplerState(3, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
         g_dev->SetSamplerState(3, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
         g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-        g_dev->SetPixelShader(g_psLights);
+        g_dev->SetPixelShader(g_rtLampsOn ? g_psRTLights : g_psLights);   // (ray tracing : toutes les lampes, ombres tracees)
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
     }
 
@@ -2345,7 +2376,7 @@ static void Apply()
     g_dev->SetTexture(1, NULL);
     g_dev->SetTexture(2, NULL);
     g_dev->SetTexture(3, NULL);
-    for (int k = 4; k < 7; k++) g_dev->SetTexture(k, NULL);
+    for (int k = 4; k < 8; k++) g_dev->SetTexture(k, NULL);
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
     g_state->Apply();

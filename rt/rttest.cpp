@@ -58,6 +58,8 @@ int main()
     uint32_t f[6][4] = { { 0, 1, 3, 2 }, { 4, 6, 7, 5 }, { 0, 4, 5, 1 }, { 2, 3, 7, 6 }, { 0, 2, 6, 4 }, { 1, 5, 7, 3 } };
     for (auto &q : f) { bi.insert(bi.end(), { q[0], q[1], q[2], q[0], q[2], q[3] }); }
     Mesh(2, bp, bi);
+    // Vitre (verre) devant la camera, a gauche : 5 m de large, 3 m de haut, dans le plan y = -6.
+    Mesh(3, { -6, -6, 0, -1, -6, 0, -1, -6, 3, -6, -6, 3 }, { 0, 1, 2, 0, 2, 3 });
 
     // Camera (conventions Direct3D, vecteurs lignes, main gauche comme RenderWare/le jeu : vue LookAt).
     float eye[3] = { 0, -14, 7 }, at[3] = { 0, 0, 0 }, up[3] = { 0, 0, 1 };
@@ -73,20 +75,26 @@ int main()
     float proj[16] = { xs, 0, 0, 0, 0, ys, 0, 0, 0, 0, zf / (zf - zn), 1, 0, 0, -zn * zf / (zf - zn), 0 };
 
     const uint32_t W = 64, H = 32;
-    RtFrame *fr = (RtFrame *)Cmd(RT_CMD_FRAME, sizeof(RtFrame) + 2 * sizeof(RtInstance));
+    RtFrame *fr = (RtFrame *)Cmd(RT_CMD_FRAME, sizeof(RtFrame) + 3 * sizeof(RtInstance));
     memset(fr, 0, sizeof *fr);
     memcpy(fr->view, view, 64); memcpy(fr->proj, proj, 64);
     float s[3] = { 1, 1, 1.2f }; float sl = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
     fr->sun[0] = s[0] / sl; fr->sun[1] = s[1] / sl; fr->sun[2] = s[2] / sl; fr->sun[3] = 1;
-    fr->sunAngle = 0.02f; fr->outW = W; fr->outH = H; fr->features = RT_FEAT_SUN | RT_FEAT_AO | RT_FEAT_REFL | RT_FEAT_GI; fr->raysPerPixel = 4;
-    fr->instanceCount = 2; fr->maxDistance = 500; fr->aoRadius = 1.5f; fr->wetness = 1; fr->history = 1;
+    fr->sunAngle = 0.02f; fr->outW = W; fr->outH = H; fr->features = RT_FEAT_SUN | RT_FEAT_AO | RT_FEAT_REFL | RT_FEAT_GI | RT_FEAT_LIGHTS; fr->raysPerPixel = 4;
+    fr->reflW = W; fr->reflH = H;
+    // Lampe a 2 m de haut, a droite du cube (l'ombre du cube doit partir vers la gauche).
+    fr->lightCount = 1;
+    RtLight &lamp = fr->lights[0];
+    lamp.pos[0] = 4; lamp.pos[1] = 0; lamp.pos[2] = 2; lamp.range = 12; lamp.color[0] = 1; lamp.color[1] = 0.8f; lamp.color[2] = 0.5f;
+    fr->instanceCount = 3; fr->maxDistance = 500; fr->aoRadius = 1.5f; fr->wetness = 0; fr->history = 1;
     for (int k = 0; k < 3; k++) { fr->sunColor[k] = 1; fr->ambient[k] = 0.4f; fr->skyTop[k] = 0.3f; fr->skyBottom[k] = 0.8f; }
     RtInstance *in = (RtInstance *)(fr + 1);
-    memset(in, 0, 2 * sizeof(RtInstance));
+    memset(in, 0, 3 * sizeof(RtInstance));
     float id[12] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 };
     memcpy(in[0].transform, id, 48); in[0].mesh = 1;
     memcpy(in[1].transform, id, 48); in[1].transform[11] = 1; in[1].mesh = 2;   // cube pose sur le sol
-    in[0].tint = 0xFFFFFFFF; in[1].tint = 0xFFFF2020; in[1].flags = RT_INST_VEHICLE;   // cube rouge, "carrosserie" 
+    in[0].tint = 0xFFFFFFFF; in[1].tint = 0xFFFF2020; in[1].flags = RT_INST_VEHICLE;   // cube rouge, "carrosserie"
+    memcpy(in[2].transform, id, 48); in[2].mesh = 3; in[2].tint = 0xFFFFFFFF; in[2].flags = RT_INST_GLASS;
 
     h->cmdBytes = g_off;
     h->frameSeq = 1;
@@ -106,6 +114,17 @@ int main()
     const uint16_t *c = px + ((H / 2) * W + W / 2) * 4;
     printf("centre : visibilite %.2f, profondeur %.2f (attendu ~%.1f), occlusion %.2f\n", half(c[0]), half(c[1]), zl, half(c[2]));
     const BYTE *refl = g_base + RT_OUT_OFFSET + W * H * 8, *gi = refl + W * H * 4;
+    const uint16_t *lampPx = (const uint16_t *)(gi + W * H * 4);
+    printf("lumiere de la lampe (# fort, + moyen, . faible) :\n");
+    for (uint32_t yy = 0; yy < H; yy++) {
+        for (uint32_t xx = 0; xx < W; xx++) { float l = half(lampPx[(yy * W + xx) * 4]); putchar(l > 0.3f ? '#' : l > 0.08f ? '+' : l > 0.01f ? '.' : ' '); }
+        putchar('\n');
+    }
+    printf("poids des reflets (# fort, + moyen, . faible) :\n");
+    for (uint32_t yy = 0; yy < H; yy++) {
+        for (uint32_t xx = 0; xx < W; xx++) { BYTE a = refl[(yy * W + xx) * 4 + 3]; putchar(a > 100 ? '#' : a > 40 ? '+' : a > 3 ? '.' : ' '); }
+        putchar('\n');
+    }
     uint32_t ci = (H / 2) * W + W / 2, gp = (H - 4) * W + W / 2 - 6;   // cube ; sol pres du cube
     printf("reflet du cube : %u %u %u poids %u ; lumiere renvoyee au sol pres du cube : %u %u %u\n",
            refl[ci * 4 + 2], refl[ci * 4 + 1], refl[ci * 4], refl[ci * 4 + 3], gi[gp * 4 + 2], gi[gp * 4 + 1], gi[gp * 4]);

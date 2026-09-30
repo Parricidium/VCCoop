@@ -103,7 +103,7 @@ static void SaveIni()
             { "RTReflets", g_cfg.rtRefl }, { "RTLumiere", g_cfg.rtGI }, { "RTOcclusion", g_cfg.rtAO },
             { "RTDouceur", g_cfg.rtSoft }, { "RTDistance", g_cfg.rtDist }, { "RTRefletsForce", g_cfg.rtReflK },
             { "RTRefletsSol", g_cfg.rtGloss }, { "RTLumiereForce", g_cfg.rtGIK }, { "RTOcclusionForce", g_cfg.rtAOK },
-            { "RTLissage", g_cfg.rtSmooth } };
+            { "RTLissage", g_cfg.rtSmooth }, { "RTLampes", g_cfg.rtLamps } };
         char v[16];
         for (auto &r : rt) { wsprintfA(v, "%d", r.v); WritePrivateProfileStringA("VCCoop", r.key, v, ini); }
     }

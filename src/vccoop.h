@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.30e"
+#define VCCOOP_VERSION "2026.09.30f"
 struct Config {
     bool windowed;
     bool borderless;
@@ -69,6 +69,7 @@ struct Config {
     int rtGIK;          // RTLumiereForce=100 (%)
     int rtAOK;          // RTOcclusionForce=100 (%)
     int rtSmooth;       // RTLissage=1 : lissage du bruit d'une image a l'autre, 0 faible, 1 moyen, 2 fort
+    bool rtLamps;       // RTLampes=1 : lampadaires, neons et phares eclairent avec des ombres tracees (toutes les lampes)
     int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)
     bool fpsView;       // VuePremierePersonne=1 : la touche ToucheVue passe en vue depuis la tete de Tommy
     int fpsKey;         // ToucheVue=F6 : code de touche Windows (F1..F12, ou une lettre)

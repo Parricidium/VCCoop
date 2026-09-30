@@ -834,6 +834,8 @@ static void BuildOptions()
        L"Lit walls and ground bounce their light and color around them (one bounce).");
     C(TAB_RT, "RTLumiereForce", 100, { 25, 50, 75, 100, 150, 200 }, L"Force de la lumi\u00E8re", L"Lighting strength", {}, {}, L" %",
       L"Intensit\u00E9 de la lumi\u00E8re renvoy\u00E9e.", L"Intensity of the bounced light.");
+    T2(TAB_RT, "RTLampes", 1, L"Lampes trac\u00E9es", L"Ray-traced lamps", L"Lampadaires, n\u00E9ons et phares \u00E9clairent avec de vraies ombres, toutes les lampes.",
+       L"Street lamps, neons and headlights light up with real shadows, every lamp.");
     T2(TAB_RT, "RTOcclusion", 1, L"Occlusion trac\u00E9e", L"Ray-traced occlusion", L"Coins, pieds des murs et dessous des voitures assombris par de vrais rayons.",
        L"Corners, wall bases and car undersides darkened by real rays.");
     C(TAB_RT, "RTOcclusionForce", 100, { 25, 50, 75, 100, 150 }, L"Force de l'occlusion", L"Occlusion strength", {}, {}, L" %",

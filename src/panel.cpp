@@ -560,7 +560,7 @@ static void DrawPlayersTab(float x0, float y0, float x1, float y1)
     float row = g_u * 5.6f, y = y0 + g_u;
     void *me = FindPlayerPed();
     bool admin = LocalAdmin();
-    TextA(x0 + g_u, y, 0.5f, C_DIM, AL_LEFT, Tr("Cliquez sur ALLER pour vous teleporter pres d'un joueur.", "Click GO TO to teleport next to a player."));
+    TextA(x0 + g_u, y, 0.5f, C_DIM, AL_LEFT, Tr("Cliquez sur ALLER pour vous t\xE9l\xE9porter pr\xE8s d'un joueur.", "Click GO TO to teleport next to a player."));
     y += row * 0.8f;
     for (int i = 0; i < MAX_PLAYERS; i++) {
         bool self = i == g_localId || (g_localId < 0 && i == 0);
@@ -569,7 +569,7 @@ static void DrawPlayersTab(float x0, float y0, float x1, float y1)
         Rect(x0 + g_u * 0.5f, y, x1 - g_u * 0.5f, y + row - g_u * 0.6f, C_PANEL);
         Rect(x0 + g_u * 0.5f, y, x0 + g_u * 1.1f, y + row - g_u * 0.6f, PlayerColor(i));
         char line[160];
-        const char *role = i == 0 ? Tr("hote", "host") : IsAdmin(i) ? "admin" : "";
+        const char *role = i == 0 ? Tr("h\xF4te", "host") : IsAdmin(i) ? "admin" : "";
         int ping = self ? 0 : (i == 0 ? g_myPing : s.ping);
         float health = self && me ? Health(me) : s.health;
         if (self) _snprintf(line, sizeof(line), "%s%s%s%s  (%s)", g_cfg.playerName, role[0] ? "  [" : "", role, role[0] ? "]" : "", Tr("vous", "you"));
@@ -577,7 +577,7 @@ static void DrawPlayersTab(float x0, float y0, float x1, float y1)
         else {
             float dist = 0;
             if (me) { float dx = s.pos[0] - Pos(me).x, dy = s.pos[1] - Pos(me).y, dz = s.pos[2] - Pos(me).z; dist = sqrtf(dx * dx + dy * dy + dz * dz); }
-            _snprintf(line, sizeof(line), fr ? "%s%s%s%s   sante %d   ping %d   %d m" : "%s%s%s%s   health %d   ping %d   %d m",
+            _snprintf(line, sizeof(line), fr ? "%s%s%s%s   sant\xE9 %d   ping %d   %d m" : "%s%s%s%s   health %d   ping %d   %d m",
                       s.name, role[0] ? "  [" : "", role, role[0] ? "]" : "", (int)health, ping, (int)dist);
         }
         line[sizeof(line) - 1] = 0;
@@ -616,8 +616,8 @@ static void DrawVehiclesTab(float x0, float y0, float x1, float y1)
     }
     y += bh + g_u * 1.2f;
     bool blocked = MissionUnderway() || !PlayerFree();
-    TextA(x0 + g_u, y, 0.5f, blocked ? 0xFF8080FF : C_DIM, AL_LEFT, blocked ? Tr("Pas pendant une mission ni une cinematique.", "Not during a mission or a cutscene.")
-                                                                           : Tr("Cliquez : le vehicule apparait devant vous, tout le monde le voit. Molette : defiler.",
+    TextA(x0 + g_u, y, 0.5f, blocked ? 0xFF8080FF : C_DIM, AL_LEFT, blocked ? Tr("Pas pendant une mission ni une cin\xE9matique.", "Not during a mission or a cutscene.")
+                                                                           : Tr("Cliquez : le v\xE9hicule appara\xEEt devant vous, tout le monde le voit. Molette : d\xE9" "filer.",
                                                                                 "Click: the vehicle appears in front of you, everybody sees it. Wheel: scroll."));
     y += LineH(0.5f) + g_u;
     int idx[160], n = 0;
@@ -650,13 +650,13 @@ static void DrawToolsTab(float x0, float y0, float x1, float y1)
     bool inVeh = me && InVehicle(me);
     float bw = (x1 - x0 - g_u * 4) / 3, bh = g_u * 5.0f, y = y0 + g_u * 1.5f;
     struct B { const char *fr, *en; int act; bool on, enabled; } b[] = {
-        { "SANTE + GILET", "HEALTH + ARMOUR", A_HEAL, false, true },
+        { "SANT\xC9 + GILET", "HEALTH + ARMOUR", A_HEAL, false, true },
         { "ARMES", "WEAPONS", A_WEAPONS, false, true },
         { "+10 000 $", "+$10,000", A_MONEY, false, true },
-        { "REPARER LE VEHICULE", "REPAIR VEHICLE", A_REPAIR, false, inVeh },
+        { "R\xC9PARER LE V\xC9HICULE", "REPAIR VEHICLE", A_REPAIR, false, inVeh },
         { "REMETTRE SUR ROUES", "FLIP VEHICLE", A_FLIP, false, inVeh },
-        { "ETOILES A ZERO", "CLEAR WANTED", A_WANTED, false, true },
-        { "POLICE IGNOREE", "NO POLICE", A_NOPOLICE, g_noPolice, true },
+        { "\xC9TOILES \xC0 Z\xC9RO", "CLEAR WANTED", A_WANTED, false, true },
+        { "POLICE IGNOR\xC9" "E", "NO POLICE", A_NOPOLICE, g_noPolice, true },
     };
     for (int i = 0; i < (int)(sizeof(b) / sizeof(b[0])); i++) {
         float bx = x0 + g_u + (i % 3) * (bw + g_u), by = y + (i / 3) * (bh + g_u);
@@ -680,7 +680,7 @@ static void DrawWorldTab(float x0, float y0, float x1, float y1)
         if (Button(bx, y, bx + bw, y + bh, s, ClockHours() == hours[i])) Queue(A_TIME, hours[i]);
     }
     y += bh + g_u * 2.5f;
-    TextA(x0 + g_u, y, 0.6f, C_TEXT, AL_LEFT, Tr("METEO", "WEATHER"));
+    TextA(x0 + g_u, y, 0.6f, C_TEXT, AL_LEFT, Tr("M\xC9T\xC9O", "WEATHER"));
     y += LineH(0.6f) + g_u;
     static const char *wFr[] = { "AUTO", "SOLEIL", "NUAGES", "PLUIE", "BROUILLARD", "GRAND SOLEIL", "OURAGAN" };
     static const char *wEn[] = { "AUTO", "SUNNY", "CLOUDY", "RAIN", "FOG", "EXTRA SUNNY", "HURRICANE" };
@@ -690,7 +690,7 @@ static void DrawWorldTab(float x0, float y0, float x1, float y1)
         bool on = i == 0 ? ForcedWeather() < 0 : ForcedWeather() == i - 1;
         if (Button(bx, by, bx + ww, by + bh, fr ? wFr[i] : wEn[i], on)) Queue(A_WEATHER, i - 1);
     }
-    if (!g_cfg.host) TextA(x0 + g_u, y1 - LineH(0.45f) - g_u, 0.45f, C_DIM, AL_LEFT, Tr("Heure et meteo sont celles de l'hote : la demande passe par lui.", "Time and weather are the host's: the request goes through them."));
+    if (!g_cfg.host) TextA(x0 + g_u, y1 - LineH(0.45f) - g_u, 0.45f, C_DIM, AL_LEFT, Tr("Heure et m\xE9t\xE9o sont celles de l'h\xF4te : la demande passe par lui.", "Time and weather are the host's: the request goes through them."));
 }
 
 static void DrawHostTab(float x0, float y0, float x1, float y1)
@@ -702,12 +702,12 @@ static void DrawHostTab(float x0, float y0, float x1, float y1)
     _snprintf(dens, sizeof(dens), "%d %%", g_cfg.popDensity);
     struct O { const char *fr, *en, *value; bool on; } o[] = {
         { "Tir ami (les joueurs se blessent entre eux)", "Friendly fire", g_cfg.friendlyFire ? yes : no, g_cfg.friendlyFire },
-        { "Argent des missions partage", "Shared mission money", g_cfg.shareMoney ? yes : no, g_cfg.shareMoney },
-        { "Un invite mort garde ses armes", "Guests keep weapons when they die", g_cfg.keepWeapons ? yes : no, g_cfg.keepWeapons },
+        { "Argent des missions partag\xE9", "Shared mission money", g_cfg.shareMoney ? yes : no, g_cfg.shareMoney },
+        { "Un invit\xE9 mort garde ses armes", "Guests keep weapons when they die", g_cfg.keepWeapons ? yes : no, g_cfg.keepWeapons },
         { "Pseudos au-dessus des joueurs", "Names above players", g_cfg.showNames ? yes : no, g_cfg.showNames },
-        { "Etoiles de police communes", "Shared wanted level", g_cfg.shareWanted ? yes : no, g_cfg.shareWanted },
-        { "Reapparition pres de l'hote", "Respawn next to the host", g_cfg.respawnAtHost ? yes : no, g_cfg.respawnAtHost },
-        { "Densite de population", "Population density", dens, false },
+        { "\xC9toiles de police communes", "Shared wanted level", g_cfg.shareWanted ? yes : no, g_cfg.shareWanted },
+        { "R\xE9" "apparition pr\xE8s de l'h\xF4te", "Respawn next to the host", g_cfg.respawnAtHost ? yes : no, g_cfg.respawnAtHost },
+        { "Densit\xE9 de population", "Population density", dens, false },
     };
     for (int i = 0; i < 7; i++) {
         Rect(x0 + g_u * 0.5f, y, x1 - g_u * 0.5f, y + bh, C_PANEL);
@@ -739,6 +739,7 @@ static void DrawRtTab(float x0, float y0, float x1, float y1)
         { "Lumi\xE8re trac\xE9" "e", "Ray-traced lighting", &g_cfg.rtGI, NULL, {}, 0, {}, {}, "" },
         { "Force de la lumi\xE8re", "Lighting strength", NULL, &g_cfg.rtGIK, { 25, 50, 75, 100, 150, 200 }, 6, {}, {}, " %" },
         { "Force de l'occlusion", "Occlusion strength", NULL, &g_cfg.rtAOK, { 25, 50, 75, 100, 150 }, 5, {}, {}, " %" },
+        { "Lampes trac\xE9" "es", "Ray-traced lamps", &g_cfg.rtLamps, NULL, {}, 0, {}, {}, "" },
     };
     const int n = (int)(sizeof(rows) / sizeof(rows[0])), perCol = (n + 1) / 2;
     float colW = (x1 - x0 - g_u * 3) / 2, bh = g_u * 4.0f, gap = g_u * 0.5f;
@@ -861,7 +862,7 @@ void PanelDraw()
         }
         TextA(x0 + g_u * 2, y0 + th * 0.5f - LineH(0.75f) * 0.5f, 0.75f, g_modern ? K_PINK : C_LINE, AL_LEFT, "VCCOOP");
         char who[64];
-        _snprintf(who, sizeof(who), "%s%s", g_cfg.playerName, g_cfg.host ? Tr("  -  hote", "  -  host") : LocalAdmin() ? "  -  admin" : "");
+        _snprintf(who, sizeof(who), "%s%s", g_cfg.playerName, g_cfg.host ? Tr("  -  h\xF4te", "  -  host") : LocalAdmin() ? "  -  admin" : "");
         TextA(x0 + g_u * 20, y0 + th * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_DIM, AL_LEFT, who);
         if (g_modern ? Button(x1 - th + g_u * 0.8f, y0 + g_u * 0.8f, x1 - g_u * 0.8f, y0 + th - g_u * 0.8f, "X") : Button(x1 - th, y0, x1, y0 + th, "X")) g_open = false;
 
@@ -894,7 +895,7 @@ void PanelDraw()
         case 5: DrawRtTab(x0, cy0, x1, cy1); break;
         }
         char hint[128];
-        _snprintf(hint, sizeof(hint), French() ? "Echap ou F10 : fermer     %c : tchat" : "Esc or F10: close     %c: chat", g_chatKey);
+        _snprintf(hint, sizeof(hint), French() ? "\xC9" "chap ou F10 : fermer     %c : tchat" : "Esc or F10: close     %c: chat", g_chatKey);
         TextA((x0 + x1) * 0.5f, y1 - g_u * 2.8f, 0.45f, C_DIM, AL_CENTER, hint);
         g_click = false;
     }
