@@ -218,7 +218,7 @@ static ID3D12Resource *g_staging; static BYTE *g_stagingPtr; static UINT64 g_sta
 enum { MAX_INST = 32768 };
 static ID3D12Resource *g_instDescs, *g_instInfo, *g_consts;
 static D3D12_RAYTRACING_INSTANCE_DESC *g_instDescPtr;
-struct InstInfo { uint32_t idxOff, uvOff, posOff, colOff, tex; float alphaRef; uint32_t flags, tint, nrmOff, pad[3]; };   // (rt.hlsl)
+struct InstInfo { uint32_t idxOff, uvOff, posOff, colOff, tex; float alphaRef; uint32_t flags, tint, nrmOff, pad[3]; float prev[12]; };   // (rt.hlsl)
 static InstInfo *g_instInfoPtr;
 static BYTE *g_constsPtr;
 static ID3D12Resource *g_tlas, *g_tlasScratch; static UINT64 g_tlasSize, g_tlasScratchSize;
@@ -277,7 +277,7 @@ static void CreatePipeline()
     hg0.HitGroupExport = L"HgPrimary"; hg0.ClosestHitShaderImport = L"PrimaryHit"; hg0.AnyHitShaderImport = L"PrimaryAny"; hg0.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     hg1.HitGroupExport = L"HgShadow"; hg1.ClosestHitShaderImport = L"ShadowHit"; hg1.AnyHitShaderImport = L"ShadowAny"; hg1.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     hg2.HitGroupExport = L"HgRadiance"; hg2.ClosestHitShaderImport = L"RadianceHit"; hg2.AnyHitShaderImport = L"RadianceAny"; hg2.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
-    D3D12_RAYTRACING_SHADER_CONFIG sc = { 48, 8 };   // (charge la plus grosse : rayon de camera, 48 octets)
+    D3D12_RAYTRACING_SHADER_CONFIG sc = { 60, 8 };   // (charge la plus grosse : rayon de camera, 60 octets)
     D3D12_RAYTRACING_PIPELINE_CONFIG pc = { 2 };
     D3D12_GLOBAL_ROOT_SIGNATURE gr = { g_rootSig };
     D3D12_STATE_SUBOBJECT so[] = {
@@ -535,6 +535,7 @@ static void Render(const RtFrame &f, const RtInstance *inst)
         ii.flags = (alpha ? 1 : 0) | ((s.flags & RT_INST_VEHICLE) ? 2 : 0) | (m.transient ? 0x100 : 0) | (ped ? 0x200 : 0) | (glass ? 0x400 : 0);
         ii.tint = s.tint;
         ii.nrmOff = (uint32_t)m.off[GEO_NRM];
+        memcpy(ii.prev, s.prevTransform, sizeof ii.prev);
         n++;
     }
 

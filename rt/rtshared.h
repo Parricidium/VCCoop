@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define RT_MAGIC 0x31545256u   // "VRT1"
-#define RT_PROTOCOL 5
+#define RT_PROTOCOL 6
 
 enum {
     RT_CMD_OFFSET = 4096,            // commandes d'une image (envois + dessins + camera)
@@ -57,6 +57,7 @@ struct RtTex { uint32_t id, format, width, height; };
 enum { RT_INST_ALPHA = 1, RT_INST_VEHICLE = 2, RT_INST_DYNAMIC = 4, RT_INST_GLASS = 8 };   // verre : vitrines (reflet, ni ombre ni obstacle)
 struct RtInstance {
     float transform[12];   // 3x4, lignes (x' = ligne 0 . (x, y, z, 1))
+    float prevTransform[12];   // la meme a l'image precedente (vehicule, personnage : mouvement pour l'historique)
     uint32_t mesh, tex;    // tex 0 : aucune
     float alphaRef;
     uint32_t flags;

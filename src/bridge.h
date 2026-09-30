@@ -51,6 +51,7 @@ struct RtDraw {
     DWORD tint;          // couleur de la matiere (peinture des voitures)
     bool alphaTest, vehicle, dynamic;
     bool blend;          // dessin en transparence (verre des vitrines si sa texture est translucide)
+    void *entity;        // entite dessinee (vehicule, personnage) : sa matrice de l'image precedente (mouvement)
 };
 // Lampe du jeu pour le ray tracing (lampadaire, neon, phare, explosion).
 struct RtLamp { float x, y, z, range, r, g, b, spot, dx, dy, dz, cone; };

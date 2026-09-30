@@ -318,6 +318,14 @@ static int WriteTexture(uint32_t id, IDirect3DBaseTexture9 *bt)
 
 // ---------------------------------------------------------------- image
 static std::vector<RtInstance> g_inst;
+// Matrice de chaque morceau d'entite (vehicule, personnage) a l'image precedente : l'historique suit leur mouvement.
+struct PartKey {
+    void *entity, *vb, *ib; UINT start, base;
+    bool operator==(const PartKey &o) const { return !memcmp(this, &o, sizeof *this); }
+};
+struct PartKeyHash { size_t operator()(const PartKey &k) const { const BYTE *p = (const BYTE *)&k; size_t h = 2166136261u; for (size_t i = 0; i < sizeof k; i++) h = (h ^ p[i]) * 16777619u; return h; } };
+struct Mat12 { float m[12]; };
+static std::unordered_map<PartKey, Mat12, PartKeyHash> g_prevParts, g_curParts;
 static uint32_t g_frameIndex;
 static int g_statSent, g_statTexSent, g_statDrawn, g_statSkipped, g_statTimeouts, g_statAlpha, g_statAlphaTex, g_statGlass;
 
@@ -426,6 +434,14 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
         RtInstance in;
         const float *w = d.world;   // Direct3D : v' = v * W (lignes) -> 3x4 en colonnes
         for (int r = 0; r < 3; r++) { in.transform[r * 4 + 0] = w[0 * 4 + r]; in.transform[r * 4 + 1] = w[1 * 4 + r]; in.transform[r * 4 + 2] = w[2 * 4 + r]; in.transform[r * 4 + 3] = w[3 * 4 + r]; }
+        memcpy(in.prevTransform, in.transform, sizeof in.transform);
+        if (d.entity && (d.vehicle || d.dynamic)) {
+            PartKey pk = { d.entity, d.vb, d.ib, d.d.start, d.d.baseVertex };
+            auto pv = g_prevParts.find(pk);
+            if (pv != g_prevParts.end()) memcpy(in.prevTransform, pv->second.m, sizeof in.transform);
+            Mat12 cur; memcpy(cur.m, in.transform, sizeof cur.m);
+            g_curParts[pk] = cur;
+        }
         in.mesh = mesh; in.tex = tex;
         in.alphaRef = d.alphaRef;
         in.tint = d.tint; in.pad[0] = in.pad[1] = in.pad[2] = 0;
@@ -437,6 +453,8 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
         g_inst.push_back(in);
     }
 
+    g_prevParts.swap(g_curParts);
+    g_curParts.clear();
     g_limit = RT_CMD_SIZE;
     RtFrame *f = (RtFrame *)Cmd(RT_CMD_FRAME, (uint32_t)(sizeof(RtFrame) + g_inst.size() * sizeof(RtInstance)));
     if (!f) return g_haveResult;

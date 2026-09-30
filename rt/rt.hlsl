@@ -34,6 +34,7 @@ struct InstInfo {
     uint flags;                           // 1 : test alpha, 2 : vehicule, 0x100 : maillage de l'image, 0x200 : personnage, 0x400 : verre
     uint tint;                            // couleur de la matiere (D3DCOLOR)
     uint nrmOff, pad0, pad1, pad2;        // normales des sommets (float3 ; 0,0,0 : aucune)
+    float4 prev0, prev1, prev2;           // matrice objet -> monde a l'image precedente (mouvement)
 };
 
 RaytracingAccelerationStructure gScene : register(t0);
@@ -46,7 +47,8 @@ ByteAddressBuffer gGeo[10] : register(t0, space2);   // 0-4 : indices, uv, posit
 SamplerState gSamp : register(s0);
 
 // n : face, sn : normale lissee ; verre traverse avant la surface : glassT (distance) et glassN.
-struct PrimaryPayload { float t; float3 n; float3 sn; uint flags; float glassT; float3 glassN; };
+// prevP : le meme point de l'objet a l'image precedente (vehicules et personnages bougent : historique sans fantome).
+struct PrimaryPayload { float t; float3 n; float3 sn; uint flags; float glassT; float3 glassN; float3 prevP; };
 struct ShadowPayload { float vis; uint dyn; };             // dyn : l'obstacle est un vehicule ou un personnage
 struct RadiancePayload { float3 color; float t; uint dyn; };
 
@@ -132,6 +134,8 @@ void PrimaryHit(inout PrimaryPayload p, in BuiltInTriangleIntersectionAttributes
     p.n = GeomNormal(ii, t);
     p.sn = SmoothNormal(ii, t, a.barycentrics, p.n);
     p.flags = ii.flags;
+    float4 o = float4(ObjectRayOrigin() + ObjectRayDirection() * RayTCurrent(), 1);
+    p.prevP = float3(dot(ii.prev0, o), dot(ii.prev1, o), dot(ii.prev2, o));
 }
 [shader("anyhit")]
 void PrimaryAny(inout PrimaryPayload p, in BuiltInTriangleIntersectionAttributes a) {
@@ -215,7 +219,7 @@ RayDesc CameraRay(uint2 px, uint W, uint H) {
 }
 PrimaryPayload TracePrimary(RayDesc r) {
     PrimaryPayload pp;
-    pp.t = -1; pp.n = 0; pp.sn = 0; pp.flags = 0; pp.glassT = 1e30; pp.glassN = 0;
+    pp.t = -1; pp.n = 0; pp.sn = 0; pp.flags = 0; pp.glassT = 1e30; pp.glassN = 0; pp.prevP = 0;
     TraceRay(gScene, RAY_FLAG_NONE, 0xFF, 0, 3, 0, r, pp);
     return pp;
 }
@@ -321,7 +325,7 @@ void RayGen() {
     // immobile ; la ou un objet mobile fait de l'ombre (ou en faisait il y a peu : age), historique tres court.
     uint count = 1, age = dyn ? 8 : 0;
     if (gFrame.ambient.w > 0.5) {
-        float4 pc = mul(float4(P, 1), gFrame.prevViewProj);
+        float4 pc = mul(float4(pp.prevP, 1), gFrame.prevViewProj);   // (ou etait ce point de l'objet)
         float2 puv = float2(pc.x / pc.w * 0.5 + 0.5, 0.5 - pc.y / pc.w * 0.5);
         if (pc.w > 0.05 && all(puv > 0) && all(puv < 1)) {
             uint2 q = min((uint2)(puv * float2(W, H)), uint2(W - 1, H - 1));
@@ -332,7 +336,7 @@ void RayGen() {
                 uint4 h2 = gHistIn.Load4(hi + 16);
                 float k = 1.0 / (hc + 1), hs = gFrame.params.w;   // lissage choisi (plus petit : plus long)
                 if (!dyn && hage > 0) age = hage - 1;
-                bool moving = ped || vehicle || age > 0;
+                bool moving = age > 0;   // (vehicules et personnages : suivis par leur mouvement, historique normal)
                 vis = lerp(f16tof32(h.x), vis, max(k, (moving ? 0.5 : 0.25) * hs));   // objets qui bougent : peu d'historique
                 ao = lerp(f16tof32(h.x >> 16), ao, max(k, (moving ? 0.25 : 0.08) * hs));
                 gi = lerp(float3(f16tof32(h.z), f16tof32(h.z >> 16), f16tof32(h.w)), gi, max(k, (moving ? 0.2 : 0.04) * hs));
