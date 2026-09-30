@@ -750,6 +750,7 @@ struct Opt {
     std::vector<const wchar_t *> labFr, labEn;   // vide : la valeur + suffixe
     const wchar_t *suffix; int who;
     const wchar_t *dFr, *dEn;
+    int rend;   // 0 : tout moteur ; 1 : Direct3D 9 sans ray tracing (cascades) ; 2 : ray tracing seulement (Rendu=12)
 };
 static std::vector<Opt> g_opts;
 static int g_tab = -1, g_optHot = -1, g_optPart = 0, g_tabHot = -1;
@@ -763,19 +764,20 @@ static std::vector<int> Range(int a, int b, int step) { std::vector<int> v; for 
 static void BuildOptions()
 {
     auto T2 = [](int tab, const char *key, int def, const wchar_t *fr, const wchar_t *en, const wchar_t *dFr, const wchar_t *dEn, int who = W_ALL) {
-        Opt o; o.tab = tab; o.key = key; o.def = def; o.kind = O_TOGGLE; o.vals = { 0, 1 }; o.fr = fr; o.en = en; o.suffix = L""; o.who = who; o.dFr = dFr; o.dEn = dEn;
+        Opt o; o.tab = tab; o.key = key; o.def = def; o.kind = O_TOGGLE; o.vals = { 0, 1 }; o.fr = fr; o.en = en; o.suffix = L""; o.who = who; o.dFr = dFr; o.dEn = dEn; o.rend = 0;
         g_opts.push_back(o);
     };
     auto C = [](int tab, const char *key, int def, std::vector<int> vals, const wchar_t *fr, const wchar_t *en, std::vector<const wchar_t *> lf,
                 std::vector<const wchar_t *> le, const wchar_t *suffix, const wchar_t *dFr, const wchar_t *dEn, int who = W_ALL) {
         Opt o; o.tab = tab; o.key = key; o.def = def; o.kind = O_CHOICE; o.vals = vals; o.fr = fr; o.en = en; o.labFr = lf; o.labEn = le;
-        o.suffix = suffix; o.who = who; o.dFr = dFr; o.dEn = dEn;
+        o.suffix = suffix; o.who = who; o.dFr = dFr; o.dEn = dEn; o.rend = 0;
         g_opts.push_back(o);
     };
     // VIDEO
-    C(TAB_VIDEO, "Rendu", 9, { 9, 8 }, L"Moteur de rendu", L"Renderer", { L"Direct3D 9", L"Direct3D 8" }, { L"Direct3D 9", L"Direct3D 8" }, L"",
-      L"Direct3D 9 : rendu moderne (ombres, lumi\u00E8res, effets). Direct3D 8 : rendu d'origine, en cas de souci.",
-      L"Direct3D 9: modern rendering (shadows, lights, effects). Direct3D 8: original rendering, if something goes wrong.");
+    C(TAB_VIDEO, "Rendu", 9, { 12, 9, 8 }, L"Moteur de rendu", L"Renderer", { L"Ray tracing (DXR)", L"Direct3D 9", L"Direct3D 8" },
+      { L"Ray tracing (DXR)", L"Direct3D 9", L"Direct3D 8" }, L"",
+      L"Ray tracing : rendu moderne + vrais rayons (RTX 20, RX 6000 et plus r\u00E9centes). Direct3D 9 : rendu moderne. Direct3D 8 : d'origine.",
+      L"Ray tracing: modern rendering + real rays (RTX 20, RX 6000 and newer). Direct3D 9: modern rendering. Direct3D 8: original.");
     C(TAB_VIDEO, "Fenetre", 1, { 2, 1, 0 }, L"Affichage", L"Display", { L"Plein \u00E9cran fen\u00EAtr\u00E9", L"Fen\u00EAtre", L"Plein \u00E9cran" },
       { L"Borderless", L"Windowed", L"Fullscreen" }, L"",
       L"Plein \u00E9cran fen\u00EAtr\u00E9 (conseill\u00E9) : \u00E0 la r\u00E9solution du bureau. Fen\u00EAtre : 1280x720.",
@@ -806,6 +808,17 @@ static void BuildOptions()
        L"Buildings, palm trees, vehicles and characters cast shadows that follow the sun.");
     C(TAB_RENDER, "OmbresResolution", 4096, { 2048, 4096, 8192 }, L"Qualit\u00E9 des ombres", L"Shadow quality", { L"Moyenne", L"Haute", L"Ultra" },
       { L"Medium", L"High", L"Ultra" }, L"", L"Ultra : carte graphique r\u00E9cente.", L"Ultra: recent graphics card.");
+    g_opts.back().rend = 1;   // (ray tracing : pas de cartes d'ombre)
+    // RAY TRACING (Rendu=12) : dans l'onglet RENDU, seulement avec ce moteur
+    T2(TAB_RENDER, "RTOmbres", 1, L"Ombres trac\u00E9es", L"Ray-traced shadows", L"Ombres du soleil et de la lune par de vrais rayons : nettes au pied des objets, douces au loin, jusqu'\u00E0 600 m.",
+       L"Sun and moon shadows from real rays: sharp at the base of objects, soft further away, up to 600 m.");
+    g_opts.back().rend = 2;
+    C(TAB_RENDER, "RTRayons", 4, { 1, 2, 4, 8, 16 }, L"Rayons par pixel", L"Rays per pixel", {}, {}, L"",
+      L"Plus de rayons : ombres plus lisses, carte plus sollicit\u00E9e.", L"More rays: smoother shadows, more GPU work.");
+    g_opts.back().rend = 2;
+    C(TAB_RENDER, "RTResolution", 50, { 50, 100 }, L"R\u00E9solution des rayons", L"Ray resolution", { L"Demie", L"Pleine" }, { L"Half", L"Full" }, L"",
+      L"Pleine : plus fin, quatre fois plus de rayons.", L"Full: finer, four times as many rays.");
+    g_opts.back().rend = 2;
     T2(TAB_RENDER, "EauModerne", 1, L"Eau moderne", L"Modern water", L"Turquoise selon la profondeur, fond visible, vagues et \u00E9cume sur les rives.",
        L"Turquoise by depth, visible sea floor, waves and foam on the shores.");
     T2(TAB_RENDER, "RefletsEau", 1, L"Reflets sur l'eau", L"Water reflections", L"Quais, bateaux, palmiers et immeubles se refl\u00E8tent dans l'eau.",
@@ -855,7 +868,25 @@ static void BuildOptions()
 static std::string GameIni() { return Narrow(g_gameDir + L"vccoop.ini"); }
 static int OptGet(const Opt &o) { return GetPrivateProfileIntA("VCCoop", o.key, o.def, GameIni().c_str()); }
 static void OptSet(const Opt &o, int v) { char b[16]; wsprintfA(b, "%d", v); WritePrivateProfileStringA("VCCoop", o.key, b, GameIni().c_str()); }
-static bool Modern() { return g_gameDir.empty() || GetPrivateProfileIntA("VCCoop", "Rendu", 9, GameIni().c_str()) == 9; }
+static int RenderVal() { return g_gameDir.empty() ? 9 : GetPrivateProfileIntA("VCCoop", "Rendu", 9, GameIni().c_str()); }
+static bool Modern() { int r = RenderVal(); return r == 9 || r == 12; }
+// Carte capable de ray tracing (DXR) : VCCoop\vcrt64.exe --probe au demarrage (-1 : pas encore su, 0 : non, 1 : oui).
+static volatile int g_rtProbe = -1;
+static DWORD WINAPI RtProbeThread(void *)
+{
+    std::wstring exe = g_gameDir + L"VCCoop\\vcrt64.exe";
+    if (!FileExists(exe)) { g_rtProbe = 0; return 0; }
+    std::wstring cmd = L"\"" + exe + L"\" --probe";
+    STARTUPINFOW si = { sizeof si }; PROCESS_INFORMATION pi;
+    if (!CreateProcessW(NULL, &cmd[0], NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) { g_rtProbe = 0; return 0; }
+    DWORD code = 1;
+    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    else TerminateProcess(pi.hProcess, 1);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    g_rtProbe = code == 0 ? 1 : 0;
+    return 0;
+}
+static bool OptShown(const Opt &o) { return !o.rend || (o.rend == 2) == (RenderVal() == 12); }
 static bool TabVisible(int t)
 {
     if (t == TAB_LOBBY) return g_lobby != LB_NONE;
@@ -893,7 +924,7 @@ static void LayoutTabs()
     }
     if (g_tab >= 0 && !TabVisible(g_tab)) g_tab = -1;
 }
-static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t) r.push_back(i); return r; }
+static std::vector<int> TabRows(int t) { std::vector<int> r; for (int i = 0; i < (int)g_opts.size(); i++) if (g_opts[i].tab == t && OptShown(g_opts[i])) r.push_back(i); return r; }
 static float MaxScroll(int t) { return t == TAB_LOBBY ? 0.0f : t == TAB_SKIN ? SkinMaxScroll() : t == TAB_MODS ? ModsMaxScroll() : t == TAB_NOTES ? NotesMaxScroll() : max(0.0f, TabRows(t).size() * kRowH - kOptList.Height); }
 
 static int ValueIndex(const Opt &o, int v)
@@ -906,6 +937,7 @@ static std::wstring ValueText(const Opt &o, int v)
 {
     int i = ValueIndex(o, v);
     const std::vector<const wchar_t *> &lab = g_fr ? o.labFr : o.labEn;
+    if (!strcmp(o.key, "Rendu") && v == 12 && g_rtProbe == 0) return g_fr ? L"Ray tracing (carte incompatible)" : L"Ray tracing (unsupported GPU)";
     if (!lab.empty()) return lab[i];
     wchar_t b[32];
     swprintf_s(b, L"%d%s", v, (!wcscmp(o.suffix, L" i/s") && !g_fr) ? L" fps" : o.suffix);
@@ -919,8 +951,9 @@ static void OptStep(int idx, int dir)
     int i = ValueIndex(o, v);
     if (o.vals[i] != v && dir > 0) i--;   // hors liste : un cran vers le haut = la valeur de la liste juste au-dessus
     i = (i + dir + (int)o.vals.size()) % (int)o.vals.size();
+    if (!strcmp(o.key, "Rendu") && o.vals[i] == 12 && g_rtProbe == 0) i = (i + dir + (int)o.vals.size()) % (int)o.vals.size();   // carte sans DXR
     OptSet(o, o.vals[i]);
-    if (!strcmp(o.key, "Rendu")) LayoutTabs();
+    if (!strcmp(o.key, "Rendu")) { LayoutTabs(); g_scroll[TAB_RENDER] = 0; }
 }
 
 static float MeasureW(Graphics &g, const std::wstring &s, float px, int style)
@@ -3295,6 +3328,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             g_localVer = L"2026.09.29m";
         }
         else if (st == L"mods") { g_tab = TAB_MODS; ModsScan(); g_prevYaw = 0.6f; }
+        else if (st == L"rendu") { g_rtProbe = 1; g_tab = TAB_RENDER; LayoutTabs(); g_optHot = TabRows(TAB_RENDER).back(); }
         else if (st == L"notes") { NotesFetch(); g_tab = TAB_NOTES; LayoutTabs(); }
         else if (st == L"tenue") { g_tab = TAB_SKIN; g_skinSel = 0; g_prevYaw = 0.35f; g_tileHot = 4; }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }
@@ -3372,6 +3406,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
     if (g_exeKind == EXE_OK) StartUpdate();
     else if (g_exeKind != EXE_MISSING && !test) BadExeMessage(g_exeKind);
     { HANDLE nt = CreateThread(NULL, 0, NotesThread, NULL, 0, NULL); if (nt) CloseHandle(nt); }
+    if (!g_gameDir.empty()) { HANDLE pt = CreateThread(NULL, 0, RtProbeThread, NULL, 0, NULL); if (pt) CloseHandle(pt); }
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) { TranslateMessage(&msg); DispatchMessageW(&msg); }

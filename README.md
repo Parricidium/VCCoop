@@ -238,6 +238,14 @@ their nickname above their head (`AfficherPseudos=0` to hide).
 - **Modern renderer**: VCCoop contains its own Direct3D 8 → Direct3D 9 bridge (no third-party wrapper, nothing
   to install). The game draws exactly as before, and VCCoop then works in Direct3D 9 with HLSL shaders
   (compiled at launch by Windows' own `d3dcompiler_47.dll`). `Rendu=8` goes back to the original Direct3D 8.
+- **Ray tracing** (`Rendu=12`, launcher: *Renderer: Ray tracing (DXR)*): the modern renderer plus real
+  hardware rays (DirectX Raytracing, RTX 20 / RX 6000 and newer). Graphics drivers refuse DXR to 32-bit
+  programs like the game, so the rays are traced by `VCCoop\vcrt64.exe`, a small 64-bit Direct3D 12 program
+  started and stopped with the game: VCCoop sends it the meshes and textures the game draws (once, as long as
+  the game keeps them) then, every frame, the list of draws and the camera; it sends back the traced image.
+  **Ray-traced shadows** (`RTOmbres`) replace the cascades: sun and moon, soft penumbra, foliage cut out by
+  its texture, up to 600 m; `RTRayons` (rays per pixel, 1 to 16) and `RTResolution` (50 = half, 100 = full).
+  Without a DXR card the launcher greys the choice out, and the game falls back to Direct3D 9 on its own.
 - **Sun shadows** (modern renderer): 4 cascades (sharp up close, up to ~220 m) rendered from the game's
   own sun (`CTimeCycle`) in the same frame, a soft 25-tap filter, a single full-screen pass (no more
   double-drawn geometry flickering), strength from the game's time cycle (hour and weather) and its fog.
@@ -547,6 +555,15 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
 - **Rendu moderne** : VCCoop contient son propre pont Direct3D 8 → Direct3D 9 (aucun wrapper tiers, rien à
   installer). Le jeu dessine exactement comme avant, puis VCCoop travaille en Direct3D 9 avec des shaders HLSL
   (compilés au lancement par `d3dcompiler_47.dll`, fourni avec Windows). `Rendu=8` revient au Direct3D 8 d'origine.
+- **Ray tracing** (`Rendu=12`, lanceur : *Moteur de rendu : Ray tracing (DXR)*) : le rendu moderne plus de vrais
+  rayons matériels (DirectX Raytracing, RTX 20 / RX 6000 et plus récentes). Les pilotes refusent DXR aux
+  programmes 32 bits comme le jeu : les rayons sont tracés par `VCCoop\vcrt64.exe`, un petit programme
+  Direct3D 12 64 bits lancé et arrêté avec le jeu. VCCoop lui envoie les maillages et les textures que le jeu
+  dessine (une fois, tant que le jeu les garde) puis, à chaque image, la liste des dessins et la caméra ; il
+  renvoie l'image tracée. Les **ombres tracées** (`RTOmbres`) remplacent les cascades : soleil et lune, pénombre
+  douce, feuillages découpés selon leur texture, jusqu'à 600 m ; `RTRayons` (rayons par pixel, 1 à 16) et
+  `RTResolution` (50 = demie, 100 = pleine). Sans carte DXR, le lanceur grise le choix et le jeu repasse seul en
+  Direct3D 9.
 - **Ombres du soleil** (rendu moderne) : 4 cascades (nettes de près, jusqu'à ~220 m) calculées depuis le
   soleil du jeu (`CTimeCycle`) dans la même image, filtre doux à 25 échantillons, une seule passe plein écran
   (plus de doubles dessins qui clignotent), intensité selon le cycle du jour du jeu (heure et météo) et son

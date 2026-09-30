@@ -49,7 +49,9 @@ LAUNCHER
 - The launcher stays on screen until the game window shows up.
 - VIDEO / RENDERING / EFFECTS / CO-OP tabs: the vccoop.ini settings (the
   same as the game's COOP menu), applied the next time the game starts.
-  RENDERING and EFFECTS only show with the Direct3D 9 renderer. Settings
+  RENDERING and EFFECTS only show with the Direct3D 9 or Ray tracing
+  renderer. Ray tracing (DXR): real rays on the graphics card (RTX 20,
+  RX 6000 and newer), traced by VCCoop\vcrt64.exe; greyed out otherwise. Settings
   tagged HOST count for whoever hosts, GUEST for whoever joins.
 - Language: French when Windows is in French, English otherwise. To force
   it: Langue=fr or Langue=en in the [Lanceur] section of vccoop-launcher.ini.

@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.30"
+#define VCCOOP_VERSION "2026.09.30a"
 struct Config {
     bool windowed;
     bool borderless;
@@ -54,7 +54,11 @@ struct Config {
     bool carReflections;   // RefletsVoitures=1 : la carrosserie reflete la rue, les neons et le ciel
     bool indirectLight;    // LumiereIndirecte=1 : les surfaces eclairees teintent leurs voisines (facade rose -> trottoir)          // Brume=1 : la ville se fond au loin dans une brume qui suit l'heure    // LampadairesEclairent=1 : reverberes, neons et enseignes eclairent vraiment (sans leur tache peinte)
     bool dynLights;     // LumieresDynamiques=1 (rendu moderne) : lampadaires, phares, explosions eclairent par pixel
-    int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine
+    int renderer;       // Rendu=9 : Direct3D 9 par notre pont (rendu moderne, gfx9.cpp) ; 8 : Direct3D 8 d'origine ;
+                        // 12 : Direct3D 9 + ray tracing materiel (vcrt64.exe, Direct3D 12 + DXR, rt.cpp)
+    bool rtShadows;     // RTOmbres=1 (Rendu=12) : ombres du soleil et de la lune tracees (remplacent les cascades)
+    int rtRays;         // RTRayons=4 : rayons d'ombre par pixel (1 a 16)
+    int rtScale;        // RTResolution=50 : image tracee en % de l'ecran (50 ou 100)
     int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)
     bool fpsView;       // VuePremierePersonne=1 : la touche ToucheVue passe en vue depuis la tete de Tommy
     int fpsKey;         // ToucheVue=F6 : code de touche Windows (F1..F12, ou une lettre)
@@ -72,6 +76,8 @@ struct Config {
     int testModel;      // test : modele de la voiture de l'autotest "porte" (TestModele)  // instances de test : "passer" / "marche" (pilote la manette 0)    // diagnostic : scripts actifs dans le journal     // instances de test : nouvelle partie directement
 };
 extern Config g_cfg;
+// Rendu moderne (pont Direct3D 9, gfx9.cpp) : Rendu=9, et Rendu=12 qui y ajoute le ray tracing.
+inline bool ModernRenderer() { return g_cfg.renderer == 9 || g_cfg.renderer == 12; }
 
 // patches.cpp
 void InstallGamePatches();

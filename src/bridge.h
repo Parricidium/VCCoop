@@ -33,3 +33,29 @@ extern bool g_bridgeCasterOnly;
 // dans l'image, apres que le jeu a pu reecrire le tampon).
 const BYTE *BridgeVertexMirror(struct IDirect3DVertexBuffer9 *vb);
 const BYTE *BridgeIndexMirror(struct IDirect3DIndexBuffer9 *ib);
+
+// --- Ray tracing materiel (Rendu=12, rt.cpp) : vcrt64.exe (64 bits, Direct3D 12 + DXR) trace les rayons ---
+// Un dessin note par gfx9.cpp. vbData / ibData : sommets / indices en memoire (tampons reecrits a chaque image ;
+// sinon lus dans le tampon du jeu une fois, gardes chez vcrt64 tant que le tampon vit).
+struct RtDraw {
+    struct IDirect3DVertexBuffer9 *vb;
+    struct IDirect3DIndexBuffer9 *ib;
+    struct IDirect3DBaseTexture9 *tex;
+    const BYTE *vbData;
+    const WORD *ibData;
+    UINT stride;
+    DWORD fvf;
+    GfxDraw d;
+    const float *world;
+    float alphaRef;
+    bool alphaTest, vehicle, dynamic;
+};
+bool RtHelperPresent();       // VCCoop\vcrt64.exe present
+void RtStart();               // Rendu=12 : lance vcrt64.exe (a la creation du peripherique)
+bool RtReady();               // vcrt64.exe pret (carte DXR)
+void RtBeforeReset();
+void RtForgetResource(void *real);   // tampon ou texture Direct3D 9 libere ou reecrit (bridge.cpp)
+// Envoie l'image ; vrai si une image tracee est disponible (celle-ci, ou la precedente si vcrt64 est en retard).
+bool RtTrace(const RtDraw *draws, int count, const float *view, const float *proj, const float *sun, float sunAngle, float maxDist, UINT outW, UINT outH);
+struct IDirect3DTexture9 *RtResult();   // x = visibilite du soleil, y = profondeur (m) ; demi-flottants
+void RtResultSize(float *w, float *h);

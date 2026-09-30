@@ -9,3 +9,4 @@ dist/out/
 
 # Captures et images des tests
 run/*.png
+rt/rt_dxil.h

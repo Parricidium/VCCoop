@@ -13,6 +13,7 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item "$root\build\dinput8.dll" $stage
 Copy-Item "$root\build\VCCoop.exe" $stage
 Copy-Item "$PSScriptRoot\files\*" $stage -Recurse
+Copy-Item "$root\build\vcrt64.exe" "$stage\VCCoop\"   # ray tracing (Rendu=12) : 64 bits, Direct3D 12 + DXR
 Set-Content "$stage\VCCoop\version.txt" $Version -NoNewline -Encoding ASCII   # lue par le lanceur
 
 $zip = "$PSScriptRoot\out\VCCoop-$Version.zip"
