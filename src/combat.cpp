@@ -594,8 +594,31 @@ bool HoldWeapon(void *ped, int weapon)
     return true;
 }
 
+// Coup d'arme blanche (ou de poing) sur une voiture : CWeapon::FireMelee appelle CAutomobile::VehicleDamage (0x59B550,
+// appels 0x5D3F8B tronconneuse et 0x5D4007 les autres), qui ne fait rien sur une voiture "a l'abri des chocs"
+// (CPhysical +0x53 bit 0x08) ni, si elle n'est abimable que par le joueur (bit 0x20), quand m_pDamageEntity (+0x108)
+// n'est pas lui. Nos copies ont le bit 0x08 (leurs chocs sont calcules chez le proprietaire) : les coups des invites
+// sur la voiture du jure de "Jury Fury" ne l'abimaient pas (JD, 30/09, 3 coups comptes en toute une mission). Le
+// temps de ce seul appel, la copie est abimable par nous ; la perte de sante part chez le proprietaire (vehicles.cpp).
+typedef void(__fastcall *VehicleDamage_t)(void *car, void *edx, float impulse, uint32_t piece);
+static void __fastcall h_MeleeVehicleDamage(void *car, void *edx, float impulse, uint32_t piece)
+{
+    uint8_t &proofs = Field<uint8_t>(car, 0x53);
+    void *&damager = Field<void *>(car, 0x108);
+    bool copy = NetVehicleIsCopy(car);
+    uint8_t oldProofs = proofs;
+    void *oldDamager = damager;
+    if (copy) { proofs &= ~0x08; damager = FindPlayerPed(); }
+    ((VehicleDamage_t)0x59B550)(car, edx, impulse, piece);
+    if (copy) { proofs = oldProofs; damager = oldDamager; }
+}
+
 void InstallCombatHooks()
 {
+    static const uintptr_t meleeCalls[] = { 0x5D3F8B, 0x5D4007 };
+    for (uintptr_t at : meleeCalls)
+        if (*(uint8_t *)at == 0xE8 && *(int32_t *)(at + 1) == (int32_t)(0x59B550 - (at + 5))) PatchCall(at, (void *)h_MeleeVehicleDamage);
+        else Log("combat : appel de VehicleDamage inattendu en %06X, coups sur les copies non transmis", (unsigned)at);
     static const uint8_t hitPro[] = { 0x53, 0x56, 0x57, 0x55, 0x89, 0xCD, 0x83, 0xEC, 0x60 };
     static const uint8_t defendPro[] = { 0x53, 0x56, 0x55, 0x89, 0xCD, 0x83, 0xEC, 0x50 };
     static const uint8_t fallPro[] = { 0x53, 0x56, 0x57, 0x55, 0x89, 0xCD, 0x83, 0xEC, 0x10 };

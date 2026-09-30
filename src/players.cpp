@@ -173,12 +173,27 @@ int RegularPedModel(const char *name)
 }
 
 // Comme Undress + Dress, mais vers un modele normal (deja charge).
+// Groupe de demarche du nouveau modele incomplet chez nous (animation absente de ped.ifp, souvent modifie par un
+// pack) : on garde l'ancien. Sinon la conduite du joueur plantait en 0x405AC5 des le premier pas (3e joueur de JD,
+// 30/09, tenue WFYG2 remise : "Unhandled exception c0000005 at 00405ac5").
+static void KeepWalkableGroup(void *ped, int previous, int model)
+{
+    int &group = Field<int>(ped, 0x1F4);
+    if (WalkAnimsAvailable(group)) return;
+    Log("tenues : demarche %d du modele %d (%s) incomplete ici, on garde la %d", group, model, ModelName(model), previous);
+    if (WalkAnimsAvailable(previous)) group = previous;
+    else for (int g = 0; g < 8; g++) if (WalkAnimsAvailable(g)) { group = g; break; }
+    Field<int>(ped, 0x250) = -1;   // SetMoveAnim refond la marche avec ce groupe
+}
+
 void SetPedModel(void *ped, int model)
 {
+    int previous = Field<int>(ped, 0x1F4);
     ((void(__thiscall *)(void *))(*(void ***)ped)[6])(ped);   // DeleteRwObject (libere l'ancien modele)
     WorldRemove(ped);
     ModelIndex(ped) = (short)model;
     Dress(ped);                                                // SetModelIndex(model), etat remis, WorldAdd
+    KeepWalkableGroup(ped, previous, model);
 }
 
 // Change le modele d'un personnage sans le retirer du jeu (le pantin d'un joueur qui change de tenue avec F7 : avant
@@ -196,8 +211,10 @@ bool RedressPed(void *ped, int model, const char *special)
         if (!HasModelLoaded(model)) { RequestSpecialModel(model, "player", 1 | 8); LoadAllRequestedModels(); }
         if (!HasModelLoaded(model)) return false;
     }
+    int previous = Field<int>(ped, 0x1F4);
     ModelIndex(ped) = (short)model;
     Dress(ped);   // SetModelIndex(model) (squelette, animation de repos, groupe de demarche), etat remis, WorldAdd
+    KeepWalkableGroup(ped, previous, model);
     return true;
 }
 
