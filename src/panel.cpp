@@ -674,6 +674,7 @@ static void DrawHostTab(float x0, float y0, float x1, float y1)
 
 // Ray tracing (Rendu=12) : reglages appliques tout de suite (vcrt64.exe les recoit a l'image suivante) et enregistres
 // dans vccoop.ini (memes cles que l'onglet RAY TRACING du lanceur). Deux colonnes : libelle, [-] valeur.
+static int g_testClickRow = -1;   // TestMenuJeu=4 : clic simule sur la valeur de cette ligne
 static void DrawRtTab(float x0, float y0, float x1, float y1)
 {
     bool fr = French();
@@ -707,6 +708,7 @@ static void DrawRtTab(float x0, float y0, float x1, float y1)
         TextA(cx0 + g_u, y + bh * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_TEXT, AL_LEFT, fr ? r.fr : r.en);
         float vw = colW * 0.42f, vx1 = cx1 - g_u * 0.5f, vx0 = vx1 - vw, by0 = y + g_u * 0.35f, by1 = y + bh - g_u * 0.35f;
         char val[32];
+        if (g_testClickRow == i) { g_testClickRow = -1; g_mx = (vx0 + vx1) * 0.5f; g_my = (by0 + by1) * 0.5f; g_click = true; Log("test menu : clic sur %s", r.fr); }
         if (r.b) {
             if (Button(vx0, by0, vx1, by1, fr ? onOffFr[*r.b] : onOffEn[*r.b], *r.b)) { *r.b = !*r.b; changed = true; }
             continue;
@@ -716,10 +718,16 @@ static void DrawRtTab(float x0, float y0, float x1, float y1)
         if (r.labFr[0]) _snprintf(val, sizeof(val), "%s", fr ? r.labFr[k] : r.labEn[k]);
         else _snprintf(val, sizeof(val), "%d%s", r.vals[k], r.suffix);
         float aw = bh * 0.9f;
-        if (Button(vx0 - aw - g_u * 0.4f, by0, vx0 - g_u * 0.4f, by1, "-", false, k > 0))   // (pas de "<" dans la police du jeu) { *r.v = r.vals[k - 1]; changed = true; }
+        // (pas de "<" dans la police du jeu : "-")
+        if (Button(vx0 - aw - g_u * 0.4f, by0, vx0 - g_u * 0.4f, by1, "-", false, k > 0)) { *r.v = r.vals[k - 1]; changed = true; }
         if (Button(vx0, by0, vx1, by1, val, false)) { *r.v = r.vals[(k + 1) % r.n]; changed = true; }
     }
-    if (changed) MenuSaveIni();
+    if (changed) {
+        MenuSaveIni();
+        Log("ray tracing : reglages ombres %d rayons %d douceur %d portee %d resolution %d lissage %d occlusion %d/%d reflets %d/%d sol %d lumiere %d/%d",
+            g_cfg.rtShadows, g_cfg.rtRays, g_cfg.rtSoft, g_cfg.rtDist, g_cfg.rtScale, g_cfg.rtSmooth, g_cfg.rtAO, g_cfg.rtAOK,
+            g_cfg.rtRefl, g_cfg.rtReflK, g_cfg.rtGloss, g_cfg.rtGI, g_cfg.rtGIK);
+    }
 }
 
 static void DrawChat()
@@ -897,6 +905,11 @@ static void TestPanel(bool inGame)
         uint32_t c = t % 25000;
         if (c > 5000 && c < 15000 && !g_typing) { g_typing = true; lstrcpyA(g_input, "J'arrive, attends-moi"); g_inputLen = lstrlenA(g_input); Log("test menu : tchat"); }
         else if (c >= 15000 && g_typing) EndTyping(true);
+        return;
+    }
+    if (mode == 4) {   // TestMenuJeu=4 : onglet RAY TRACING, clics simules sur quelques valeurs
+        if (step == 0 && t > 3000) { step = 1; g_open = true; g_tab = 5; Log("test menu : ray tracing (clics)"); }
+        else if (step >= 1 && step <= 6 && t > 3000 + step * 2500) { static const int rows[6] = { 2, 2, 9, 0, 4, 11 }; g_testClickRow = rows[step - 1]; step++; }
         return;
     }
     if (mode == 3) {   // TestMenuJeu=3 : onglet RAY TRACING ouvert, sols en miroirs au bout de 10 s (reglage en direct)
