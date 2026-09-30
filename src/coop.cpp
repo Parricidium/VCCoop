@@ -361,7 +361,7 @@ static void UpdatePuppet(Puppet &pp, const NetPlayer &np)
     (void)np;
     // Sa demarche : le groupe d'animation de son Tommy (player, player2armed, playercsaw...), pas celui du passant
     // dont le pantin porte le modele.
-    if (s.animGroup && Field<int>(ped, 0x1F4) != s.animGroup && AnimAvailable(s.animGroup, 0)) {
+    if (s.animGroup && Field<int>(ped, 0x1F4) != s.animGroup && WalkAnimsAvailable(s.animGroup)) {
         Field<int>(ped, 0x1F4) = s.animGroup;
         Field<int>(ped, 0x250) = -1;   // SetMoveAnim refond la marche avec le nouveau groupe
     }

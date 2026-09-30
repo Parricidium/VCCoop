@@ -157,6 +157,14 @@ inline bool AnimAvailable(int group, int anim)
     return *(void **)(assocs + (anim - first) * 0x3C + 0x14) != 0;
 }
 
+// Demarche complete : marche, course, sprint, repos, depart (0-4), que la conduite du joueur ajoute sans verifier
+// (CAnimManager::AddAnimation 0x4058B0 -> hierarchie nulle -> plantage 0x405AC5).
+inline bool WalkAnimsAvailable(int group)
+{
+    for (int a = 0; a <= 4; a++) if (!AnimAvailable(group, a)) return false;
+    return true;
+}
+
 // --- Chargement des modeles ---
 inline void RequestModel(int model, int flags) { ((void(__cdecl *)(int, int))0x40E310)(model, flags); }
 inline bool HasModelLoaded(int model) { return *(uint8_t *)(0x94DDD8 + model * 20) == 1; }
