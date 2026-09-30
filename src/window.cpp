@@ -157,7 +157,12 @@ static void LimitFrameRate()
     } else since = now;
     last = now;
     if ((now.QuadPart - since.QuadPart) > freq.QuadPart * 10) {
-        Log("images : %.1f/s, ecart %.1f a %.1f ms", count * (double)freq.QuadPart / (now.QuadPart - since.QuadPart), minMs, maxMs);
+        // Memoire : adresses utilisees par le jeu (2 Go au plus pour un programme 32 bits, 4 Go s'il est marque "grandes
+        // adresses") ; un plantage pres de la limite se lit ici (JD, 30/09 : fermetures en coop, pas en solo).
+        MEMORYSTATUSEX ms = { sizeof(ms) };
+        GlobalMemoryStatusEx(&ms);
+        unsigned usedMb = (unsigned)((ms.ullTotalVirtual - ms.ullAvailVirtual) >> 20), totalMb = (unsigned)(ms.ullTotalVirtual >> 20);
+        Log("images : %.1f/s, ecart %.1f a %.1f ms ; memoire %u Mo sur %u", count * (double)freq.QuadPart / (now.QuadPart - since.QuadPart), minMs, maxMs, usedMb, totalMb);
         since = now; count = 0; minMs = 1e9; maxMs = 0;
     }
 }
