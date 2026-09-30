@@ -10,6 +10,7 @@
 #include "net.h"
 #include "game.h"
 #include "panel.h"
+#include "ui9.h"
 #include "players.h"
 #include "mirror.h"
 #include "vehicles.h"
@@ -432,15 +433,31 @@ bool PanelWndProc(UINT msg, WPARAM wp, LPARAM lp)
 }
 
 // ======================================================================= Dessin
+// Menu moderne (ui9.cpp : verre, formes arrondies, Segoe UI) quand le pont Direct3D 9 est la ; sinon rectangles et
+// police du jeu.
+static bool g_modern;
+static float g_u;   // unite : hauteur d'ecran / 100
+static const uint32_t K_PINK = 0xFF4F8BFF, K_ORANGE = 0xFF8A5BFF;
+
 static void Poly(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3, uint32_t rgba)
 {
     uint8_t c[4] = { (uint8_t)(rgba >> 24), (uint8_t)(rgba >> 16), (uint8_t)(rgba >> 8), (uint8_t)rgba };
     ((void(__cdecl *)(float, float, float, float, float, float, float, float, const uint8_t *))0x578520)(x0, y0, x1, y1, x2, y2, x3, y3, c);
 }
 // Rectangle plein : CSprite2d::Draw2DPolygon (haut gauche, haut droit, bas gauche, bas droit).
-static void Rect(float x0, float y0, float x1, float y1, uint32_t rgba) { Poly(x0, y0, x1, y0, x0, y1, x1, y1, rgba); }
+static void Rect(float x0, float y0, float x1, float y1, uint32_t rgba)
+{
+    if (g_modern) {
+        if (rgba == 0x1A1424F0) rgba = 0xFFFFFF0C;   // (lignes : blanc a peine visible sur le verre)
+        float r = (y1 - y0) < g_u * 0.6f ? 0 : g_u * 0.8f;
+        UiRect(x0, y0, x1, y1, r, rgba, rgba);
+        return;
+    }
+    Poly(x0, y0, x1, y0, x0, y1, x1, y1, rgba);
+}
 static void Frame(float x0, float y0, float x1, float y1, float t, uint32_t rgba)
 {
+    if (g_modern) return;
     Rect(x0, y0, x1, y0 + t, rgba); Rect(x0, y1 - t, x1, y1, rgba);
     Rect(x0, y0, x0 + t, y1, rgba); Rect(x1 - t, y0, x1, y1, rgba);
 }
@@ -454,13 +471,26 @@ static void FontColor(uint32_t rgba, bool drop = true)
 }
 
 // Hauteur de ligne de la police a cette taille (pixels).
-static float g_u;   // unite : hauteur d'ecran / 100
 static const float kTextScale = 1.25f;   // toutes les tailles de texte du menu
 static float LineH(float size) { return size * kTextScale * g_u / 4.48f * 13.5f; }
 
 enum { AL_LEFT, AL_CENTER };
+static void UiLine(float x, float y, float size, uint32_t rgba, int align, const char *s, bool bold)
+{
+    float px = LineH(size) * 1.12f;   // (Segoe UI plus petite que la police du jeu a hauteur egale)
+    y -= LineH(size) * 0.1f;
+    int a = align == AL_CENTER ? UI_CENTER : UI_LEFT;
+    UiText(x + 1, y + 1.5f, px, 0x00000070, a, s, bold);   // ombre legere
+    UiText(x, y, px, rgba, a, s, bold);
+}
 static void Text(float x, float y, float size, uint32_t rgba, int align, const wchar_t *s)
 {
+    if (g_modern) {
+        char a[200];
+        WideCharToMultiByte(1252, 0, s, -1, a, sizeof(a), NULL, NULL);
+        UiLine(x, y, size, rgba, align, a, size >= 0.6f);
+        return;
+    }
     ((void(__cdecl *)())0x5500D0)();                   // SetBackgroundOff
     ((void(__cdecl *)())0x550080)();                   // SetBackGroundOnlyTextOff
     ((void(__cdecl *)())0x550020)();                   // SetPropOn
@@ -477,6 +507,7 @@ static void Text(float x, float y, float size, uint32_t rgba, int align, const w
 }
 static void TextA(float x, float y, float size, uint32_t rgba, int align, const char *s)
 {
+    if (g_modern) { UiLine(x, y, size, rgba, align, s, size >= 0.6f); return; }
     wchar_t w[160];
     MultiByteToWideChar(1252, 0, s, -1, w, 160);
     Text(x, y, size, rgba, align, w);
@@ -493,6 +524,15 @@ static bool Inside(float x0, float y0, float x1, float y1) { return g_mx >= x0 &
 static bool Button(float x0, float y0, float x1, float y1, const char *label, bool on = false, bool enabled = true, float size = 0.55f)
 {
     bool hot = enabled && Inside(x0, y0, x1, y1);
+    if (g_modern) {
+        float r = (y1 - y0) * 0.34f;
+        if (!enabled) UiRect(x0, y0, x1, y1, r, 0xFFFFFF08, 0xFFFFFF06);
+        else if (on) UiRectH(x0, y0, x1, y1, r, K_PINK, K_ORANGE);
+        else UiRect(x0, y0, x1, y1, r, hot ? 0xFFFFFF30 : 0xFFFFFF18, hot ? 0xFFFFFF22 : 0xFFFFFF0E, hot ? 0xFF4F8BD0 : 0xFFFFFF22, 1.2f);
+        UiLine((x0 + x1) * 0.5f, (y0 + y1) * 0.5f - LineH(size) * 0.47f, size, enabled ? 0xFFFFFFFF : 0xFFFFFF55, AL_CENTER, label, true);
+        if (hot && g_click) { g_click = false; return true; }
+        return false;
+    }
     Rect(x0, y0, x1, y1, !enabled ? 0x221C2AFF : on ? C_BTN_ON : hot ? C_BTN_HOT : C_BTN);
     if (hot) Frame(x0, y0, x1, y1, 1.0f + g_u * 0.12f, C_LINE);
     TextA((x0 + x1) * 0.5f, (y0 + y1) * 0.5f - LineH(size) * 0.5f, size, enabled ? C_TEXT : C_OFF, AL_CENTER, label);
@@ -503,6 +543,11 @@ static bool Button(float x0, float y0, float x1, float y1, const char *label, bo
 static void DrawCursor()
 {
     float x = g_mx, y = g_my, s = g_u * 2.2f;
+    if (g_modern) {
+        UiTri(x - 1.5f, y - 2.5f, x - 1.5f, y + s + 3, x + s * 0.74f + 3, y + s * 0.72f + 1.5f, 0x000000C0);
+        UiTri(x, y, x, y + s, x + s * 0.7f, y + s * 0.7f, 0xFFFFFFFF);
+        return;
+    }
     Poly(x - 1, y - 2, x - 1, y - 2, x - 1, y + s + 2, x + s * 0.72f + 2, y + s * 0.72f + 1, 0x000000FF);
     Poly(x, y, x, y, x, y + s, x + s * 0.7f, y + s * 0.7f, 0xFFFFFFFF);
 }
@@ -681,23 +726,23 @@ static void DrawRtTab(float x0, float y0, float x1, float y1)
     struct Row { const char *fr, *en; bool *b; int *v; int vals[6]; int n; const char *labFr[6], *labEn[6]; const char *suffix; };
     static const char *onOffFr[] = { "NON", "OUI" }, *onOffEn[] = { "OFF", "ON" };
     Row rows[] = {
-        { "Ombres tracees", "Ray-traced shadows", &g_cfg.rtShadows, NULL, {}, 0, {}, {}, "" },
+        { "Ombres trac\xE9" "es", "Ray-traced shadows", &g_cfg.rtShadows, NULL, {}, 0, {}, {}, "" },
         { "Rayons d'ombre par pixel", "Shadow rays per pixel", NULL, &g_cfg.rtRays, { 1, 2, 4, 8, 16 }, 5, {}, {}, "" },
-        { "Douceur des ombres", "Shadow softness", NULL, &g_cfg.rtSoft, { 0, 1, 2 }, 3, { "NETTES", "DOUCES", "TRES DOUCES" }, { "SHARP", "SOFT", "VERY SOFT" }, "" },
-        { "Portee des ombres", "Shadow distance", NULL, &g_cfg.rtDist, { 200, 400, 600, 1000, 1500 }, 5, {}, {}, " m" },
-        { "Resolution des rayons", "Ray resolution", NULL, &g_cfg.rtScale, { 50, 100 }, 2, { "DEMIE", "PLEINE" }, { "HALF", "FULL" }, "" },
+        { "Douceur des ombres", "Shadow softness", NULL, &g_cfg.rtSoft, { 0, 1, 2 }, 3, { "NETTES", "DOUCES", "TR\xC8S DOUCES" }, { "SHARP", "SOFT", "VERY SOFT" }, "" },
+        { "Port\xE9" "e des ombres", "Shadow distance", NULL, &g_cfg.rtDist, { 200, 400, 600, 1000, 1500 }, 5, {}, {}, " m" },
+        { "R\xE9solution des rayons", "Ray resolution", NULL, &g_cfg.rtScale, { 50, 100 }, 2, { "DEMIE", "PLEINE" }, { "HALF", "FULL" }, "" },
         { "Lissage du bruit", "Noise smoothing", NULL, &g_cfg.rtSmooth, { 0, 1, 2 }, 3, { "FAIBLE", "MOYEN", "FORT" }, { "LOW", "MEDIUM", "HIGH" }, "" },
-        { "Occlusion tracee", "Ray-traced occlusion", &g_cfg.rtAO, NULL, {}, 0, {}, {}, "" },
-        { "Reflets traces", "Ray-traced reflections", &g_cfg.rtRefl, NULL, {}, 0, {}, {}, "" },
+        { "Occlusion trac\xE9" "e", "Ray-traced occlusion", &g_cfg.rtAO, NULL, {}, 0, {}, {}, "" },
+        { "Reflets trac\xE9s", "Ray-traced reflections", &g_cfg.rtRefl, NULL, {}, 0, {}, {}, "" },
         { "Force des reflets", "Reflection strength", NULL, &g_cfg.rtReflK, { 25, 50, 75, 100, 150, 200 }, 6, {}, {}, " %" },
-        { "Sols brillants", "Shiny ground", NULL, &g_cfg.rtGloss, { 0, 1, 2 }, 3, { "PLUIE", "LEGERS", "MIROIRS" }, { "RAIN", "LIGHT", "MIRRORS" }, "" },
-        { "Lumiere tracee", "Ray-traced lighting", &g_cfg.rtGI, NULL, {}, 0, {}, {}, "" },
-        { "Force de la lumiere", "Lighting strength", NULL, &g_cfg.rtGIK, { 25, 50, 75, 100, 150, 200 }, 6, {}, {}, " %" },
+        { "Sols brillants", "Shiny ground", NULL, &g_cfg.rtGloss, { 0, 1, 2 }, 3, { "PLUIE", "L\xC9GERS", "MIROIRS" }, { "RAIN", "LIGHT", "MIRRORS" }, "" },
+        { "Lumi\xE8re trac\xE9" "e", "Ray-traced lighting", &g_cfg.rtGI, NULL, {}, 0, {}, {}, "" },
+        { "Force de la lumi\xE8re", "Lighting strength", NULL, &g_cfg.rtGIK, { 25, 50, 75, 100, 150, 200 }, 6, {}, {}, " %" },
         { "Force de l'occlusion", "Occlusion strength", NULL, &g_cfg.rtAOK, { 25, 50, 75, 100, 150 }, 5, {}, {}, " %" },
     };
     const int n = (int)(sizeof(rows) / sizeof(rows[0])), perCol = (n + 1) / 2;
     float colW = (x1 - x0 - g_u * 3) / 2, bh = g_u * 4.0f, gap = g_u * 0.5f;
-    TextA(x0 + g_u, y0 + g_u * 0.4f, 0.48f, C_DIM, AL_LEFT, Tr("Change tout de suite, garde pour les prochaines parties.", "Applies right away, kept for the next games."));
+    TextA(x0 + g_u, y0 + g_u * 0.4f, 0.48f, C_DIM, AL_LEFT, Tr("Change tout de suite, gard\xE9 pour les prochaines parties.", "Applies right away, kept for the next games."));
     float top = y0 + g_u * 0.8f + LineH(0.48f);
     bool changed = false;
     for (int i = 0; i < n; i++) {
@@ -708,7 +753,35 @@ static void DrawRtTab(float x0, float y0, float x1, float y1)
         TextA(cx0 + g_u, y + bh * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_TEXT, AL_LEFT, fr ? r.fr : r.en);
         float vw = colW * 0.42f, vx1 = cx1 - g_u * 0.5f, vx0 = vx1 - vw, by0 = y + g_u * 0.35f, by1 = y + bh - g_u * 0.35f;
         char val[32];
-        if (g_testClickRow == i) { g_testClickRow = -1; g_mx = (vx0 + vx1) * 0.5f; g_my = (by0 + by1) * 0.5f; g_click = true; Log("test menu : clic sur %s", r.fr); }
+        if (g_testClickRow == i) { g_testClickRow = -1; g_mx = r.b ? vx1 - g_u : vx1 - g_u * 1.5f; g_my = (by0 + by1) * 0.5f; g_click = true; Log("test menu : clic sur %s", r.fr); }
+        if (g_modern) {   // interrupteur (oui / non) ou selecteur "< valeur >" (clic : moitie gauche = precedent)
+            if (r.b) {
+                float th = (by1 - by0) * 0.78f, tw = th * 1.9f, tx1 = vx1 - g_u * 0.3f, tx0 = tx1 - tw, ty0 = (by0 + by1 - th) * 0.5f, ty1 = ty0 + th;
+                if (*r.b) UiRectH(tx0, ty0, tx1, ty1, th * 0.5f, K_PINK, K_ORANGE);
+                else UiRect(tx0, ty0, tx1, ty1, th * 0.5f, 0xFFFFFF26, 0xFFFFFF1C);
+                float kr = th * 0.5f - 2.5f, kx = *r.b ? tx1 - th * 0.5f : tx0 + th * 0.5f;
+                UiRect(kx - kr, ty0 + 2.5f, kx + kr, ty1 - 2.5f, kr, 0xFFFFFFFF, 0xF2EEF6FF);
+                if (g_click && Inside(cx0, y, cx1, y + bh)) { g_click = false; *r.b = !*r.b; changed = true; }
+                continue;
+            }
+            int k = 0;
+            for (int j = 0; j < r.n; j++) if (r.vals[j] <= *r.v) k = j;
+            if (r.labFr[0]) _snprintf(val, sizeof(val), "%s", fr ? r.labFr[k] : r.labEn[k]);
+            else _snprintf(val, sizeof(val), "%d%s", r.vals[k], r.suffix);
+            bool hot = Inside(vx0, by0, vx1, by1);
+            UiRect(vx0, by0, vx1, by1, (by1 - by0) * 0.5f, 0xFFFFFF14, 0xFFFFFF0A, hot ? 0xFF4F8BD0 : 0xFFFFFF26, 1.2f);
+            float ty = (by0 + by1) * 0.5f - LineH(0.5f) * 0.5f;
+            UiLine(vx0 + g_u * 1.0f, ty - g_u * 0.55f, 0.8f, K_PINK, AL_LEFT, "\x8B", true);
+            UiLine(vx1 - g_u * 2.0f, ty - g_u * 0.55f, 0.8f, K_PINK, AL_LEFT, "\x9B", true);
+            UiLine((vx0 + vx1) * 0.5f, ty, 0.5f, 0xFFFFFFFF, AL_CENTER, val, true);
+            if (hot && g_click) {
+                g_click = false;
+                k = g_mx < (vx0 + vx1) * 0.5f ? (k + r.n - 1) % r.n : (k + 1) % r.n;
+                *r.v = r.vals[k];
+                changed = true;
+            }
+            continue;
+        }
         if (r.b) {
             if (Button(vx0, by0, vx1, by1, fr ? onOffFr[*r.b] : onOffEn[*r.b], *r.b)) { *r.b = !*r.b; changed = true; }
             continue;
@@ -759,6 +832,8 @@ void PanelDraw()
 {
     g_u = ScreenH() / 100.0f;
     if (!InGameNow()) { g_click = false; return; }
+    g_modern = UiReady();
+    if (g_modern) UiBegin();
     DrawChat();
     if (g_open) {
         float W = (float)ScreenW(), H = (float)ScreenH();
@@ -774,21 +849,27 @@ void PanelDraw()
         float pw = W * 0.62f;
         if (pw > H * 1.25f) pw = H * 1.25f;
         float ph = H * 0.68f, x0 = (W - pw) * 0.5f, y0 = H * 0.14f, x1 = x0 + pw, y1 = y0 + ph;
-        Rect(x0, y0, x1, y1, C_BG);
-        Frame(x0, y0, x1, y1, g_u * 0.2f, C_LINE);
         float th = g_u * 5.5f;
-        Rect(x0, y0, x1, y0 + th, 0x2A1030FF);
-        TextA(x0 + g_u * 2, y0 + th * 0.5f - LineH(0.75f) * 0.5f, 0.75f, C_LINE, AL_LEFT, "VCCOOP");
+        if (g_modern) {   // verre depoli arrondi, ombre douce, liseré clair ; filet rose -> orange sous le titre
+            UiShadow(x0, y0 + g_u * 0.6f, x1, y1 + g_u * 0.6f, g_u * 2.4f, g_u * 3.5f, 0x00000080);
+            UiGlass(x0, y0, x1, y1, g_u * 2.4f, 0x160A2AC8, 0xFFFFFF38, 1.3f);
+            UiRectH(x0 + g_u * 2, y0 + th - 1.0f, x1 - g_u * 2, y0 + th + 1.0f, 1.0f, K_PINK, K_ORANGE);
+        } else {
+            Rect(x0, y0, x1, y1, C_BG);
+            Frame(x0, y0, x1, y1, g_u * 0.2f, C_LINE);
+            Rect(x0, y0, x1, y0 + th, 0x2A1030FF);
+        }
+        TextA(x0 + g_u * 2, y0 + th * 0.5f - LineH(0.75f) * 0.5f, 0.75f, g_modern ? K_PINK : C_LINE, AL_LEFT, "VCCOOP");
         char who[64];
         _snprintf(who, sizeof(who), "%s%s", g_cfg.playerName, g_cfg.host ? Tr("  -  hote", "  -  host") : LocalAdmin() ? "  -  admin" : "");
         TextA(x0 + g_u * 20, y0 + th * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_DIM, AL_LEFT, who);
-        if (Button(x1 - th, y0, x1, y0 + th, "X")) g_open = false;
+        if (g_modern ? Button(x1 - th + g_u * 0.8f, y0 + g_u * 0.8f, x1 - g_u * 0.8f, y0 + th - g_u * 0.8f, "X") : Button(x1 - th, y0, x1, y0 + th, "X")) g_open = false;
 
         // Onglets : selon le role.
         bool admin = LocalAdmin();
         struct T { const char *fr, *en; int id; bool show; } tabs[] = {
-            { "JOUEURS", "PLAYERS", 0, true }, { "VEHICULES", "VEHICLES", 1, admin }, { "OUTILS", "TOOLS", 2, admin },
-            { "MONDE", "WORLD", 3, admin }, { "HOTE", "HOST", 4, g_cfg.host }, { "RAY TRACING", "RAY TRACING", 5, g_cfg.renderer == 12 } };
+            { "JOUEURS", "PLAYERS", 0, true }, { "V\xC9HICULES", "VEHICLES", 1, admin }, { "OUTILS", "TOOLS", 2, admin },
+            { "MONDE", "WORLD", 3, admin }, { "H\xD4TE", "HOST", 4, g_cfg.host }, { "RAY TRACING", "RAY TRACING", 5, g_cfg.renderer == 12 } };
         int shown = 0;
         for (auto &t : tabs) shown += t.show;
         bool tabOk = false;
@@ -803,7 +884,7 @@ void PanelDraw()
             k++;
         }
         float cy0 = ty + tbh + g_u, cy1 = y1 - g_u * 3.6f;
-        Rect(x0 + g_u * 0.5f, cy0 - g_u * 0.3f, x1 - g_u * 0.5f, cy0 - g_u * 0.15f, C_LINE);
+        if (!g_modern) Rect(x0 + g_u * 0.5f, cy0 - g_u * 0.3f, x1 - g_u * 0.5f, cy0 - g_u * 0.15f, C_LINE);
         switch (g_tab) {
         case 0: DrawPlayersTab(x0, cy0, x1, cy1); break;
         case 1: DrawVehiclesTab(x0, cy0, x1, cy1); break;
@@ -819,6 +900,7 @@ void PanelDraw()
     }
     ((void(__cdecl *)())0x550250)();   // CFont::DrawFonts : nos textes, par-dessus nos rectangles
     if (g_open) DrawCursor();
+    if (g_modern) UiEnd();
 }
 
 // ======================================================================= Reseau
