@@ -48,7 +48,17 @@ struct RtDraw {
     GfxDraw d;
     const float *world;
     float alphaRef;
+    DWORD tint;          // couleur de la matiere (peinture des voitures)
     bool alphaTest, vehicle, dynamic;
+};
+// Une image : camera, lumieres, fonctions (1 soleil, 2 occlusion, 4 reflets, 8 lumiere indirecte).
+struct RtParams {
+    const float *view, *proj;
+    float sun[4], sunColor[4], ambient[4], skyTop[4], skyBottom[4];
+    float sunAngle, maxDist, wetness, aoRadius;
+    unsigned features;
+    bool reset;
+    UINT outW, outH;
 };
 bool RtHelperPresent();       // VCCoop\vcrt64.exe present
 void RtStart();               // Rendu=12 : lance vcrt64.exe (a la creation du peripherique)
@@ -56,6 +66,8 @@ bool RtReady();               // vcrt64.exe pret (carte DXR)
 void RtBeforeReset();
 void RtForgetResource(void *real);   // tampon ou texture Direct3D 9 libere ou reecrit (bridge.cpp)
 // Envoie l'image ; vrai si une image tracee est disponible (celle-ci, ou la precedente si vcrt64 est en retard).
-bool RtTrace(const RtDraw *draws, int count, const float *view, const float *proj, const float *sun, float sunAngle, float maxDist, UINT outW, UINT outH);
-struct IDirect3DTexture9 *RtResult();   // x = visibilite du soleil, y = profondeur (m) ; demi-flottants
+bool RtTrace(const RtDraw *draws, int count, const RtParams &p);
+// 0 : x = visibilite du soleil, y = profondeur (m), z = occlusion (demi-flottants) ; 1 : reflet (rgb) et son poids (a) ;
+// 2 : lumiere indirecte (rgb x 4).
+struct IDirect3DTexture9 *RtResult(int plane = 0);
 void RtResultSize(float *w, float *h);

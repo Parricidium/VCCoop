@@ -78,6 +78,9 @@ static void LoadConfig()
     if (g_cfg.rtRays < 1) g_cfg.rtRays = 1;
     if (g_cfg.rtRays > 16) g_cfg.rtRays = 16;
     g_cfg.rtScale = GetPrivateProfileIntA("VCCoop", "RTResolution", 50, ini) >= 75 ? 100 : 50;
+    g_cfg.rtAO = GetPrivateProfileIntA("VCCoop", "RTOcclusion", 1, ini) != 0;
+    g_cfg.rtRefl = GetPrivateProfileIntA("VCCoop", "RTReflets", 1, ini) != 0;
+    g_cfg.rtGI = GetPrivateProfileIntA("VCCoop", "RTLumiere", 1, ini) != 0;
     g_cfg.modernWater = GetPrivateProfileIntA("VCCoop", "EauModerne", 1, ini) != 0;
     g_cfg.waterReflections = GetPrivateProfileIntA("VCCoop", "RefletsEau", 1, ini) != 0;
     g_cfg.dynLights = GetPrivateProfileIntA("VCCoop", "LumieresDynamiques", 1, ini) != 0;

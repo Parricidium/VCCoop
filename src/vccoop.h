@@ -2,7 +2,7 @@
 #pragma once
 #include <windows.h>
 
-#define VCCOOP_VERSION "2026.09.30a"
+#define VCCOOP_VERSION "2026.09.30b"
 struct Config {
     bool windowed;
     bool borderless;
@@ -59,6 +59,9 @@ struct Config {
     bool rtShadows;     // RTOmbres=1 (Rendu=12) : ombres du soleil et de la lune tracees (remplacent les cascades)
     int rtRays;         // RTRayons=4 : rayons d'ombre par pixel (1 a 16)
     int rtScale;        // RTResolution=50 : image tracee en % de l'ecran (50 ou 100)
+    bool rtAO;          // RTOcclusion=1 : occlusion ambiante tracee (remplace celle d'ecran)
+    bool rtRefl;        // RTReflets=1 : reflets traces sur les carrosseries et les sols mouilles
+    bool rtGI;          // RTLumiere=1 : lumiere renvoyee par le decor (un rebond)
     int captureSecs;    // CaptureRendu=N (test) : image du rendu enregistree toutes les N s (dossier captures du jeu, rendu-*.bmp)
     bool fpsView;       // VuePremierePersonne=1 : la touche ToucheVue passe en vue depuis la tete de Tommy
     int fpsKey;         // ToucheVue=F6 : code de touche Windows (F1..F12, ou une lettre)

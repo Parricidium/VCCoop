@@ -245,6 +245,11 @@ their nickname above their head (`AfficherPseudos=0` to hide).
   the game keeps them) then, every frame, the list of draws and the camera; it sends back the traced image.
   **Ray-traced shadows** (`RTOmbres`) replace the cascades: sun and moon, soft penumbra, foliage cut out by
   its texture, up to 600 m; `RTRayons` (rays per pixel, 1 to 16) and `RTResolution` (50 = half, 100 = full).
+  **Ray-traced reflections** (`RTReflets`): the street, the sky and other cars on car paint (smooth normals of
+  the game's models, Fresnel) and on wet ground in the rain. **Ray-traced lighting** (`RTLumiere`): one bounce
+  of light from lit walls and ground, with their color (texture × the game's baked vertex lighting × paint).
+  **Ray-traced occlusion** (`RTOcclusion`) replaces the screen-space one. Noise is averaged from frame to frame
+  (reprojection with the previous camera, reset on camera cuts).
   Without a DXR card the launcher greys the choice out, and the game falls back to Direct3D 9 on its own.
 - **Sun shadows** (modern renderer): 4 cascades (sharp up close, up to ~220 m) rendered from the game's
   own sun (`CTimeCycle`) in the same frame, a soft 25-tap filter, a single full-screen pass (no more
@@ -562,8 +567,12 @@ son pseudo au-dessus de la tête (`AfficherPseudos=0` pour le cacher).
   dessine (une fois, tant que le jeu les garde) puis, à chaque image, la liste des dessins et la caméra ; il
   renvoie l'image tracée. Les **ombres tracées** (`RTOmbres`) remplacent les cascades : soleil et lune, pénombre
   douce, feuillages découpés selon leur texture, jusqu'à 600 m ; `RTRayons` (rayons par pixel, 1 à 16) et
-  `RTResolution` (50 = demie, 100 = pleine). Sans carte DXR, le lanceur grise le choix et le jeu repasse seul en
-  Direct3D 9.
+  `RTResolution` (50 = demie, 100 = pleine). **Reflets tracés** (`RTReflets`) : la rue, le ciel et les autres
+  voitures sur les carrosseries (normales lissées des modèles du jeu, effet Fresnel) et sur le sol mouillé sous la
+  pluie. **Lumière tracée** (`RTLumiere`) : un rebond de la lumière des murs et du sol éclairés, avec leur couleur
+  (texture × éclairage « cuit » du jeu × peinture). **Occlusion tracée** (`RTOcclusion`) à la place de celle
+  d'écran. Le bruit est moyenné d'une image à l'autre (reprojection avec la caméra précédente, remise à zéro aux
+  coupures de caméra). Sans carte DXR, le lanceur grise le choix et le jeu repasse seul en Direct3D 9.
 - **Ombres du soleil** (rendu moderne) : 4 cascades (nettes de près, jusqu'à ~220 m) calculées depuis le
   soleil du jeu (`CTimeCycle`) dans la même image, filtre doux à 25 échantillons, une seule passe plein écran
   (plus de doubles dessins qui clignotent), intensité selon le cycle du jour du jeu (heure et météo) et son

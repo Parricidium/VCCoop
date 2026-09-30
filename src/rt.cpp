@@ -21,7 +21,7 @@ static HANDLE g_helper;
 static bool g_started, g_dead;
 static bool g_pending;
 static uint32_t g_seq;
-static IDirect3DTexture9 *g_result;
+static IDirect3DTexture9 *g_result[3];
 static UINT g_resW, g_resH;
 static bool g_haveResult;
 static CRITICAL_SECTION g_lock;
@@ -86,11 +86,11 @@ bool RtReady()
 
 void RtBeforeReset()
 {
-    if (g_result) { g_result->Release(); g_result = NULL; }
+    for (auto &t : g_result) if (t) { t->Release(); t = NULL; }
     g_haveResult = false;
     g_resW = g_resH = 0;
 }
-IDirect3DTexture9 *RtResult() { return g_haveResult ? g_result : NULL; }
+IDirect3DTexture9 *RtResult(int plane) { return g_haveResult && plane >= 0 && plane < 3 ? g_result[plane] : NULL; }
 void RtResultSize(float *w, float *h) { *w = (float)g_resW; *h = (float)g_resH; }
 
 // ---------------------------------------------------------------- caches
@@ -165,7 +165,8 @@ static int UvOffset(DWORD fvf)
     return o;
 }
 
-static std::vector<float> g_pos, g_uv;
+static std::vector<float> g_pos, g_uv, g_nrm;
+static std::vector<DWORD> g_col;
 static std::vector<uint32_t> g_tris;
 
 // Sommets [first, first + n) et primitives du dessin -> positions, uv, triangles (indices locaux).
@@ -200,12 +201,17 @@ static bool Extract(const RtDraw &d)
         }
     }
     int uvo = UvOffset(d.fvf);
-    g_pos.resize(n * 3); g_uv.resize(n * 2);
+    int co = (d.fvf & D3DFVF_DIFFUSE) ? 12 + ((d.fvf & D3DFVF_NORMAL) ? 12 : 0) + ((d.fvf & D3DFVF_PSIZE) ? 4 : 0) : -1;   // couleur "cuite"
+    bool hasN = (d.fvf & D3DFVF_NORMAL) && d.stride >= 24;   // normale juste apres la position
+    g_pos.resize(n * 3); g_nrm.resize(n * 3); g_uv.resize(n * 2); g_col.resize(n);
     for (UINT i = 0; i < n; i++) {
         const BYTE *v = verts + (size_t)i * d.stride;
         memcpy(&g_pos[i * 3], v, 12);
+        if (hasN) memcpy(&g_nrm[i * 3], v + 12, 12);
+        else g_nrm[i * 3] = g_nrm[i * 3 + 1] = g_nrm[i * 3 + 2] = 0;
         if (uvo >= 0 && uvo + 8 <= (int)d.stride) memcpy(&g_uv[i * 2], v + uvo, 8);
         else g_uv[i * 2] = g_uv[i * 2 + 1] = 0;
+        g_col[i] = co >= 0 && co + 4 <= (int)d.stride ? *(const DWORD *)(v + co) : 0xFFFFFFFF;
     }
     g_tris.clear();
     bool bad = false;
@@ -226,13 +232,16 @@ static bool Extract(const RtDraw &d)
 static bool WriteMesh(uint32_t id, bool transient)
 {
     uint32_t nv = (uint32_t)g_pos.size() / 3, nt = (uint32_t)g_tris.size() / 3;
-    BYTE *p = (BYTE *)Cmd(RT_CMD_MESH, sizeof(RtMesh) + nv * 20 + nt * 12);
+    BYTE *p = (BYTE *)Cmd(RT_CMD_MESH, sizeof(RtMesh) + nv * RT_VERTEX_BYTES + nt * 12);
     if (!p) return false;
     RtMesh *m = (RtMesh *)p;
     m->id = id; m->vertices = nv; m->triangles = nt; m->flags = transient ? RT_MESH_TRANSIENT : 0;
-    memcpy(p + sizeof(RtMesh), g_pos.data(), nv * 12);
-    memcpy(p + sizeof(RtMesh) + nv * 12, g_uv.data(), nv * 8);
-    memcpy(p + sizeof(RtMesh) + nv * 20, g_tris.data(), nt * 12);
+    BYTE *q = p + sizeof(RtMesh);
+    memcpy(q, g_pos.data(), nv * 12); q += nv * 12;
+    memcpy(q, g_nrm.data(), nv * 12); q += nv * 12;
+    memcpy(q, g_uv.data(), nv * 8); q += nv * 8;
+    memcpy(q, g_col.data(), nv * 4); q += nv * 4;
+    memcpy(q, g_tris.data(), nt * 12);
     return true;
 }
 
@@ -307,24 +316,32 @@ static void Collect()
     if (!w || !h || w > RT_MAX_OUT_W || h > RT_MAX_OUT_H) return;
     IDirect3DDevice9 *dev = BridgeDevice9();
     if (!dev) return;
-    if (!g_result || g_resW != w || g_resH != h) {
-        if (g_result) { g_result->Release(); g_result = NULL; }
-        if (FAILED(dev->CreateTexture(w, h, 1, D3DUSAGE_DYNAMIC, D3DFMT_A16B16G16R16F, D3DPOOL_DEFAULT, &g_result, NULL))) {
-            Log("ray tracing : texture du resultat impossible (%ux%u)", w, h);
-            g_result = NULL; g_haveResult = false; return;
-        }
+    if (!g_result[0] || g_resW != w || g_resH != h) {
+        for (auto &t : g_result) if (t) { t->Release(); t = NULL; }
+        static const D3DFORMAT fmt[3] = { D3DFMT_A16B16G16R16F, D3DFMT_A8R8G8B8, D3DFMT_A8R8G8B8 };
+        for (int k = 0; k < 3; k++)
+            if (FAILED(dev->CreateTexture(w, h, 1, D3DUSAGE_DYNAMIC, fmt[k], D3DPOOL_DEFAULT, &g_result[k], NULL))) {
+                Log("ray tracing : textures du resultat impossibles (%ux%u)", w, h);
+                for (auto &t : g_result) if (t) { t->Release(); t = NULL; }
+                g_haveResult = false; return;
+            }
         g_resW = w; g_resH = h;
     }
-    D3DLOCKED_RECT lr;
-    if (FAILED(g_result->LockRect(0, &lr, NULL, D3DLOCK_DISCARD))) return;
     const BYTE *src = g_base + RT_OUT_OFFSET;
-    for (UINT y = 0; y < h; y++) memcpy((BYTE *)lr.pBits + (size_t)y * lr.Pitch, src + (size_t)y * w * 8, w * 8);
-    g_result->UnlockRect(0);
+    static const UINT bpp[3] = { 8, 4, 4 };
+    for (int k = 0; k < 3; k++) {
+        D3DLOCKED_RECT lr;
+        if (FAILED(g_result[k]->LockRect(0, &lr, NULL, D3DLOCK_DISCARD))) return;
+        for (UINT y = 0; y < h; y++) memcpy((BYTE *)lr.pBits + (size_t)y * lr.Pitch, src + (size_t)y * w * bpp[k], w * bpp[k]);
+        g_result[k]->UnlockRect(0);
+        src += (size_t)w * h * bpp[k];
+    }
     g_haveResult = true;
 }
 
-bool RtTrace(const RtDraw *draws, int count, const float *view, const float *proj, const float *sun, float sunAngle, float maxDist, UINT outW, UINT outH)
+bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
 {
+    UINT outW = prm.outW, outH = prm.outH;
     if (!RtReady()) return false;
     RtLock lock;
     if (g_pending) {
@@ -333,8 +350,10 @@ bool RtTrace(const RtDraw *draws, int count, const float *view, const float *pro
         else if (WaitForSingleObject(g_done, 0) == WAIT_OBJECT_0 || g_hdr->doneSeq == g_seq) Collect();
         else return g_haveResult;
     }
-    if (outW > RT_MAX_OUT_W) outW = RT_MAX_OUT_W;
-    if (outH > RT_MAX_OUT_H) outH = RT_MAX_OUT_H;
+    if (outW > RT_MAX_OUT_W || outH > RT_MAX_OUT_H) {   // (pleine resolution d'un grand ecran : ramenee a 1920x1080)
+        float k = min((float)RT_MAX_OUT_W / outW, (float)RT_MAX_OUT_H / outH);
+        outW = (UINT)(outW * k); outH = (UINT)(outH * k);
+    }
     g_off = 0;
     // Place gardee pour la camera et les dessins ; les envois prennent le reste (au plus 32 Mo par image).
     uint32_t tail = (uint32_t)(sizeof(RtCmd) + sizeof(RtFrame) + (count + 1) * sizeof(RtInstance) + 64);
@@ -375,7 +394,7 @@ bool RtTrace(const RtDraw *draws, int count, const float *view, const float *pro
         }
         if (!mesh) { g_statSkipped++; continue; }
         uint32_t tex = 0;
-        if (d.alphaTest && d.tex) {
+        if (d.tex) {
             auto t = g_texCache.find(d.tex);
             if (t == g_texCache.end()) t = g_texCache.emplace(d.tex, TexVal{ g_nextTex++, ST_NEW }).first;
             if (t->second.state == ST_NEW) { t->second.state = (uint8_t)WriteTexture(t->second.id, d.tex); if (t->second.state == ST_SENT) g_statTexSent++; }
@@ -386,6 +405,7 @@ bool RtTrace(const RtDraw *draws, int count, const float *view, const float *pro
         for (int r = 0; r < 3; r++) { in.transform[r * 4 + 0] = w[0 * 4 + r]; in.transform[r * 4 + 1] = w[1 * 4 + r]; in.transform[r * 4 + 2] = w[2 * 4 + r]; in.transform[r * 4 + 3] = w[3 * 4 + r]; }
         in.mesh = mesh; in.tex = tex;
         in.alphaRef = d.alphaRef;
+        in.tint = d.tint; in.pad[0] = in.pad[1] = in.pad[2] = 0;
         static int dbg = GetPrivateProfileIntA("VCCoop", "RTDebug", 0, IniPath());   // 1 : test alpha coupe (diagnostic)
         if (dbg == 1) tex = 0;
         in.flags = (d.alphaTest && tex ? RT_INST_ALPHA : 0) | (d.vehicle ? RT_INST_VEHICLE : 0) | (d.dynamic ? RT_INST_DYNAMIC : 0);
@@ -397,26 +417,35 @@ bool RtTrace(const RtDraw *draws, int count, const float *view, const float *pro
     RtFrame *f = (RtFrame *)Cmd(RT_CMD_FRAME, (uint32_t)(sizeof(RtFrame) + g_inst.size() * sizeof(RtInstance)));
     if (!f) return g_haveResult;
     memset(f, 0, sizeof *f);
-    memcpy(f->view, view, 64); memcpy(f->proj, proj, 64);
-    memcpy(f->sun, sun, 16);
-    f->sunAngle = sunAngle;
+    memcpy(f->view, prm.view, 64); memcpy(f->proj, prm.proj, 64);
+    memcpy(f->sun, prm.sun, 16); memcpy(f->sunColor, prm.sunColor, 16); memcpy(f->ambient, prm.ambient, 16);
+    memcpy(f->skyTop, prm.skyTop, 16); memcpy(f->skyBottom, prm.skyBottom, 16);
+    f->sunAngle = prm.sunAngle;
     f->outW = outW; f->outH = outH;
-    f->features = RT_FEAT_SUN;
+    f->features = prm.features;
     f->raysPerPixel = g_cfg.rtRays;
     f->frameIndex = g_frameIndex++;
     f->instanceCount = (uint32_t)g_inst.size();
-    f->maxDistance = maxDist;
+    f->maxDistance = prm.maxDist;
+    f->wetness = prm.wetness;
+    f->aoRadius = prm.aoRadius;
+    f->reset = prm.reset ? 1 : 0;
     if (!g_inst.empty()) memcpy(f + 1, g_inst.data(), g_inst.size() * sizeof(RtInstance));
     g_statDrawn += (int)g_inst.size();
 
     g_hdr->cmdBytes = g_off;
     MemoryBarrier();
+    ResetEvent(g_done);   // (signal reste d'une image rendue en retard : l'attente ne doit pas repartir tout de suite)
     g_hdr->frameSeq = ++g_seq;
     g_pending = true;
     SetEvent(g_go);
     // Attente de l'image (quelques ms) ; trop long (gros envois) : l'image suivante prend la precedente.
-    DWORD wr = WaitForSingleObject(g_done, g_haveResult ? 40 : 250);
-    if (wr == WAIT_OBJECT_0 && g_hdr->doneSeq == g_seq) Collect();
+    DWORD until = GetTickCount() + (g_haveResult ? 40 : 250);
+    while (g_hdr->doneSeq != g_seq) {
+        int left = (int)(until - GetTickCount());
+        if (left <= 0 || WaitForSingleObject(g_done, left) != WAIT_OBJECT_0) break;
+    }
+    if (g_hdr->doneSeq == g_seq) Collect();
     else g_statTimeouts++;
 
     static DWORD lastLog;

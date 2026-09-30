@@ -289,11 +289,21 @@ float4 PsMask(float2 vpos : VPOS) : COLOR {
   return float4(lerp(1, col, k), 1);
 }
 
-// ---- ray tracing (Rendu=12) : visibilite du soleil tracee par vcrt64.exe (x), avec sa profondeur (y, m).
-// Image tracee plus petite que l'ecran et bruitee (quelques rayons par pixel) : filtre 4x4 pondere par la distance et
-// par l'ecart de profondeur (pas de melange a travers les bords des objets).
+// ---- ray tracing (Rendu=12) : images tracees par vcrt64.exe. sRT : x = visibilite du soleil, y = profondeur (m),
+// z = occlusion ; sRTRefl : reflet (rgb) et son poids (a) ; sRTGI : lumiere renvoyee par le decor (rgb x 4).
+// Images plus petites que l'ecran et un peu bruitees : filtres ponderes par la distance et par l'ecart de profondeur
+// (pas de melange a travers les bords des objets).
 sampler2D sRT : register(s4);
-float4 gRT : register(c191);   // largeur, hauteur de l'image tracee, 1/largeur, 1/hauteur
+sampler2D sRTRefl : register(s5);
+sampler2D sRTGI : register(s6);
+float4 gRT : register(c191);        // largeur, hauteur de l'image tracee, 1/largeur, 1/hauteur
+float4 gRTFlags : register(c192);   // x : ombre tracee, y : occlusion tracee, z : force de la lumiere indirecte, w : force de l'occlusion
+
+float RTWeight(float4 s, float2 o, float z) {
+  float err = abs(s.y - z) / (z * 0.02 + 0.05);
+  return exp(-dot(o, o) * 0.9) * exp(-err * err) * (s.y > 0 ? 1 : 0);
+}
+
 float4 PsRTMask(float2 vpos : VPOS) : COLOR {
   float2 uv = (vpos + 0.5) * gScreen.zw;
   float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
@@ -302,26 +312,83 @@ float4 PsRTMask(float2 vpos : VPOS) : COLOR {
   float2 st = uv * gRT.xy - 0.5;
   float2 base = floor(st);
   float2 f = st - base;
-  float sum = 0, wsum = 0, nearLit = 1, nearErr = 1e9;
+  float sum = 0, aoSum = 0, wsum = 0, nearLit = 1, nearAo = 1, nearErr = 1e9;
   [unroll] for (int y = -1; y <= 2; y++) {
     [unroll] for (int x = -1; x <= 2; x++) {
       float4 s = tex2Dlod(sRT, float4((base + float2(x, y) + 0.5) * gRT.zw, 0, 0));
-      float2 o = float2(x, y) - f;
-      float err = abs(s.y - z) / (z * 0.02 + 0.05);
-      float w = exp(-dot(o, o) * 0.9) * exp(-err * err) * (s.y > 0 ? 1 : 0);
-      sum += s.x * w; wsum += w;
-      if (s.y > 0 && err < nearErr) { nearErr = err; nearLit = s.x; }
+      float w = RTWeight(s, float2(x, y) - f, z);
+      sum += s.x * w; aoSum += s.z * w; wsum += w;
+      float err = abs(s.y - z);
+      if (s.y > 0 && err < nearErr) { nearErr = err; nearLit = s.x; nearAo = s.z; }
     }
   }
   float lit = wsum > 0.02 ? sum / wsum : nearLit;
+  float ao = wsum > 0.02 ? aoSum / wsum : nearAo;
   float3 P = WorldAt(uv, d);
   float dist = length(gCam.xyz - P);
-  float k = gSun.w;
-  k *= 1 - saturate((dist - gFog.x) / max(gFog.y - gFog.x, 1));   // brouillard du jeu
-  k *= 1 - saturate((dist - gFog.w) / max(gFog.z - gFog.w, 1));   // fin des ombres
-  if (gAtlas.w > 0.5) return float4(lit, lit, lit, 1);           // OmbresDebug=1 : masque brut
-  float3 col = lerp(gShadowCol.rgb, 1, lit);
-  return float4(lerp(1, col, k), 1);
+  float3 res = 1;
+  if (gRTFlags.x > 0.5) {
+    float k = gSun.w;
+    k *= 1 - saturate((dist - gFog.x) / max(gFog.y - gFog.x, 1));   // brouillard du jeu
+    k *= 1 - saturate((dist - gFog.w) / max(gFog.z - gFog.w, 1));   // fin des ombres
+    res = lerp(1, lerp(gShadowCol.rgb, 1, lit), k);
+  }
+  if (gRTFlags.y > 0.5) {
+    float ak = gRTFlags.w * (1 - saturate((dist - 150) / 150));
+    res *= lerp(1, ao, ak);
+  }
+  if (gAtlas.w > 0.5) return float4(lit, lit, lit, 1) * (gRTFlags.x > 0.5 ? 1 : 0) + float4(ao, ao, ao, 0) * (gRTFlags.x > 0.5 ? 0 : 1);   // OmbresDebug=1
+  return float4(res, 1);
+}
+
+// Lumiere indirecte tracee : image x (1 + lumiere renvoyee).
+float4 PsRTGI(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return 0;
+  float z = d * gProj.z;
+  float2 st = uv * gRT.xy - 0.5;
+  float2 base = floor(st);
+  float2 f = st - base;
+  float3 sum = 0, nearGi = 0; float wsum = 0, nearErr = 1e9;
+  [unroll] for (int y = -1; y <= 2; y++) {
+    [unroll] for (int x = -1; x <= 2; x++) {
+      float2 t = (base + float2(x, y) + 0.5) * gRT.zw;
+      float4 s = tex2Dlod(sRT, float4(t, 0, 0));
+      float3 g = tex2Dlod(sRTGI, float4(t, 0, 0)).rgb;
+      float w = RTWeight(s, (float2(x, y) - f) * 0.7, z);
+      sum += g * w; wsum += w;
+      float err = abs(s.y - z);
+      if (s.y > 0 && err < nearErr) { nearErr = err; nearGi = g; }
+    }
+  }
+  float3 gi = (wsum > 0.02 ? sum / wsum : nearGi) * 4;
+  float3 P = WorldAt(uv, d);
+  float fade = 1 - saturate((length(gCam.xyz - P) - 200) / 150);
+  return float4(gi * gRTFlags.z * fade, 1);
+}
+
+// Reflets traces (carrosseries, sols mouilles) : melange selon leur poids.
+float4 PsRTRefl(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return 0;
+  float z = d * gProj.z;
+  float2 st = uv * gRT.xy - 0.5;
+  float2 base = floor(st);
+  float2 f = st - base;
+  float4 sum = 0; float wsum = 0;
+  [unroll] for (int y = 0; y <= 1; y++) {
+    [unroll] for (int x = 0; x <= 1; x++) {
+      float2 t = (base + float2(x, y) + 0.5) * gRT.zw;
+      float4 s = tex2Dlod(sRT, float4(t, 0, 0));
+      float2 o = float2(x, y) - f;
+      float err = abs(s.y - z) / (z * 0.02 + 0.05);
+      float w = (1 - abs(o.x)) * (1 - abs(o.y)) * exp(-err * err) * (s.y > 0 ? 1 : 0) + 1e-4;
+      sum += tex2Dlod(sRTRefl, float4(t, 0, 0)) * w; wsum += w;
+    }
+  }
+  return sum / wsum;
 }
 
 // ---- lumieres dynamiques : l'image est multipliee par (1 + lumiere recue)
@@ -845,7 +912,8 @@ static IUnknown *CompileShader(const char *entry, const char *target, bool noUv)
 // ======================================================================= Ressources
 enum { CASCADES = 4 };
 static IDirect3DVertexShader9 *g_vsLight[2], *g_vsView[2], *g_vsQuad;   // [0] avec uv, [1] sans
-static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater, *g_psRTMask;
+static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater, *g_psRTMask, *g_psRTGI, *g_psRTRefl;
+static bool g_rtReflOn, g_rtGIOn;   // image en cours : reflets / lumiere indirecte traces (les passes d'ecran s'effacent)
 static IDirect3DVertexShader9 *g_vsWater, *g_vsSpot[2];
 static IDirect3DTexture9 *g_lightAtlas;
 static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
@@ -887,7 +955,11 @@ static bool CreateShaders()
     }
     g_vsQuad = (IDirect3DVertexShader9 *)CompileShader("VsQuad", "vs_3_0", false);
     g_psMask = (IDirect3DPixelShader9 *)CompileShader("PsMask", "ps_3_0", false);
-    if (g_cfg.renderer == 12) g_psRTMask = (IDirect3DPixelShader9 *)CompileShader("PsRTMask", "ps_3_0", false);
+    if (g_cfg.renderer == 12) {
+        g_psRTMask = (IDirect3DPixelShader9 *)CompileShader("PsRTMask", "ps_3_0", false);
+        g_psRTGI = (IDirect3DPixelShader9 *)CompileShader("PsRTGI", "ps_3_0", false);
+        g_psRTRefl = (IDirect3DPixelShader9 *)CompileShader("PsRTRefl", "ps_3_0", false);
+    }
     g_psLights = (IDirect3DPixelShader9 *)CompileShader("PsLights", "ps_3_0", false);
     for (int v = 0; v < 2; v++) g_vsSpot[v] = (IDirect3DVertexShader9 *)CompileShader("VsSpot", "vs_3_0", v == 1);
     for (int v = 0; v < 8; v++) g_vsRefl[v] = (IDirect3DVertexShader9 *)CompileReflShader(v);
@@ -985,6 +1057,7 @@ struct Rec {
     bool caster, water;   // projette une ombre ; surface de l'eau (dessinee par nous)
     bool vehicle;         // dessin d'un vehicule (reflets des carrosseries)
     bool dynamic;         // vehicule ou personnage (pas de sol mouille / brillant dessus)
+    DWORD tint;           // couleur de la matiere (ray tracing : peinture des voitures dans les reflets)
     GfxDraw d;
     DWORD fvf;
     float world[16];
@@ -1274,6 +1347,17 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
     r.dynamic = g_curEntity && ((((uint8_t *)g_curEntity)[0x50] & 7) == 2 || (((uint8_t *)g_curEntity)[0x50] & 7) == 3);
     r.receiver = false;   // fixe par ChooseMainView
     r.caster = true;
+    r.tint = 0xFFFFFFFF;
+    if (g_cfg.renderer == 12) {   // eclairage du jeu avec la couleur de la matiere (et non celle des sommets)
+        DWORD light = 0, src = 0;
+        D3DMATERIAL9 m;
+        g_dev->GetRenderState(D3DRS_LIGHTING, &light);
+        g_dev->GetRenderState(D3DRS_DIFFUSEMATERIALSOURCE, &src);
+        if (light && src == D3DMCS_MATERIAL && SUCCEEDED(g_dev->GetMaterial(&m))) {
+            auto c = [](float v) { return (DWORD)(v <= 0 ? 0 : v >= 1 ? 255 : v * 255 + 0.5f); };
+            r.tint = 0xFF000000 | (c(m.Diffuse.r) << 16) | (c(m.Diffuse.g) << 8) | c(m.Diffuse.b);
+        }
+    }
     g_recs.push_back(r);
 }
 
@@ -1819,7 +1903,7 @@ static void AmbiencePasses(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldRt, IDi
     memcpy(vpc + 4, vp.m, 64);
     vpc[20] = sky[0]; vpc[21] = sky[1]; vpc[22] = sky[2]; vpc[23] = 1;
     // Lumiere indirecte (de jour, et un peu la nuit sous les neons).
-    if (g_cfg.indirectLight && g_psGI && g_psGIApply && g_refractSurf && g_aoSurf) {
+    if (g_cfg.indirectLight && !g_rtGIOn && g_psGI && g_psGIApply && g_refractSurf && g_aoSurf) {
         g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_NONE);
         g_dev->SetTexture(3, g_refract);
         g_dev->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_POINT);
@@ -1844,8 +1928,19 @@ static void AmbiencePasses(const M4 &vp, Vec3 cam, IDirect3DSurface9 *oldRt, IDi
         g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
         g_dev->SetTexture(1, NULL);
     }
+    // Reflets traces (carrosseries, sols mouilles) : textures 4-6 posees par Apply.
+    if (g_rtReflOn) {
+        g_dev->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
+        g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
+        g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
+        g_dev->SetTexture(0, g_screenDepth);
+        g_dev->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+        g_dev->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+        g_dev->SetPixelShader(g_psRTRefl);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, kFullTri, 16);
+    }
     // Carrosseries.
-    if (g_cfg.carReflections && g_carMaskReady && g_psCarRefl && g_refractSurf) {
+    else if (g_cfg.carReflections && g_carMaskReady && g_psCarRefl && g_refractSurf) {
         g_dev->StretchRect(oldRt, NULL, g_refractSurf, NULL, D3DTEXF_NONE);
         g_dev->SetTexture(3, g_refract);
         g_dev->SetSamplerState(3, D3DSAMP_MINFILTER, D3DTEXF_LINEAR);
@@ -1917,12 +2012,13 @@ static void Apply()
     bool lights = LightsWanted() && g_lightCount > 0;
     bool aoWanted = AoWanted();
     bool ambience = g_cfg.wetRoads || g_cfg.haze || g_cfg.beams || g_cfg.sunRays || g_cfg.softParticles || g_cfg.carReflections || g_cfg.indirectLight;
-    if (g_recs.empty() || !g_haveMain || (!shadows && !lights && !aoWanted && !ambience) || !CreateResources()) return;
+    bool rtWanted = g_cfg.renderer == 12 && (g_cfg.rtAO || g_cfg.rtRefl || g_cfg.rtGI) && GameState() == GS_PLAYING;
+    if (g_recs.empty() || !g_haveMain || (!shadows && !lights && !aoWanted && !ambience && !rtWanted) || !CreateResources()) return;
     if (lights && !g_psLights) lights = false;
     bool ao = aoWanted && g_psAO && g_psAOBlur && g_aoSurf;
     int receivers = 0;
     for (const Rec &r : g_recs) receivers += r.receiver;
-    if (receivers < 20 || (!shadows && !lights && !ao && !ambience)) return;
+    if (receivers < 20 || (!shadows && !lights && !ao && !ambience && !rtWanted)) return;
 
     // Camera principale.
     M4 view, proj, vp, invVp;
@@ -1946,10 +2042,19 @@ static void Apply()
     // Etats communs a nos passes.
     SetCommonStates();
 
-    // 0. Ray tracing (Rendu=12) : visibilite du soleil tracee par vcrt64.exe (memes dessins, memes matrices), a la
-    // place des cascades. Sans reponse (carte sans DXR, programme arrete) : cascades.
-    bool rtShadow = false;
-    if (shadows && g_cfg.renderer == 12 && g_cfg.rtShadows && g_psRTMask && RtReady()) {
+    // 0. Ray tracing (Rendu=12) : vcrt64.exe trace, avec les memes dessins et les memes matrices, la visibilite du
+    // soleil (a la place des cascades), l'occlusion, les reflets et la lumiere renvoyee. Sans reponse (carte sans DXR,
+    // programme arrete) : rendu Direct3D 9 habituel.
+    bool rtShadow = false, rtAO = false;
+    g_rtReflOn = g_rtGIOn = false;
+    unsigned rtFeat = 0;
+    if (g_cfg.renderer == 12 && g_psRTMask && RtReady()) {
+        if (shadows && g_cfg.rtShadows) rtFeat |= 1;
+        if (g_cfg.rtAO) rtFeat |= 2;
+        if (g_cfg.rtRefl && g_psRTRefl) rtFeat |= 4;
+        if (g_cfg.rtGI && g_psRTGI) rtFeat |= 8;
+    }
+    if (rtFeat) {
         static std::vector<RtDraw> draws;
         draws.clear();
         for (const Rec &r : g_recs) {
@@ -1959,14 +2064,39 @@ static void Apply()
             d.vbData = r.replayVb ? g_cpuVb.data() : NULL;
             d.ibData = r.replayIb ? (const WORD *)g_cpuIb.data() : NULL;
             d.stride = r.stride; d.fvf = r.fvf; d.d = r.d; d.world = r.world;
-            d.alphaRef = r.alphaRef; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic;
+            d.alphaRef = r.alphaRef; d.tint = r.tint; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic;
             draws.push_back(d);
         }
-        float sun4[4] = { g_sun.x, g_sun.y, g_sun.z, g_sunK };
-        UINT tw = g_width * g_cfg.rtScale / 100, th = g_height * g_cfg.rtScale / 100;
-        rtShadow = RtTrace(draws.data(), (int)draws.size(), g_mainView, g_mainProj, sun4, g_moon ? 0.012f : 0.02f, 700.0f, tw, th) && RtResult();
-        static bool logged;
-        if (rtShadow && !logged) { logged = true; Log("rendu : ombres tracees (ray tracing) a la place des cascades"); }
+        RtParams p = {};
+        p.view = g_mainView; p.proj = g_mainProj;
+        p.sun[0] = g_sun.x; p.sun[1] = g_sun.y; p.sun[2] = g_sun.z; p.sun[3] = shadows ? g_sunK : 0.0f;
+        float ss = SunsetK();
+        if (g_moon) { p.sunColor[0] = 0.45f; p.sunColor[1] = 0.55f; p.sunColor[2] = 0.8f; }
+        else { p.sunColor[0] = 1.0f; p.sunColor[1] = 0.96f - 0.26f * ss; p.sunColor[2] = 0.88f - 0.43f * ss; }
+        float top[3] = { SkyChan(0xA0CE98), SkyChan(0xA0FD70), SkyChan(0x978D1C) };
+        float bot[3] = { SkyChan(0xA0D958), SkyChan(0x97F208), SkyChan(0x9B6DF4) };
+        for (int k = 0; k < 3; k++) { p.skyTop[k] = top[k]; p.skyBottom[k] = bot[k]; p.ambient[k] = bot[k] * 0.8f; }
+        p.sunAngle = g_moon ? 0.012f : 0.02f;
+        p.maxDist = 700.0f;
+        float wet = Outdoors() ? WeatherF(0x9B6A9C) : 0.0f;
+        p.wetness = wet > 1 ? 1 : wet;
+        p.aoRadius = 1.5f;
+        p.features = rtFeat;
+        // Coupure de camera (cinematique, reapparition, teleportation) : pas d'historique.
+        p.reset = GetTickCount() - g_lastVPAt > 500 || (cam.x - g_lastCam.x) * (cam.x - g_lastCam.x) + (cam.y - g_lastCam.y) * (cam.y - g_lastCam.y) + (cam.z - g_lastCam.z) * (cam.z - g_lastCam.z) > 64.0f;
+        p.outW = g_width * g_cfg.rtScale / 100; p.outH = g_height * g_cfg.rtScale / 100;
+        if (RtTrace(draws.data(), (int)draws.size(), p) && RtResult(0)) {
+            rtShadow = (rtFeat & 1) != 0;
+            rtAO = (rtFeat & 2) != 0;
+            g_rtReflOn = (rtFeat & 4) != 0;
+            g_rtGIOn = (rtFeat & 8) != 0;
+            if (rtAO) ao = false;   // (occlusion d'ecran remplacee)
+        }
+        static unsigned logged;
+        if ((rtShadow | rtAO | g_rtReflOn | g_rtGIOn) && logged != rtFeat) {
+            logged = rtFeat;
+            Log("rendu : ray tracing actif : ombres %d, occlusion %d, reflets %d, lumiere indirecte %d", rtShadow, rtAO, g_rtReflOn, g_rtGIOn);
+        }
     }
 
     // 1. Cascades.
@@ -2081,26 +2211,39 @@ static void Apply()
     g_dev->SetVertexShader(g_vsQuad);
     g_dev->SetFVF(D3DFVF_XYZW);
     static const float tri[12] = { -1, -1, 0.5f, 1, -1, 3, 0.5f, 1, 3, -1, 0.5f, 1 };
-    if (shadows && g_debugMask != 2 && g_debugMask != 3) {
-        if (rtShadow) {
-            float rs[4]; RtResultSize(&rs[0], &rs[1]); rs[2] = 1.0f / rs[0]; rs[3] = 1.0f / rs[1];
-            g_dev->SetPixelShaderConstantF(191, rs, 1);
-            float fogRt[4] = { fogStart, farClip, 600.0f, 480.0f };   // ombres tracees jusqu'a 600 m
-            g_dev->SetPixelShaderConstantF(26, fogRt, 1);
-            g_dev->SetTexture(4, RtResult());
-            g_dev->SetSamplerState(4, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-            g_dev->SetSamplerState(4, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
-            g_dev->SetSamplerState(4, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
-            g_dev->SetSamplerState(4, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
-            g_dev->SetSamplerState(4, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
-            g_dev->SetPixelShader(g_psRTMask);
-            g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
-            g_dev->SetTexture(4, NULL);
-            g_dev->SetPixelShaderConstantF(26, c26, 1);
-        } else {
-            g_dev->SetPixelShader(g_psMask);
-            g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+    if (shadows && !rtShadow && g_debugMask != 2 && g_debugMask != 3) {
+        g_dev->SetPixelShader(g_psMask);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+    }
+    // 3a. Images tracees : ombre et occlusion (multiplient l'image), lumiere renvoyee (image x (1 + lumiere)).
+    if (rtShadow || rtAO || g_rtGIOn || g_rtReflOn) {
+        float rs[4]; RtResultSize(&rs[0], &rs[1]); rs[2] = 1.0f / rs[0]; rs[3] = 1.0f / rs[1];
+        g_dev->SetPixelShaderConstantF(191, rs, 1);
+        for (int k = 0; k < 3; k++) {
+            g_dev->SetTexture(4 + k, RtResult(k));
+            g_dev->SetSamplerState(4 + k, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(4 + k, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(4 + k, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+            g_dev->SetSamplerState(4 + k, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            g_dev->SetSamplerState(4 + k, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
         }
+        float fl[4] = { rtShadow ? 1.0f : 0.0f, rtAO ? 1.0f : 0.0f, 0.55f + 0.2f * g_night, 0.85f };
+        g_dev->SetPixelShaderConstantF(192, fl, 1);
+    }
+    if ((rtShadow || rtAO) && g_debugMask != 2 && g_debugMask != 3) {
+        float fogRt[4] = { fogStart, farClip, 600.0f, 480.0f };   // ombres tracees jusqu'a 600 m
+        g_dev->SetPixelShaderConstantF(26, fogRt, 1);
+        g_dev->SetPixelShader(g_psRTMask);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+        g_dev->SetPixelShaderConstantF(26, c26, 1);
+    }
+    if (g_rtGIOn && !g_debugMask) {
+        g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_DESTCOLOR);
+        g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_ONE);
+        g_dev->SetPixelShader(g_psRTGI);
+        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+        g_dev->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ZERO);
+        g_dev->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_SRCCOLOR);
     }
 
     // 3b. Occlusion ambiante : calculee dans g_ao (rotations en grille 4x4), puis floutee en multipliant l'image.
@@ -2187,6 +2330,7 @@ static void Apply()
     g_dev->SetTexture(1, NULL);
     g_dev->SetTexture(2, NULL);
     g_dev->SetTexture(3, NULL);
+    for (int k = 4; k < 7; k++) g_dev->SetTexture(k, NULL);
     g_dev->SetRenderTarget(0, oldRt);
     g_dev->SetDepthStencilSurface(oldDs);
     g_state->Apply();

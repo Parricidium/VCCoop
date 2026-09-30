@@ -153,11 +153,12 @@ static IDXGIAdapter1 *PickAdapter(char *name, size_t nameLen)
 }
 
 // ---------------------------------------------------------------- geometrie
-// Arenes : indices (uint), uv (float2), positions (float3), permanentes et "de l'image" (maillages transients).
-enum { GEO_IDX, GEO_UV, GEO_POS, GEO_COUNT };
-static const UINT kGeoStride[GEO_COUNT] = { 4, 8, 12 };
-static const UINT64 kGeoSize[GEO_COUNT] = { 96ull << 20, 64ull << 20, 96ull << 20 };
-static const UINT64 kTGeoSize[GEO_COUNT] = { 16ull << 20, 12ull << 20, 16ull << 20 };
+// Arenes : indices (uint), uv (float2), positions (float3), couleurs (D3DCOLOR), permanentes et "de l'image"
+// (maillages transients).
+enum { GEO_IDX, GEO_UV, GEO_POS, GEO_COL, GEO_NRM, GEO_COUNT };
+static const UINT kGeoStride[GEO_COUNT] = { 4, 8, 12, 4, 12 };
+static const UINT64 kGeoSize[GEO_COUNT] = { 96ull << 20, 64ull << 20, 96ull << 20, 32ull << 20, 96ull << 20 };
+static const UINT64 kTGeoSize[GEO_COUNT] = { 16ull << 20, 12ull << 20, 16ull << 20, 6ull << 20, 16ull << 20 };
 static ID3D12Resource *g_geo[GEO_COUNT], *g_tgeo[GEO_COUNT];
 static FreeList g_geoFree[GEO_COUNT];
 static UINT64 g_tgeoUsed[GEO_COUNT];
@@ -188,7 +189,7 @@ static void FreeMesh(Mesh &m)
 }
 
 // ---------------------------------------------------------------- textures
-enum { MAX_TEX = 8192, HEAP_GEO = MAX_TEX, HEAP_SIZE = MAX_TEX + 6 };
+enum { MAX_TEX = 8192, HEAP_GEO = MAX_TEX, HEAP_SIZE = MAX_TEX + 2 * GEO_COUNT };
 struct Tex { ID3D12Resource *res; UINT slot; };
 static std::unordered_map<uint32_t, Tex> g_texs;
 static std::vector<UINT> g_freeSlots;
@@ -217,12 +218,14 @@ static ID3D12Resource *g_staging; static BYTE *g_stagingPtr; static UINT64 g_sta
 enum { MAX_INST = 32768 };
 static ID3D12Resource *g_instDescs, *g_instInfo, *g_consts;
 static D3D12_RAYTRACING_INSTANCE_DESC *g_instDescPtr;
-struct InstInfo { uint32_t idxOff, uvOff, posOff, tex; float alphaRef; uint32_t flags, pad0, pad1; };
+struct InstInfo { uint32_t idxOff, uvOff, posOff, colOff, tex; float alphaRef; uint32_t flags, tint, nrmOff, pad[3]; };   // (rt.hlsl)
 static InstInfo *g_instInfoPtr;
 static BYTE *g_constsPtr;
 static ID3D12Resource *g_tlas, *g_tlasScratch; static UINT64 g_tlasSize, g_tlasScratchSize;
 static ID3D12Resource *g_out, *g_readback; static UINT64 g_outSize;
-static UINT g_outState;   // 0 : UAV
+// Historique (accumulation d'une image a l'autre) : deux tampons, l'un lu (image precedente), l'autre ecrit.
+static ID3D12Resource *g_hist[2]; static UINT64 g_histSize; static int g_histCur; static bool g_histValid;
+static float g_prevVP[16];
 
 static UINT64 Stage(const void *data, UINT64 bytes, UINT64 align)
 {
@@ -245,21 +248,23 @@ static void Replace(ID3D12Resource *&r, UINT64 &cur, UINT64 need, D3D12_HEAP_TYP
 // ---------------------------------------------------------------- initialisation
 static void CreatePipeline()
 {
-    D3D12_ROOT_PARAMETER rp[6] = {};
+    D3D12_ROOT_PARAMETER rp[8] = {};
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; rp[0].Descriptor.ShaderRegister = 0;
     rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; rp[1].Descriptor.ShaderRegister = 1;
     rp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; rp[2].Descriptor.ShaderRegister = 0;
     rp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV; rp[3].Descriptor.ShaderRegister = 0;
     D3D12_DESCRIPTOR_RANGE r4 = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, MAX_TEX, 0, 1, 0 };
-    D3D12_DESCRIPTOR_RANGE r5 = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0, 2, 0 };
+    D3D12_DESCRIPTOR_RANGE r5 = { D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 2 * GEO_COUNT, 0, 2, 0 };
     rp[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rp[4].DescriptorTable.NumDescriptorRanges = 1; rp[4].DescriptorTable.pDescriptorRanges = &r4;
     rp[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rp[5].DescriptorTable.NumDescriptorRanges = 1; rp[5].DescriptorTable.pDescriptorRanges = &r5;
+    rp[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV; rp[6].Descriptor.ShaderRegister = 2;
+    rp[7].ParameterType = D3D12_ROOT_PARAMETER_TYPE_UAV; rp[7].Descriptor.ShaderRegister = 1;
     for (auto &p : rp) p.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     D3D12_STATIC_SAMPLER_DESC ss = {};
     ss.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     ss.AddressU = ss.AddressV = ss.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     ss.MaxLOD = D3D12_FLOAT32_MAX; ss.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-    D3D12_ROOT_SIGNATURE_DESC rsd = { 6, rp, 1, &ss, D3D12_ROOT_SIGNATURE_FLAG_NONE };
+    D3D12_ROOT_SIGNATURE_DESC rsd = { 8, rp, 1, &ss, D3D12_ROOT_SIGNATURE_FLAG_NONE };
     ID3DBlob *sig = NULL, *err = NULL;
     if (FAILED(D3D12SerializeRootSignature(&rsd, D3D_ROOT_SIGNATURE_VERSION_1, &sig, &err)))
         Fatal("signature racine : %s", err ? (const char *)err->GetBufferPointer() : "?");
@@ -268,25 +273,27 @@ static void CreatePipeline()
 
     D3D12_DXIL_LIBRARY_DESC lib = {};
     lib.DXILLibrary.pShaderBytecode = g_rtDxil; lib.DXILLibrary.BytecodeLength = sizeof(g_rtDxil);
-    D3D12_HIT_GROUP_DESC hg0 = {}, hg1 = {};
+    D3D12_HIT_GROUP_DESC hg0 = {}, hg1 = {}, hg2 = {};
     hg0.HitGroupExport = L"HgPrimary"; hg0.ClosestHitShaderImport = L"PrimaryHit"; hg0.AnyHitShaderImport = L"PrimaryAny"; hg0.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     hg1.HitGroupExport = L"HgShadow"; hg1.AnyHitShaderImport = L"ShadowAny"; hg1.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
-    D3D12_RAYTRACING_SHADER_CONFIG sc = { 20, 8 };
-    D3D12_RAYTRACING_PIPELINE_CONFIG pc = { 1 };
+    hg2.HitGroupExport = L"HgRadiance"; hg2.ClosestHitShaderImport = L"RadianceHit"; hg2.AnyHitShaderImport = L"PrimaryAny"; hg2.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+    D3D12_RAYTRACING_SHADER_CONFIG sc = { 32, 8 };   // (charge la plus grosse : rayon de camera, 32 octets)
+    D3D12_RAYTRACING_PIPELINE_CONFIG pc = { 2 };
     D3D12_GLOBAL_ROOT_SIGNATURE gr = { g_rootSig };
     D3D12_STATE_SUBOBJECT so[] = {
         { D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY, &lib }, { D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, &hg0 }, { D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, &hg1 },
+        { D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP, &hg2 },
         { D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG, &sc }, { D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG, &pc },
         { D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE, &gr } };
     D3D12_STATE_OBJECT_DESC sod = { D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE, (UINT)(sizeof so / sizeof so[0]), so };
     CK(g_dev->CreateStateObject(&sod, IID_PPV_ARGS(&g_pso)));
     ID3D12StateObjectProperties *props = NULL;
     CK(g_pso->QueryInterface(IID_PPV_ARGS(&props)));
-    // Table : generation (0), echecs (64 : camera, 96 : ombre), impacts (128 : camera, 160 : ombre).
-    BYTE table[192] = {};
-    const wchar_t *names[5] = { L"RayGen", L"PrimaryMiss", L"ShadowMiss", L"HgPrimary", L"HgShadow" };
-    const UINT offs[5] = { 0, 64, 96, 128, 160 };
-    for (int i = 0; i < 5; i++) {
+    // Table : generation (0), echecs (64 : camera, 96 : ombre, 128 : couleur), impacts (192, 224, 256).
+    BYTE table[320] = {};
+    const wchar_t *names[7] = { L"RayGen", L"PrimaryMiss", L"ShadowMiss", L"RadianceMiss", L"HgPrimary", L"HgShadow", L"HgRadiance" };
+    const UINT offs[7] = { 0, 64, 96, 128, 192, 224, 256 };
+    for (int i = 0; i < 7; i++) {
         void *id = props->GetShaderIdentifier(names[i]);
         if (!id) Fatal("shader %ls introuvable", names[i]);
         memcpy(table + offs[i], id, D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES);
@@ -311,7 +318,7 @@ static void CreateResources()
     g_staging = Buffer(kStagingSize, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     g_instDescs = Buffer(MAX_INST * sizeof(D3D12_RAYTRACING_INSTANCE_DESC), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     g_instInfo = Buffer(MAX_INST * sizeof(InstInfo), D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
-    g_consts = Buffer(256, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+    g_consts = Buffer(512, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
     if (!g_staging || !g_instDescs || !g_instInfo || !g_consts) Fatal("memoire insuffisante (tampons d'envoi)");
     g_stagingPtr = (BYTE *)MapAll(g_staging);
     g_instDescPtr = (D3D12_RAYTRACING_INSTANCE_DESC *)MapAll(g_instDescs);
@@ -322,7 +329,7 @@ static void CreateResources()
     CK(g_dev->CreateDescriptorHeap(&hd, IID_PPV_ARGS(&g_heap)));
     g_descSize = g_dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     for (UINT i = 0; i < MAX_TEX; i++) { NullTexSrv(i); g_freeSlots.push_back(MAX_TEX - 1 - i); }
-    for (int g = 0; g < GEO_COUNT; g++) { RawSrv(HEAP_GEO + g, g_geo[g], kGeoSize[g]); RawSrv(HEAP_GEO + 3 + g, g_tgeo[g], kTGeoSize[g]); }
+    for (int g = 0; g < GEO_COUNT; g++) { RawSrv(HEAP_GEO + g, g_geo[g], kGeoSize[g]); RawSrv(HEAP_GEO + GEO_COUNT + g, g_tgeo[g], kTGeoSize[g]); }
 }
 
 // ---------------------------------------------------------------- commandes
@@ -345,16 +352,16 @@ static void CmdMesh(const BYTE *p, uint32_t bytes)
 {
     const RtMesh *h = (const RtMesh *)p;
     if (bytes < sizeof(RtMesh)) return;
-    UINT64 need = sizeof(RtMesh) + (UINT64)h->vertices * 20 + (UINT64)h->triangles * 12;
+    UINT64 need = sizeof(RtMesh) + (UINT64)h->vertices * RT_VERTEX_BYTES + (UINT64)h->triangles * 12;
     if (need > bytes || !h->vertices || !h->triangles) return;
     auto old = g_meshes.find(h->id);
     if (old != g_meshes.end()) { FreeMesh(old->second); g_meshes.erase(old); }
-    const BYTE *pos = p + sizeof(RtMesh), *uv = pos + h->vertices * 12, *idx = uv + h->vertices * 8;
+    const BYTE *pos = p + sizeof(RtMesh), *nrm = pos + h->vertices * 12, *uv = nrm + h->vertices * 12, *col = uv + h->vertices * 8, *idx = col + h->vertices * 4;
     Mesh m = {};
     m.transient = (h->flags & RT_MESH_TRANSIENT) != 0;
     m.vertices = h->vertices; m.triangles = h->triangles;
-    UINT64 sizes[GEO_COUNT] = { (UINT64)h->triangles * 12, (UINT64)h->vertices * 8, (UINT64)h->vertices * 12 };
-    const BYTE *srcs[GEO_COUNT] = { idx, uv, pos };
+    UINT64 sizes[GEO_COUNT] = { (UINT64)h->triangles * 12, (UINT64)h->vertices * 8, (UINT64)h->vertices * 12, (UINT64)h->vertices * 4, (UINT64)h->vertices * 12 };
+    const BYTE *srcs[GEO_COUNT] = { idx, uv, pos, col, nrm };
     UINT64 byteOff[GEO_COUNT];
     for (int g = 0; g < GEO_COUNT; g++) {
         if (m.transient) {
@@ -515,14 +522,17 @@ static void Render(const RtFrame &f, const RtInstance *inst)
         memcpy(d.Transform, s.transform, sizeof d.Transform);
         bool ped = (s.flags & RT_INST_DYNAMIC) && !(s.flags & RT_INST_VEHICLE);
         d.InstanceID = n; d.InstanceMask = ped ? 0x02 : 0x01; d.InstanceContributionToHitGroupIndex = 0;
-        bool alpha = (s.flags & RT_INST_ALPHA) && s.tex && g_texs.count(s.tex);
+        auto tx = s.tex ? g_texs.find(s.tex) : g_texs.end();
+        bool alpha = (s.flags & RT_INST_ALPHA) && tx != g_texs.end();
         d.Flags = D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE | (alpha ? 0 : D3D12_RAYTRACING_INSTANCE_FLAG_FORCE_OPAQUE);
         d.AccelerationStructure = (m.transient ? g_tblas : g_blas)->GetGPUVirtualAddress() + m.blasOff;
         InstInfo &ii = g_instInfoPtr[n];
-        ii.idxOff = (uint32_t)m.off[GEO_IDX]; ii.uvOff = (uint32_t)m.off[GEO_UV]; ii.posOff = (uint32_t)m.off[GEO_POS];
-        ii.tex = alpha ? g_texs[s.tex].slot + 1 : 0;
+        ii.idxOff = (uint32_t)m.off[GEO_IDX]; ii.uvOff = (uint32_t)m.off[GEO_UV]; ii.posOff = (uint32_t)m.off[GEO_POS]; ii.colOff = (uint32_t)m.off[GEO_COL];
+        ii.tex = tx != g_texs.end() ? tx->second.slot + 1 : 0;
         ii.alphaRef = s.alphaRef;
-        ii.flags = (alpha ? 1 : 0) | (m.transient ? 0x100 : 0) | (ped ? 0x200 : 0);
+        ii.flags = (alpha ? 1 : 0) | ((s.flags & RT_INST_VEHICLE) ? 2 : 0) | (m.transient ? 0x100 : 0) | (ped ? 0x200 : 0);
+        ii.tint = s.tint;
+        ii.nrmOff = (uint32_t)m.off[GEO_NRM];
         n++;
     }
 
@@ -568,17 +578,32 @@ static void Render(const RtFrame &f, const RtInstance *inst)
         }
         for (int r = 0; r < 4; r++) for (int c = 0; c < 4; c++) iv[r * 4 + c] = (float)a[r][c + 4];
     }
-    struct Consts { float invVP[16]; float camPos[4], camFwd[4], sun[4], params[4]; uint32_t size[4]; } c = {};
+    // Historique : meme taille d'image, pas de coupure demandee par le jeu.
+    UINT64 histBytes = (UINT64)f.outW * f.outH * 16;
+    if (!g_hist[0] || g_histSize != histBytes) {
+        for (auto &h : g_hist) { if (h) g_releaseAfterFrame.push_back(h); h = Buffer(histBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, true); if (!h) Fatal("memoire insuffisante (historique)"); }
+        g_histSize = histBytes; g_histValid = false;
+    }
+    bool histOk = g_histValid && !f.reset;
+
+    struct Consts { float invVP[16], prevVP[16]; float camPos[4], camFwd[4], sun[4], sunColor[4], ambient[4], skyTop[4], skyBottom[4], params[4]; uint32_t size[4]; } c = {};
+    static_assert(sizeof(Consts) <= 512, "constantes");
     memcpy(c.invVP, inv, 64);
+    memcpy(c.prevVP, g_prevVP, 64);
     c.camPos[0] = iv[12]; c.camPos[1] = iv[13]; c.camPos[2] = iv[14]; c.camPos[3] = f.maxDistance;
     float fl = sqrtf(iv[8] * iv[8] + iv[9] * iv[9] + iv[10] * iv[10]); if (fl < 1e-6f) fl = 1;
-    c.camFwd[0] = iv[8] / fl; c.camFwd[1] = iv[9] / fl; c.camFwd[2] = iv[10] / fl;
+    c.camFwd[0] = iv[8] / fl; c.camFwd[1] = iv[9] / fl; c.camFwd[2] = iv[10] / fl; c.camFwd[3] = f.wetness;
     memcpy(c.sun, f.sun, 16);
+    memcpy(c.sunColor, f.sunColor, 12); c.sunColor[3] = f.aoRadius;
+    memcpy(c.ambient, f.ambient, 12); c.ambient[3] = histOk ? 1.0f : 0.0f;
+    memcpy(c.skyTop, f.skyTop, 16); memcpy(c.skyBottom, f.skyBottom, 16);
     c.params[0] = f.sunAngle; c.params[1] = (float)f.raysPerPixel; c.params[2] = (float)(f.frameIndex & 0xFFFF);
     c.size[0] = f.outW; c.size[1] = f.outH; c.size[2] = f.features;
     memcpy(g_constsPtr, &c, sizeof c);
+    memcpy(g_prevVP, vp, 64);
+    g_histValid = true;
 
-    UINT64 outBytes = (UINT64)f.outW * f.outH * 8;
+    UINT64 outBytes = (UINT64)f.outW * f.outH * RT_OUT_BPP;
     if (!g_out || g_outSize < outBytes) {
         if (g_out) { g_releaseAfterFrame.push_back(g_out); g_releaseAfterFrame.push_back(g_readback); }
         g_outSize = outBytes;
@@ -598,14 +623,20 @@ static void Render(const RtFrame &f, const RtInstance *inst)
     g_cl->SetComputeRootDescriptorTable(4, gh);
     gh.ptr += (UINT64)HEAP_GEO * g_descSize;
     g_cl->SetComputeRootDescriptorTable(5, gh);
+    ID3D12Resource *histIn = g_hist[g_histCur ^ 1], *histOut = g_hist[g_histCur];
+    Barrier(histIn, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    g_cl->SetComputeRootShaderResourceView(6, histIn->GetGPUVirtualAddress());
+    g_cl->SetComputeRootUnorderedAccessView(7, histOut->GetGPUVirtualAddress());
     g_cl->SetPipelineState1(g_pso);
     D3D12_DISPATCH_RAYS_DESC dr = {};
     D3D12_GPU_VIRTUAL_ADDRESS t = g_shaderTable->GetGPUVirtualAddress();
     dr.RayGenerationShaderRecord = { t, 64 };
-    dr.MissShaderTable = { t + 64, 64, 32 };
-    dr.HitGroupTable = { t + 128, 64, 32 };
+    dr.MissShaderTable = { t + 64, 96, 32 };
+    dr.HitGroupTable = { t + 192, 96, 32 };
     dr.Width = f.outW; dr.Height = f.outH; dr.Depth = 1;
     g_cl->DispatchRays(&dr);
+    Barrier(histIn, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    g_histCur ^= 1;
     Barrier(g_out, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
     g_cl->CopyBufferRegion(g_readback, 0, g_out, 0, outBytes);
     Barrier(g_out, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
@@ -717,7 +748,7 @@ int main(int argc, char **argv)
         for (IUnknown *u : g_releaseAfterFrame) u->Release();
         g_releaseAfterFrame.clear();
         if (render) {
-            void *p = NULL; D3D12_RANGE rr = { 0, (SIZE_T)frame->outW * frame->outH * 8 };
+            void *p = NULL; D3D12_RANGE rr = { 0, (SIZE_T)frame->outW * frame->outH * RT_OUT_BPP };
             if (SUCCEEDED(g_readback->Map(0, &rr, &p))) { memcpy(out, p, rr.End); D3D12_RANGE none = { 0, 0 }; g_readback->Unmap(0, &none); }
             g_hdr->outW = frame->outW; g_hdr->outH = frame->outH;
         }
