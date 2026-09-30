@@ -137,6 +137,15 @@ static void ApplyDrawDistance()
     if (mem > 256 * 1024 * 1024) mem = 256 * 1024 * 1024;
     if (*(int *)0x94DD54 < mem) *(int *)0x94DD54 = mem;
 }
+// Journal : memoire de chargement en vigueur (distance d'affichage, mods), a chaque changement.
+static void LogStreamingBudget()
+{
+    static int last;
+    int cur = *(int *)0x94DD54;
+    if (cur == last) return;
+    last = cur;
+    Log("memoire de chargement : %d Mo (distance d'affichage %d %%, mods %d Mo au moins)", cur >> 20, g_cfg.drawDistance, ModsMemoryFloorMb());
+}
 
 // Garde-fou avant la physique : un vehicule ou un personnage dont la matrice, la position ou la vitesse n'est plus un
 // nombre (NaN) ou est aberrante fait calculer au jeu un secteur du monde hors de la grille, qui corrompt ses listes
@@ -193,7 +202,7 @@ static void __cdecl h_GameProcess()
     // du passager suit ; placees seulement apres, conducteur et passagers avaient une image de retard sur la voiture.
     if (GameState() == GS_PLAYING && FindPlayerPed()) VehiclesAfterProcess();
     ((void(__cdecl *)())0x4A4410)();
-    ApplyDrawDistance();
+    ApplyDrawDistance(); LogStreamingBudget();
     if (GameState() != GS_PLAYING || !FindPlayerPed()) return;
     PuppetsAfterProcess();
     VehiclesAfterProcess();

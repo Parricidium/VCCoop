@@ -124,6 +124,8 @@ static bool g_imgReady;
 
 static std::string SwapKey(const std::string &rel);
 static std::string Ext(const std::string &name);
+static uint64_t g_looseBytes;   // fichiers isoles regroupes dans vccmods.img (un pack de voitures HD en vrac : 560 Mo)
+
 static bool BuildImg(const std::vector<ModFile> &files)
 {
     std::string cache = CacheDir(), root = GameDir();
@@ -164,6 +166,7 @@ static bool BuildImg(const std::vector<ModFile> &files)
     fclose(img);
     fclose(dir);
     Log("mods : %d modeles dans vccmods.img (%u Ko)", n, block * 2);
+    g_looseBytes = (uint64_t)block * 2048;
     return n > 0;
 }
 
@@ -277,10 +280,19 @@ static void BuildPacks(const std::vector<ModFile> &files)
         wsprintfA(name, "vccpk%d.img", k); DeleteFileA((root + name).c_str());
         wsprintfA(name, "vccpk%d.dir", k); DeleteFileA((root + name).c_str());
     }
+}
+
+// Memoire de chargement (CStreaming::ms_memoryAvailable) selon TOUS les modeles moddes : archives de packs et fichiers
+// isoles de vccmods.img. Avant, seules les archives comptaient : un pack de voitures HD en vrac (560 Mo) gardait la
+// memoire d'origine, la circulation la remplissait et le jeu ne chargeait plus les batiments detailles (decor en
+// modeles lointains, invite de JD, 30/09). 256 Mo + la moitie des mods, 768 Mo au plus (jeu 32 bits).
+static void ComputeMemFloor()
+{
     int mb = GetPrivateProfileIntA("VCCoop", "MemoireChargement", 0, IniPath());
-    if (mb <= 0) { uint64_t want = 256 + (g_packBytes >> 20); mb = g_packBytes > (50u << 20) ? (int)(want > 1024 ? 1024 : want) : 0; }
+    uint64_t total = g_packBytes + g_looseBytes;
+    if (mb <= 0) { uint64_t want = 256 + (total >> 21); mb = total > (50u << 20) ? (int)(want > 768 ? 768 : want) : 0; }
     g_memFloorMb = mb;
-    if (mb) Log("mods : memoire de chargement %d Mo (archives : %u Mo)", mb, (unsigned)(g_packBytes >> 20));
+    if (mb) Log("mods : memoire de chargement %d Mo (archives %u Mo, fichiers isoles %u Mo)", mb, (unsigned)(g_packBytes >> 20), (unsigned)(g_looseBytes >> 20));
 }
 
 // --- Fichiers du jeu remplaces par chemin (vehicles.col, generic\wheels.dff...) ---
@@ -358,7 +370,9 @@ static void Build()
     std::vector<ModFile> files = Active();
     BuildPacks(files);
     BuildSwaps(files);
+    g_looseBytes = 0;
     g_imgReady = BuildImg(files);
+    ComputeMemFloor();
     g_handling = MergeData("data\\handling.cfg", files, false, "handling.cfg") > 0;
     g_carcols = MergeData("data\\carcols.dat", files, true, "carcols.dat") > 0;
     g_ide = MergeData("data\\default.ide", files, false, "default.ide") > 0;
