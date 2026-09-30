@@ -1353,7 +1353,10 @@ void Gfx9AfterDraw(DWORD fvf, const GfxDraw &d)
         IDirect3DVertexBuffer9 *vb = NULL; UINT o = 0, st = 0;
         bool dynamic = SUCCEEDED(g_dev->GetStreamSource(0, &vb, &o, &st)) && vb && BridgeVertexMirror(vb);
         if (vb) vb->Release();
-        if (!blend || dynamic) {
+        DWORD at0 = 0;
+        g_dev->GetRenderState(D3DRS_ALPHATESTENABLE, &at0);
+        bool cutout = at0 && (fvf & D3DFVF_TEXCOUNT_MASK);   // arbres et buissons en fondu (LOD) : texture decoupee
+        if ((!blend && !cutout) || dynamic) {
             g_why[2]++;
             static uint32_t lastDiag; static int n;
             if (g_cfg.logScripts && GetTickCount() - lastDiag > 10000) { if (++n > 6) { lastDiag = GetTickCount(); n = 0; } Log("rendu : refuse (sans ecriture z) fvf %X, melange %lu, dynamique %d, %u triangles", fvf, blend, dynamic, d.count); }
@@ -1739,9 +1742,17 @@ static void RenderScreenDepth(const M4 &vp, bool withWater)
     g_dev->SetVertexShaderConstantF(4, vsParams, 1);
     g_dev->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
     for (const Rec &r : g_recs) {
-        if (!r.receiver || (r.water && !withWater)) continue;
+        // Feuillages, arbres et buissons en transparence ou en fondu : dans la profondeur, decoupes par leur texture
+        // (seuil 0,5 : le verre tres transparent n'y entre pas). Sans eux, la brume, les ombres et le reste prenaient
+        // la profondeur du decor derriere : les arbres semblaient transparents (JD, 30/09).
+        bool foliage = r.mainView && r.alphaTest && r.tex && !r.dynamic && !r.water;
+        if ((!r.receiver && !foliage) || (r.water && !withWater)) continue;
         M4 w; memcpy(w.m, r.world, 64);
-        DrawRec(r, Mul(w, vp), true);
+        if (!r.receiver) {   // bords des feuilles (a moitie transparents) compris : sinon un liseré bleute (brume du ciel)
+            Rec c = r;
+            c.alphaRef = 0.15f;
+            DrawRec(c, Mul(w, vp), true);
+        } else DrawRec(r, Mul(w, vp), true);
     }
 }
 
@@ -2742,9 +2753,26 @@ static void __cdecl h_RenderTransparentWater()
     if (WaterWanted() && !g_applied) DrawModernWater();
 }
 
+// Feuillages : le jeu les dessine avec un seuil de transparence tres bas ; leurs textures cachent du bleu ciel dans
+// les parties transparentes, qui debordait en liseré sur le bord des feuilles (JD, 30/09). Seuil releve le temps du
+// dessin (rendu moderne), remis ensuite.
+static DWORD g_savedAlphaRef = ~0u;
+static void RaiseFoliageAlphaRef(DWORD fvf)
+{
+    if ((fvf & D3DFVF_POSITION_MASK) != D3DFVF_XYZ || !(fvf & D3DFVF_TEXCOUNT_MASK)) return;
+    DWORD at = 0, ref = 0;
+    g_dev->GetRenderState(D3DRS_ALPHATESTENABLE, &at);
+    if (!at) return;
+    g_dev->GetRenderState(D3DRS_ALPHAREF, &ref);
+    if (ref >= 0x60) return;
+    g_savedAlphaRef = ref;
+    g_dev->SetRenderState(D3DRS_ALPHAREF, 0x60);
+}
+
 void Gfx9BeforeDraw(DWORD fvf, bool up)
 {
     if (!g_dev) return;
+    if (!up) RaiseFoliageAlphaRef(fvf);
     if (up && !g_applied && (fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZ) g_why[7]++;
     if (g_applied) {
         if ((fvf & D3DFVF_POSITION_MASK) == D3DFVF_XYZ) g_after3d++;
@@ -3259,6 +3287,7 @@ static void MaybeBindSoft(DWORD fvf)
 
 void Gfx9DrawDone()
 {
+    if (g_savedAlphaRef != ~0u) { g_dev->SetRenderState(D3DRS_ALPHAREF, g_savedAlphaRef); g_savedAlphaRef = ~0u; }
     RestoreWind();
     if (!g_softBound) return;
     g_softBound = false;
