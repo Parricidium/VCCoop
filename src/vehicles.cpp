@@ -828,6 +828,13 @@ static void MyCarHitsPlayers()
 // est figee et "abandonnee" (sa physique est chez son proprietaire) : moteur hurlant roues en l'air au premier rapport,
 // jamais de crissement, sirene muette. Juste avant le traitement audio, on les deduit de la vitesse et des pedales
 // recues ; le statut est remis juste apres.
+static int VehGearCount(void *v)
+{
+    uint8_t *hd = Field<uint8_t *>(v, 0x120);
+    int n = hd ? hd[0x34 + 0x4A] : 1;
+    return n < 1 ? 1 : n > 5 ? 5 : n;
+}
+
 static void *g_audioStatus[64];
 static int g_audioStatusN;
 
@@ -843,8 +850,13 @@ void VehiclesBeforeAudio()
         float fwd = mv.x * f.x + mv.y * f.y + mv.z * f.z, side = fabsf(mv.x * r.x + mv.y * r.y + mv.z * r.z);
         float sp = sqrtf(mv.x * mv.x + mv.y * mv.y);
         bool ground = fabsf(mv.z) < 0.08f;
+        // Jamais au-dela du nombre de rapports de la boite (fiche de conduite +0x120, cTransmission +0x34, nNumberOfGears
+        // +0x4A ; 3 a 5 selon le vehicule et les mods de conduite). Au-dela, cTransmission::CalculateDriveAcceleration
+        // (0x5B2E20) lit des rapports hors table et passe la vitesse au-dessus puis en dessous sans fin : debordement de
+        // pile des que la physique du jeu reprend ce vehicule (JD, 30/09 : PLANTAGE C00000FD en 0x5B2F62, pile
+        // 5B2F1A / 5B2F6C ; aussi les arrets sans journal de 19 h 40 et 19 h 56).
         int gear = fwd < -0.01f ? 0 : 1 + (int)(sp * 180.0f / 40.0f);   // ~40 km/h par rapport
-        Field<uint8_t>(v, 0x208) = (uint8_t)(gear > 5 ? 5 : gear);
+        Field<uint8_t>(v, 0x208) = (uint8_t)min(gear, VehGearCount(v));
         float gas = Field<float>(v, 0x1F0), brake = Field<float>(v, 0x1F4);
         int ws = (side > 0.08f && sp > 0.1f) ? 2                        // glisse (derapage)
                : (brake > 0.8f && sp > 0.15f) ? 3                       // roues bloquees (freinage)
