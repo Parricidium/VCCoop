@@ -115,6 +115,9 @@ struct Ghost {
     uint8_t lastShots;
     Track track;
     AnimMirror anims;
+    bool created;             // une copie a deja existe (si g.ped redevient nul, c'est le jeu qui l'a retiree)
+    int recreated;
+    uint32_t lastCreate;
 };
 static Ghost g_ghosts[MAX_GHOSTS];
 
@@ -240,6 +243,10 @@ static void UpdateGhost(Ghost &g)
     g.lastShots = m.shots;
 
     void *want = m.vehicleId ? NetVehicleById(m.vehicleId) : NULL;
+    // Jamais dans une epave : le jeu retire aussitot le personnage qu'on y pose, et la copie etait recreee puis
+    // reposee 15 fois par seconde, invisible et intouchable (JD, 30/09, cible de Four Iron dans sa voiturette
+    // explosee). Elle reste a pied a sa position.
+    if (want && EntityStatus(want) == STATUS_WRECKED) want = NULL;
     void *cur = InVehicle(ped) ? PedVehicle(ped) : NULL;
     uint32_t now = GetTickCount();
     // Montee / descente animees (comme les doubles des joueurs, coop.cpp) ; si ca traine, pose directe comme avant.
@@ -292,7 +299,8 @@ static void UpdateGhost(Ghost &g)
     if (want && !cur && WarpIntoSeat(ped, want, m.seat)) cur = want;
     uint8_t &flags = Field<uint8_t>(ped, 0x52);
     if (cur) { flags |= 0x04; return; }
-    if (m.vehicleId) flags &= ~0x04;   // vehicule pas encore copie : cache
+    bool inWreck = m.vehicleId && !want && NetVehicleById(m.vehicleId);
+    if (m.vehicleId && !inWreck) flags &= ~0x04;   // vehicule pas encore copie : cache
     else flags |= 0x04;
 
     // Position et cap : apres la physique, par interpolation (GhostsAfterProcess).
@@ -336,7 +344,11 @@ static void OnPed(const MsgPed &m)
 void GhostsAfterProcess()
 {
     for (auto &g : g_ghosts) {
-        if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.state.vehicleId || g.entering) continue;
+        if (!g.used || !g.ped || g.dead || InVehicle(g.ped) || g.entering) continue;
+        if (g.state.vehicleId) {   // (dans une epave chez nous : a pied, a sa position ; sinon cache en attendant le vehicule)
+            void *v = NetVehicleById(g.state.vehicleId);
+            if (!v || EntityStatus(v) != STATUS_WRECKED) continue;
+        }
         Snap n;
         if (!TrackSample(g.track, g.owner, n, true)) continue;
         float jx = n.pos[0] - Pos(g.ped).x, jy = n.pos[1] - Pos(g.ped).y, jz = n.pos[2] - Pos(g.ped).z;
@@ -462,7 +474,17 @@ void EntitiesFrame(bool inGame)
     for (auto &g : g_ghosts) {
         if (!g.used) continue;
         if (now - g.lastRecv > 5000 || !g_players[g.owner].connected) { DestroyGhost(g); continue; }   // plus envoye
-        if (!g.ped) CreateGhost(g);
+        if (!g.ped) {
+            // Copie retiree par le jeu lui-meme (pas par nous) : recreee, mais on le note (une fois par copie) ; au-dela
+            // de 5 fois, une toutes les 2 s seulement.
+            if (g.created) {
+                g.recreated++;
+                if (g.recreated == 1) Log("entites : copie %08X retiree par le jeu, recreee", g.handle);
+                if (g.recreated > 5 && now - g.lastCreate < 2000) continue;
+            }
+            CreateGhost(g);
+            if (g.ped) { g.created = true; g.lastCreate = now; }
+        }
         if (g.ped) UpdateGhost(g);
     }
 }
