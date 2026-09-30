@@ -11,7 +11,9 @@
 #include "mirror.h"
 #include "combat.h"
 #include "saveshare.h"
+#include "seats.h"
 #include <string.h>
+#include <math.h>
 
 using namespace game;
 
@@ -21,6 +23,8 @@ using namespace game;
 //   M personnage, mais le Tommy de l'hote devient le notre (tenue changee par la mission : chacun s'habille)
 //   b marqueur cree   o objet cree   k pickup cree   (sorties : on retient la correspondance hote -> invite)
 //   K pickup (reference en entree)
+//   Q (envoye seulement) objet que l'invite n'a pas par correspondance : reference de l'hote + modele + position ;
+//     l'invite prend le sien (meme modele, le plus proche)
 //   g variable globale du script : on envoie son adresse (minuteurs / compteurs a l'ecran, lus en direct par le jeu)
 //   * signature libre : tous les parametres sont relus apres execution (commandes sans reference d'entite)
 struct OpSig { uint16_t op; const char *sig; const char *name; };
@@ -224,6 +228,17 @@ static int g_hostOutAt;
 static void RememberHostOut(uint32_t h) { g_hostOuts[g_hostOutAt++ % 512] = h; }
 static bool IsHostOut(uint32_t h) { for (uint32_t x : g_hostOuts) if (x == h) return true; return false; }
 
+// Objets (CPools::ms_pObjectPool, cases de 0x1A0 octets ; reference = case << 8 | octet de la case).
+enum { OBJECT_POOL_ENTRY = 0x1A0 };
+static Pool *ObjectPool() { return *(Pool **)0x94DBE0; }
+static void *ObjectAt(uint32_t h)
+{
+    Pool *p = ObjectPool();
+    int i = (int)(h >> 8);
+    if (!p || i < 0 || i >= p->size || (p->flags[i] & 0x80) || p->flags[i] != (uint8_t)h) return NULL;
+    return p->objects + i * OBJECT_POOL_ENTRY;
+}
+
 static void TrackTimer(uint16_t op, uint16_t offset);
 static int g_timerCount;
 
@@ -387,6 +402,20 @@ void MirrorAfter(void *script)
         // Objet / marqueur / pickup du script principal (pas une sortie reproduite) : l'invite a le sien dans la
         // meme globale.
         if ((kind == 'O' || kind == 'B' || kind == 'K') && p.type == 2 && !IsHostOut((uint32_t)v)) { kind = 'g'; v = p.where; }
+        // Objet du decor ou du script principal passe par une variable locale de la mission (grille de la manifestation
+        // de law4, portes du club de golf) : l'invite n'en a pas la reference. On envoie de quoi le retrouver chez lui.
+        // (JD, 30/09 : 60 SLIDE_OBJECT "introuvable chez nous", portes restees fermees, invite bloque dans la cinematique.)
+        if (kind == 'O' && !IsHostOut((uint32_t)v)) {
+            if (void *o = ObjectAt((uint32_t)v)) {
+                buf[len++] = 'Q';
+                memcpy(buf + len, &v, 4); len += 4;
+                int16_t model = ModelIndex(o);
+                memcpy(buf + len, &model, 2); len += 2;
+                float xyz[3] = { Pos(o).x, Pos(o).y, Pos(o).z };
+                memcpy(buf + len, xyz, 12); len += 12;
+                continue;
+            }
+        }
         if (kind == 'b' || kind == 'o' || kind == 'k') {
             RememberHostOut((uint32_t)v);
             if (p.type == 2) {   // sortie dans une globale : l'invite y ecrira sa propre reference ('x' 'y' 'z')
@@ -629,6 +658,9 @@ void MirrorOnTimers(const uint8_t *buf, int len)
 struct HandlePair { uint32_t host, guest; bool keep; };   // keep : icone fixe, gardee en fin de mission
 static HandlePair g_blips[128], g_objs[128], g_pickups[128], g_props[32];
 static int g_blipCount, g_objCount, g_pickupCount, g_propCount;
+// Objets du decor / du script principal retrouves par modele et position ('Q') : pas supprimes en fin de mission.
+static HandlePair g_found[64];
+static int g_foundCount;
 
 static bool MapGet(HandlePair *m, int n, uint32_t host, uint32_t &guest)
 {
@@ -658,6 +690,30 @@ static bool g_scriptReady;
 // cette zone corrompait le code de la mission en cours (celle de l'hote, ou INITIAL / une mission secondaire /
 // un achat d'immeuble chez l'invite).
 enum { SCRATCH = 0x370E8 + 35000 - 0x100 };
+
+// Objet de l'hote ('Q') chez nous : deja associe (et toujours la), sinon le notre du meme modele le plus proche de sa
+// position (30 m : une grille a pu deja coulisser chez l'hote).
+static bool FindHostObject(uint32_t host, int model, const float *xyz, uint32_t &guest)
+{
+    if ((MapGet(g_objs, g_objCount, host, guest) || MapGet(g_found, g_foundCount, host, guest)) && ObjectAt(guest)) return true;
+    Pool *p = ObjectPool();
+    if (!p) return false;
+    int best = -1;
+    float bestD = 30.0f * 30.0f;
+    for (int i = 0; i < p->size; i++) {
+        if (p->flags[i] & 0x80) continue;
+        void *o = p->objects + i * OBJECT_POOL_ENTRY;
+        if (ModelIndex(o) != model) continue;
+        float dx = Pos(o).x - xyz[0], dy = Pos(o).y - xyz[1], dz = Pos(o).z - xyz[2];
+        float d = dx * dx + dy * dy + dz * dz;
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) return false;
+    guest = (uint32_t)(best << 8) | p->flags[best];
+    MapSet(g_found, g_foundCount, 64, host, guest);
+    Log("miroir : objet %d de l'hote (%08X) retrouve chez nous (%08X, a %.1f m)", model, host, guest, sqrtf(bestD));
+    return true;
+}
 
 static bool Translate(char kind, uint32_t host, uint32_t &guest)
 {
@@ -734,7 +790,7 @@ static const uint8_t *FirstLabel(const uint8_t *d, int len)
         char k = (char)d[at++];
         if (k == 'l') return at + 8 <= len ? d + at : NULL;
         if (k == 'e') continue;
-        at += (k == 'x' || k == 'y' || k == 'z') ? 6 : 4;
+        at += (k == 'x' || k == 'y' || k == 'z') ? 6 : k == 'Q' ? 18 : 4;
     }
     return NULL;
 }
@@ -769,6 +825,12 @@ static bool Execute(const uint8_t *d, int len, bool force)
     }
     // En pleine course de taxi (ou autre mission secondaire jouee ici) : la mission de l'hote ne nous teleporte pas.
     if ((op == 0x0055 || op == 0x012A) && d[0] == RL_SCRIPT_CMD && GuestSideMission()) { Log("miroir : teleportation de l'hote ignoree (mission secondaire en cours)"); return true; }
+    // SET_PLAYER_COORDINATES deplace le vehicule avec le joueur : l'hote, lui, etait a pied (fin de cinematique). On
+    // descend d'abord : la voiture reste ou elle est (JD, 30/09, invite teleporte "a cote de moi mais en voiture").
+    if (op == 0x0055 && d[0] == RL_SCRIPT_CMD && !g_players[0].state.inVehicle) {
+        void *me = FindPlayerPed();
+        if (me && InVehicle(me)) { WarpOutOfVehicle(me, NULL); Log("miroir : descendu du vehicule avant la teleportation de l'hote"); }
+    }
     // Objet que la mission de l'hote ne gere plus : il reste chez lui (pas detruit a la fin de mission), donc chez nous aussi.
     if (op == 0x01C4 && d[0] == RL_SCRIPT_CMD && n >= 1) { uint32_t h; memcpy(&h, d + 5, 4); MapDel(g_objs, g_objCount, h); return true; }
     // Eclairage d'interieur : seulement si l'on est dans un interieur (on suit la zone de l'hote).
@@ -835,6 +897,25 @@ static bool Execute(const uint8_t *d, int len, bool force)
         if (kind == 'l') { memcpy(ss + w, d + at, 8); w += 8; at += 8; continue; }
         uint32_t v;
         memcpy(&v, d + at, 4); at += 4;
+        if (kind == 'Q') {   // objet de l'hote designe par son modele et sa position
+            int16_t model;
+            float xyz[3];
+            memcpy(&model, d + at, 2); memcpy(xyz, d + at + 2, 12); at += 14;
+            uint32_t g;
+            if (!FindHostObject(v, model, xyz, g)) {
+                static uint32_t lastMiss;
+                if (lastMiss != v) {
+                    lastMiss = v;
+                    const OpSig *s = FindOp(op);
+                    Log("miroir : %s ignoree (objet %d de l'hote en %.1f %.1f %.1f introuvable chez nous)", s ? s->name : "?", model, xyz[0], xyz[1], xyz[2]);
+                }
+                return true;   // (un objet du decor ne viendra pas plus tard : on n'attend pas)
+            }
+            ss[w] = 1;
+            memcpy(ss + w + 1, &g, 4);
+            w += 5;
+            continue;
+        }
         if (kind == 'g') {   // adresse d'une globale : la meme chez nous
             ss[w] = 2;
             *(uint16_t *)(ss + w + 1) = (uint16_t)v;
@@ -918,6 +999,12 @@ static bool Execute(const uint8_t *d, int len, bool force)
         uint32_t host;
         memcpy(&host, d + 5, 4);
         MapDel(g_blips, g_blipCount, host);
+    }
+    if (op == 0x0108 && n >= 1 && (d[4] == 'O' || d[4] == 'Q')) {   // DELETE_OBJECT : correspondance oubliee
+        uint32_t host;
+        memcpy(&host, d + 5, 4);
+        MapDel(g_objs, g_objCount, host);
+        MapDel(g_found, g_foundCount, host);
     }
     if (op == 0x0215) {   // REMOVE_PICKUP
         uint32_t host;
@@ -1073,7 +1160,7 @@ void MirrorFrame(bool inGame)
     }
     if (*(int *)0x978810 != g_mirrorArea) g_mirrorArea = -1;   // le jeu a change de zone lui-meme (porte) : on ne suit plus
     if (!inGame) {
-        g_blipCount = g_objCount = g_pickupCount = g_propCount = 0;
+        g_blipCount = g_objCount = g_pickupCount = g_propCount = g_foundCount = 0;
         // Hors partie (salon, chargement), la presentation des missions de l'hote n'a pas de sens : rejouees d'un coup
         // a l'arrivee (cameras fixes, textes, sons de l'intro...), elles faisaient planter la camera. On ne garde que
         // les variables de l'histoire ; l'hote renvoie l'etat complet (et les marqueurs) quand on arrive en partie.

@@ -831,22 +831,14 @@ static void GatherToHost(bool inGame)
     void *ped = FindPlayerPed();
     float hh = h.state.heading;
     if (InVehicle(ped)) {
-        // En vehicule : la demande restait en attente sans limite et le teleportait des qu'il descendait, des minutes
-        // plus tard, n'importe ou. Au volant et pas trop loin : la voiture vient avec lui, 8 m derriere l'hote ;
-        // sinon on renonce.
-        void *veh = PedVehicle(ped);
-        float dx = h.state.pos[0] - Pos(ped).x, dy = h.state.pos[1] - Pos(ped).y;
-        gathered = true;
-        if (veh && VehDriver(veh) == ped && dx * dx + dy * dy < 150.0f * 150.0f && !h.state.inVehicle) {
-            Pos(veh) = { h.state.pos[0] + sinf(hh) * 8.0f, h.state.pos[1] - cosf(hh) * 8.0f, h.state.pos[2] + 0.5f };
-            MoveSpeed(veh) = { 0, 0, 0 };
-            TurnSpeed(veh) = { 0, 0, 0 };
-            SetHeadingMatrix(veh, hh);
-            AreaCode(ped) = h.state.area;
-            MirrorFollowHostArea(h.state.area);
-            Log("coop : pose en voiture derriere l'hote");
-        } else Log("coop : regroupement abandonne (en vehicule)");
-        return;
+        // En vehicule, l'hote a pied (fin de cinematique, debut de mission) : on descend et on est pose a pied a cote
+        // de lui ; la voiture reste ou elle etait. (Avant, elle venait avec lui, 8 m derriere l'hote : JD, 30/09,
+        // "TP a cote de moi mais en voiture".) L'hote lui-meme en vehicule : on ne touche a rien. (La demande ne reste
+        // pas en attente : elle le teleportait des qu'il descendait, des minutes plus tard, n'importe ou.)
+        if (h.state.inVehicle) { gathered = true; Log("coop : regroupement abandonne (tous deux en vehicule)"); return; }
+        WarpOutOfVehicle(ped, NULL);
+        if (InVehicle(ped)) { gathered = true; Log("coop : regroupement abandonne (sortie du vehicule impossible)"); return; }
+        Log("coop : descendu du vehicule pour le regroupement");
     }
     // Derriere l'hote (d'ou il vient, donc un endroit libre), decale d'un pas par joueur ; la place libre la plus
     // proche si ca tombe dans un mur.
@@ -1163,9 +1155,14 @@ static void BoardingFrame()
         void *v = PedVehicle(me);
         int other = OtherEntering(v, true);
         bool taken = VehDriver(v) && IsPuppet(VehDriver(v));
-        if (taken || (other >= 0 && other < g_localId)) {
+        // Conduit chez son proprietaire par un personnage de sa mission (copie ici) : on ne le lui prend pas. Le jeu
+        // "sortait" la copie sans effet chez l'hote, on se retrouvait assis dans la cible (JD, 30/09, Four Iron : la
+        // voiturette du golfeur reprise par l'invite, la cible disparue chez lui).
+        bool npc = VehDriver(v) && IsGhostPed(VehDriver(v));
+        if (taken || npc || (other >= 0 && other < g_localId)) {
             AbortEnter(me);
-            Log("coop : volant %s par le joueur %d, je monte en passager", taken ? "pris" : "reserve", taken ? PuppetPlayer(VehDriver(v)) : other);
+            if (npc) Log("coop : %08X conduit par un personnage de l'hote, je monte en passager", NetVehicleId(v));
+            else Log("coop : volant %s par le joueur %d, je monte en passager", taken ? "pris" : "reserve", taken ? PuppetPlayer(VehDriver(v)) : other);
             TogglePassenger();
         }
     }
