@@ -672,6 +672,56 @@ static void DrawHostTab(float x0, float y0, float x1, float y1)
     }
 }
 
+// Ray tracing (Rendu=12) : reglages appliques tout de suite (vcrt64.exe les recoit a l'image suivante) et enregistres
+// dans vccoop.ini (memes cles que l'onglet RAY TRACING du lanceur). Deux colonnes : libelle, [-] valeur.
+static void DrawRtTab(float x0, float y0, float x1, float y1)
+{
+    bool fr = French();
+    struct Row { const char *fr, *en; bool *b; int *v; int vals[6]; int n; const char *labFr[6], *labEn[6]; const char *suffix; };
+    static const char *onOffFr[] = { "NON", "OUI" }, *onOffEn[] = { "OFF", "ON" };
+    Row rows[] = {
+        { "Ombres tracees", "Ray-traced shadows", &g_cfg.rtShadows, NULL, {}, 0, {}, {}, "" },
+        { "Rayons d'ombre par pixel", "Shadow rays per pixel", NULL, &g_cfg.rtRays, { 1, 2, 4, 8, 16 }, 5, {}, {}, "" },
+        { "Douceur des ombres", "Shadow softness", NULL, &g_cfg.rtSoft, { 0, 1, 2 }, 3, { "NETTES", "DOUCES", "TRES DOUCES" }, { "SHARP", "SOFT", "VERY SOFT" }, "" },
+        { "Portee des ombres", "Shadow distance", NULL, &g_cfg.rtDist, { 200, 400, 600, 1000, 1500 }, 5, {}, {}, " m" },
+        { "Resolution des rayons", "Ray resolution", NULL, &g_cfg.rtScale, { 50, 100 }, 2, { "DEMIE", "PLEINE" }, { "HALF", "FULL" }, "" },
+        { "Lissage du bruit", "Noise smoothing", NULL, &g_cfg.rtSmooth, { 0, 1, 2 }, 3, { "FAIBLE", "MOYEN", "FORT" }, { "LOW", "MEDIUM", "HIGH" }, "" },
+        { "Occlusion tracee", "Ray-traced occlusion", &g_cfg.rtAO, NULL, {}, 0, {}, {}, "" },
+        { "Reflets traces", "Ray-traced reflections", &g_cfg.rtRefl, NULL, {}, 0, {}, {}, "" },
+        { "Force des reflets", "Reflection strength", NULL, &g_cfg.rtReflK, { 25, 50, 75, 100, 150, 200 }, 6, {}, {}, " %" },
+        { "Sols brillants", "Shiny ground", NULL, &g_cfg.rtGloss, { 0, 1, 2 }, 3, { "PLUIE", "LEGERS", "MIROIRS" }, { "RAIN", "LIGHT", "MIRRORS" }, "" },
+        { "Lumiere tracee", "Ray-traced lighting", &g_cfg.rtGI, NULL, {}, 0, {}, {}, "" },
+        { "Force de la lumiere", "Lighting strength", NULL, &g_cfg.rtGIK, { 25, 50, 75, 100, 150, 200 }, 6, {}, {}, " %" },
+        { "Force de l'occlusion", "Occlusion strength", NULL, &g_cfg.rtAOK, { 25, 50, 75, 100, 150 }, 5, {}, {}, " %" },
+    };
+    const int n = (int)(sizeof(rows) / sizeof(rows[0])), perCol = (n + 1) / 2;
+    float colW = (x1 - x0 - g_u * 3) / 2, bh = g_u * 4.0f, gap = g_u * 0.5f;
+    TextA(x0 + g_u, y0 + g_u * 0.4f, 0.48f, C_DIM, AL_LEFT, Tr("Change tout de suite, garde pour les prochaines parties.", "Applies right away, kept for the next games."));
+    float top = y0 + g_u * 0.8f + LineH(0.48f);
+    bool changed = false;
+    for (int i = 0; i < n; i++) {
+        Row &r = rows[i];
+        float cx0 = x0 + g_u + (i / perCol) * (colW + g_u), cx1 = cx0 + colW;
+        float y = top + (i % perCol) * (bh + gap);
+        Rect(cx0, y, cx1, y + bh, C_PANEL);
+        TextA(cx0 + g_u, y + bh * 0.5f - LineH(0.5f) * 0.5f, 0.5f, C_TEXT, AL_LEFT, fr ? r.fr : r.en);
+        float vw = colW * 0.42f, vx1 = cx1 - g_u * 0.5f, vx0 = vx1 - vw, by0 = y + g_u * 0.35f, by1 = y + bh - g_u * 0.35f;
+        char val[32];
+        if (r.b) {
+            if (Button(vx0, by0, vx1, by1, fr ? onOffFr[*r.b] : onOffEn[*r.b], *r.b)) { *r.b = !*r.b; changed = true; }
+            continue;
+        }
+        int k = 0;
+        for (int j = 0; j < r.n; j++) if (r.vals[j] <= *r.v) k = j;
+        if (r.labFr[0]) _snprintf(val, sizeof(val), "%s", fr ? r.labFr[k] : r.labEn[k]);
+        else _snprintf(val, sizeof(val), "%d%s", r.vals[k], r.suffix);
+        float aw = bh * 0.9f;
+        if (Button(vx0 - aw - g_u * 0.4f, by0, vx0 - g_u * 0.4f, by1, "-", false, k > 0))   // (pas de "<" dans la police du jeu) { *r.v = r.vals[k - 1]; changed = true; }
+        if (Button(vx0, by0, vx1, by1, val, false)) { *r.v = r.vals[(k + 1) % r.n]; changed = true; }
+    }
+    if (changed) MenuSaveIni();
+}
+
 static void DrawChat()
 {
     uint32_t now = GetTickCount();
@@ -730,7 +780,7 @@ void PanelDraw()
         bool admin = LocalAdmin();
         struct T { const char *fr, *en; int id; bool show; } tabs[] = {
             { "JOUEURS", "PLAYERS", 0, true }, { "VEHICULES", "VEHICLES", 1, admin }, { "OUTILS", "TOOLS", 2, admin },
-            { "MONDE", "WORLD", 3, admin }, { "HOTE", "HOST", 4, g_cfg.host } };
+            { "MONDE", "WORLD", 3, admin }, { "HOTE", "HOST", 4, g_cfg.host }, { "RAY TRACING", "RAY TRACING", 5, g_cfg.renderer == 12 } };
         int shown = 0;
         for (auto &t : tabs) shown += t.show;
         bool tabOk = false;
@@ -741,7 +791,7 @@ void PanelDraw()
         for (auto &t : tabs) {
             if (!t.show) continue;
             float bx = x0 + g_u + k * (tw + g_u);
-            if (Button(bx, ty, bx + tw, ty + tbh, French() ? t.fr : t.en, g_tab == t.id, true, 0.6f)) { g_tab = t.id; g_scroll = 0; }
+            if (Button(bx, ty, bx + tw, ty + tbh, French() ? t.fr : t.en, g_tab == t.id, true, shown > 5 ? 0.5f : 0.6f)) { g_tab = t.id; g_scroll = 0; }
             k++;
         }
         float cy0 = ty + tbh + g_u, cy1 = y1 - g_u * 3.6f;
@@ -752,6 +802,7 @@ void PanelDraw()
         case 2: DrawToolsTab(x0, cy0, x1, cy1); break;
         case 3: DrawWorldTab(x0, cy0, x1, cy1); break;
         case 4: DrawHostTab(x0, cy0, x1, cy1); break;
+        case 5: DrawRtTab(x0, cy0, x1, cy1); break;
         }
         char hint[128];
         _snprintf(hint, sizeof(hint), French() ? "Echap ou F10 : fermer     %c : tchat" : "Esc or F10: close     %c: chat", g_chatKey);
@@ -846,6 +897,12 @@ static void TestPanel(bool inGame)
         uint32_t c = t % 25000;
         if (c > 5000 && c < 15000 && !g_typing) { g_typing = true; lstrcpyA(g_input, "J'arrive, attends-moi"); g_inputLen = lstrlenA(g_input); Log("test menu : tchat"); }
         else if (c >= 15000 && g_typing) EndTyping(true);
+        return;
+    }
+    if (mode == 3) {   // TestMenuJeu=3 : onglet RAY TRACING ouvert, sols en miroirs au bout de 10 s (reglage en direct)
+        if (step == 0 && t > 3000) { step = 1; g_open = true; g_mx = ScreenW() * 0.9f; g_my = ScreenH() * 0.95f; g_tab = 5; Log("test menu : ray tracing"); }
+        else if (step == 1 && t > 10000) { step = 2; g_cfg.rtGloss = 2; g_cfg.rtReflK = 150; MenuSaveIni(); Log("test menu : sols en miroirs"); }
+        else if (step == 2 && t > 16000) { step = 3; g_open = false; }
         return;
     }
     // Deroulement : 6 s tchat (telephone), puis menu : onglets toutes les 4 s, un vehicule, puis ferme.

@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 #define RT_MAGIC 0x31545256u   // "VRT1"
-#define RT_PROTOCOL 3
+#define RT_PROTOCOL 4
 
 enum {
     RT_CMD_OFFSET = 4096,            // commandes d'une image (envois + dessins + camera)
@@ -79,7 +79,7 @@ struct RtFrame {
     float wetness;                // sol mouille (pluie) : reflets du sol
     float aoRadius;               // portee de l'occlusion (m)
     uint32_t reset;               // 1 : pas d'historique (changement de camera brutal, cinematique)
-    uint32_t pad;
+    float history;                // lissage d'une image a l'autre : 1 normal, < 1 plus long (moins de bruit, plus de trainee)
 };
 
 // Images rendues, a la suite (outW x outH chacune) :

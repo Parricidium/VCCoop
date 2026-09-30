@@ -97,6 +97,16 @@ static void SaveIni()
     WritePrivateProfileStringA("VCCoop", "OmbresLumieres", g_cfg.lightShadows ? "4" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OmbresLune", g_cfg.moonShadows ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "OcclusionAmbiante", g_cfg.ambientOcclusion ? "1" : "0", ini);
+    {   // ray tracing (onglet RAY TRACING du lanceur et du panneau F10)
+        struct { const char *key; int v; } rt[] = {
+            { "RTOmbres", g_cfg.rtShadows }, { "RTRayons", g_cfg.rtRays }, { "RTResolution", g_cfg.rtScale },
+            { "RTReflets", g_cfg.rtRefl }, { "RTLumiere", g_cfg.rtGI }, { "RTOcclusion", g_cfg.rtAO },
+            { "RTDouceur", g_cfg.rtSoft }, { "RTDistance", g_cfg.rtDist }, { "RTRefletsForce", g_cfg.rtReflK },
+            { "RTRefletsSol", g_cfg.rtGloss }, { "RTLumiereForce", g_cfg.rtGIK }, { "RTOcclusionForce", g_cfg.rtAOK },
+            { "RTLissage", g_cfg.rtSmooth } };
+        char v[16];
+        for (auto &r : rt) { wsprintfA(v, "%d", r.v); WritePrivateProfileStringA("VCCoop", r.key, v, ini); }
+    }
     WritePrivateProfileStringA("VCCoop", "SMAA", g_cfg.smaa ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "Eclat", g_cfg.bloom ? "1" : "0", ini);
     wsprintfA(dd, "%d", g_cfg.grade);

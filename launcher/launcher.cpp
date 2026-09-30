@@ -729,7 +729,7 @@ static void DrawBar(Graphics &g, RectF r, float p)
 // ---------------------------------------------------------------- options (vccoop.ini du jeu)
 // Les memes cles que le menu COOP du jeu (menu.cpp SaveIni) et que dllmain.cpp LoadConfig, memes valeurs par defaut ;
 // ecrites tout de suite, prises au prochain lancement. Onglets RENDU et EFFETS : seulement avec Rendu=9 (Direct3D 9).
-enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_NOTES, TAB_COUNT };
+enum { TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_NOTES, TAB_RT, TAB_COUNT };
 static void DrawNotes(Graphics &g);
 static float NotesMaxScroll();
 static bool NotesUnseen();
@@ -809,25 +809,35 @@ static void BuildOptions()
     C(TAB_RENDER, "OmbresResolution", 4096, { 2048, 4096, 8192 }, L"Qualit\u00E9 des ombres", L"Shadow quality", { L"Moyenne", L"Haute", L"Ultra" },
       { L"Medium", L"High", L"Ultra" }, L"", L"Ultra : carte graphique r\u00E9cente.", L"Ultra: recent graphics card.");
     g_opts.back().rend = 1;   // (ray tracing : pas de cartes d'ombre)
-    // RAY TRACING (Rendu=12) : dans l'onglet RENDU, seulement avec ce moteur
-    T2(TAB_RENDER, "RTOmbres", 1, L"Ombres trac\u00E9es", L"Ray-traced shadows", L"Ombres du soleil et de la lune par de vrais rayons : nettes au pied des objets, douces au loin, jusqu'\u00E0 600 m.",
-       L"Sun and moon shadows from real rays: sharp at the base of objects, soft further away, up to 600 m.");
-    g_opts.back().rend = 2;
-    C(TAB_RENDER, "RTRayons", 4, { 1, 2, 4, 8, 16 }, L"Rayons par pixel", L"Rays per pixel", {}, {}, L"",
-      L"Plus de rayons : ombres plus lisses, carte plus sollicit\u00E9e.", L"More rays: smoother shadows, more GPU work.");
-    g_opts.back().rend = 2;
-    C(TAB_RENDER, "RTResolution", 50, { 50, 100 }, L"R\u00E9solution des rayons", L"Ray resolution", { L"Demie", L"Pleine" }, { L"Half", L"Full" }, L"",
-      L"Pleine : plus fin, quatre fois plus de rayons.", L"Full: finer, four times as many rays.");
-    g_opts.back().rend = 2;
-    T2(TAB_RENDER, "RTReflets", 1, L"Reflets trac\u00E9s", L"Ray-traced reflections", L"La rue, le ciel et les voitures se refl\u00E8tent vraiment sur les carrosseries et les sols mouill\u00E9s.",
+    // RAY TRACING (Rendu=12) : onglet a part, seulement avec ce moteur (memes cles que l'onglet RAY TRACING du panneau F10)
+    T2(TAB_RT, "RTOmbres", 1, L"Ombres trac\u00E9es", L"Ray-traced shadows", L"Ombres du soleil et de la lune par de vrais rayons, \u00E0 la place des cascades.",
+       L"Sun and moon shadows from real rays, instead of the cascades.");
+    C(TAB_RT, "RTRayons", 4, { 1, 2, 4, 8, 16 }, L"Rayons d'ombre par pixel", L"Shadow rays per pixel", {}, {}, L"",
+      L"Plus de rayons : p\u00E9nombre plus lisse, carte plus sollicit\u00E9e.", L"More rays: smoother penumbra, more GPU work.");
+    C(TAB_RT, "RTDouceur", 1, { 0, 1, 2 }, L"Douceur des ombres", L"Shadow softness", { L"Nettes", L"Douces", L"Tr\u00E8s douces" }, { L"Sharp", L"Soft", L"Very soft" }, L"",
+      L"Taille apparente du soleil : p\u00E9nombre plus ou moins large loin des objets.", L"Apparent size of the sun: wider or narrower penumbra away from objects.");
+    C(TAB_RT, "RTDistance", 600, { 200, 400, 600, 1000, 1500 }, L"Port\u00E9e des ombres", L"Shadow distance", {}, {}, L" m",
+      L"Au-del\u00E0, les ombres s'effacent.", L"Beyond it, shadows fade out.");
+    C(TAB_RT, "RTResolution", 50, { 50, 100 }, L"R\u00E9solution des rayons", L"Ray resolution", { L"Demie", L"Pleine" }, { L"Half", L"Full" }, L"",
+      L"Pleine : plus fin (bords des reflets), quatre fois plus de rayons.", L"Full: finer (reflection edges), four times as many rays.");
+    C(TAB_RT, "RTLissage", 1, { 0, 1, 2 }, L"Lissage du bruit", L"Noise smoothing", { L"Faible", L"Moyen", L"Fort" }, { L"Low", L"Medium", L"High" }, L"",
+      L"Fort : image plus calme, un peu de tra\u00EEn\u00E9e en bougeant. Faible : plus r\u00E9actif, plus de grain.",
+      L"High: calmer picture, slight trailing when moving. Low: more responsive, more grain.");
+    T2(TAB_RT, "RTReflets", 1, L"Reflets trac\u00E9s", L"Ray-traced reflections", L"La rue, le ciel et les voitures se refl\u00E8tent vraiment sur les carrosseries et les sols mouill\u00E9s.",
        L"The street, the sky and cars really reflect on car bodies and wet ground.");
-    g_opts.back().rend = 2;
-    T2(TAB_RENDER, "RTLumiere", 1, L"Lumi\u00E8re trac\u00E9e", L"Ray-traced lighting", L"Les murs et le sol \u00E9clair\u00E9s renvoient leur lumi\u00E8re et leur couleur autour d'eux (un rebond).",
+    C(TAB_RT, "RTRefletsForce", 100, { 25, 50, 75, 100, 150, 200 }, L"Force des reflets", L"Reflection strength", {}, {}, L" %",
+      L"Intensit\u00E9 des reflets.", L"Reflection intensity.");
+    C(TAB_RT, "RTRefletsSol", 0, { 0, 1, 2 }, L"Sols brillants", L"Shiny ground", { L"Pluie", L"L\u00E9gers", L"Miroirs" }, { L"Rain", L"Light", L"Mirrors" }, L"",
+      L"Pluie : le sol ne refl\u00E8te que mouill\u00E9. L\u00E9gers : toujours un peu. Miroirs : comme une chauss\u00E9e d'apr\u00E8s l'averse.",
+      L"Rain: the ground only reflects when wet. Light: always a little. Mirrors: like a road after a downpour.");
+    T2(TAB_RT, "RTLumiere", 1, L"Lumi\u00E8re trac\u00E9e", L"Ray-traced lighting", L"Les murs et le sol \u00E9clair\u00E9s renvoient leur lumi\u00E8re et leur couleur autour d'eux (un rebond).",
        L"Lit walls and ground bounce their light and color around them (one bounce).");
-    g_opts.back().rend = 2;
-    T2(TAB_RENDER, "RTOcclusion", 1, L"Occlusion trac\u00E9e", L"Ray-traced occlusion", L"Coins, pieds des murs et dessous des voitures assombris par de vrais rayons.",
+    C(TAB_RT, "RTLumiereForce", 100, { 25, 50, 75, 100, 150, 200 }, L"Force de la lumi\u00E8re", L"Lighting strength", {}, {}, L" %",
+      L"Intensit\u00E9 de la lumi\u00E8re renvoy\u00E9e.", L"Intensity of the bounced light.");
+    T2(TAB_RT, "RTOcclusion", 1, L"Occlusion trac\u00E9e", L"Ray-traced occlusion", L"Coins, pieds des murs et dessous des voitures assombris par de vrais rayons.",
        L"Corners, wall bases and car undersides darkened by real rays.");
-    g_opts.back().rend = 2;
+    C(TAB_RT, "RTOcclusionForce", 100, { 25, 50, 75, 100, 150 }, L"Force de l'occlusion", L"Occlusion strength", {}, {}, L" %",
+      L"Assombrissement des coins.", L"How dark corners get.");
     T2(TAB_RENDER, "EauModerne", 1, L"Eau moderne", L"Modern water", L"Turquoise selon la profondeur, fond visible, vagues et \u00E9cume sur les rives.",
        L"Turquoise by depth, visible sea floor, waves and foam on the shores.");
     T2(TAB_RENDER, "RefletsEau", 1, L"Reflets sur l'eau", L"Water reflections", L"Quais, bateaux, palmiers et immeubles se refl\u00E8tent dans l'eau.",
@@ -905,19 +915,21 @@ static bool TabVisible(int t)
     if (t == TAB_SKIN) return g_imgOk;
     if (t == TAB_MODS) return !g_gameDir.empty() && g_lobby != LB_GUEST && g_lobby != LB_CONNECTING;   // (l'invite prend ceux de l'hote)
     if (t == TAB_NOTES) return true;
+    if (t == TAB_RT) return !g_gameDir.empty() && RenderVal() == 12;
     return (t != TAB_RENDER && t != TAB_FX) || Modern();
 }
 static const wchar_t *TabName(int t)
 {
-    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE", L"MODS", L"NOUVEAUT\u00C9S" },
-                         *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT", L"MODS", L"UPDATES" };
+    static const wchar_t *fr[] = { L"VID\u00C9O", L"RENDU", L"EFFETS", L"COOP", L"SALON", L"TENUE", L"MODS", L"NOUVEAUT\u00C9S", L"RAY TRACING" },
+                         *en[] = { L"VIDEO", L"RENDERING", L"EFFECTS", L"CO-OP", L"LOBBY", L"OUTFIT", L"MODS", L"UPDATES", L"RAY TRACING" };
     return g_fr ? fr[t] : en[t];
 }
 static float MeasureW(Graphics &g, const std::wstring &s, float px, int style);
+static float g_tabFont = 11.5f;   // police des onglets (plus petite quand ils ne tiennent pas sur la ligne)
 static void LayoutTabs()
 {
     float x = 440;
-    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_VIDEO, TAB_RENDER, TAB_FX, TAB_COOP, TAB_NOTES };
+    static const int order[] = { TAB_LOBBY, TAB_SKIN, TAB_MODS, TAB_VIDEO, TAB_RENDER, TAB_RT, TAB_FX, TAB_COOP, TAB_NOTES };
     // Largeur de chaque libelle mesuree ; trop d'onglets pour la place (jusqu'aux boutons reduire / fermer, x 898) :
     // marges et ecarts resserres.
     float tw[TAB_COUNT] = {}, total = 0, pad = 12, gap = 6;
@@ -928,6 +940,14 @@ static void LayoutTabs()
         for (int t : order) if (TabVisible(t)) { tw[t] = MeasureW(mg, TabName(t), 11.5f, FontStyleBold); total += tw[t]; n++; }
     }
     while (pad > 4 && total + n * pad + (n - 1) * gap > 458) { pad -= 2; gap = 4; }
+    g_tabFont = 11.5f;
+    float room = 458 - n * pad - (n - 1) * gap;
+    if (total > room && total > 0) {   // (ray tracing + salon : neuf onglets) police reduite
+        float k = room / total;
+        if (k < 0.72f) k = 0.72f;
+        g_tabFont = 11.5f * k;
+        for (int t = 0; t < TAB_COUNT; t++) tw[t] *= k;
+    }
     for (int t : order) {
         if (!TabVisible(t)) { g_tabR[t] = RectF(0, 0, 0, 0); continue; }
         float w = pad + tw[t];
@@ -988,7 +1008,7 @@ static void DrawTabs(Graphics &g)
         bool on = g_tab == t, hot = g_tabHot == t;
         if (on) { LinearGradientBrush lg(r, kPink, kOrange, LinearGradientModeHorizontal); g.FillPath(&lg, &p); }
         else { SolidBrush b(hot ? TH(tabHot) : TH(tab)); g.FillPath(&b, &p); }
-        Text(g, TabName(t), r, 11.5f, FontStyleBold, on ? Color(255, 255, 255, 255) : Mix(kInk, kPink, hot ? 1.0f : 0.0f));
+        Text(g, TabName(t), r, g_tabFont, FontStyleBold, on ? Color(255, 255, 255, 255) : Mix(kInk, kPink, hot ? 1.0f : 0.0f));
         if (t == TAB_NOTES && !on && NotesUnseen()) {   // pastille : des notes pas encore lues
             SolidBrush dot(kPink);
             g.FillEllipse(&dot, r.X + r.Width - 7, r.Y - 1, 8.0f, 8.0f);
@@ -3340,7 +3360,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int)
             g_localVer = L"2026.09.29m";
         }
         else if (st == L"mods") { g_tab = TAB_MODS; ModsScan(); g_prevYaw = 0.6f; }
-        else if (st == L"rendu") { g_rtProbe = 1; g_tab = TAB_RENDER; LayoutTabs(); g_optHot = TabRows(TAB_RENDER).back(); }
+        else if (st == L"rendu") { g_rtProbe = 1; g_tab = TAB_RT; LayoutTabs(); g_optHot = TabRows(TAB_RT)[2]; }
         else if (st == L"notes") { NotesFetch(); g_tab = TAB_NOTES; LayoutTabs(); }
         else if (st == L"tenue") { g_tab = TAB_SKIN; g_skinSel = 0; g_prevYaw = 0.35f; g_tileHot = 4; }
         else if (st == L"maj") { g_busy = true; g_progress = 0.42f; SetStatus(K_NORMAL, T(L"T\u00E9l\u00E9chargement de VCCoop %s\u2026", L"Downloading VCCoop %s\u2026"), L"2026.09.29h"); g_focus = 0; g_time = 0.2f; }

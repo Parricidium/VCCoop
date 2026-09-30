@@ -430,6 +430,7 @@ bool RtTrace(const RtDraw *draws, int count, const RtParams &prm)
     f->wetness = prm.wetness;
     f->aoRadius = prm.aoRadius;
     f->reset = prm.reset ? 1 : 0;
+    f->history = prm.history;
     if (!g_inst.empty()) memcpy(f + 1, g_inst.data(), g_inst.size() * sizeof(RtInstance));
     g_statDrawn += (int)g_inst.size();
 
