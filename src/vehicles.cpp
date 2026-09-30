@@ -911,7 +911,9 @@ void VehiclesFrame(bool inGame)
     uint32_t now = GetTickCount();
     void *ped = FindPlayerPed();
     void *myVeh = InVehicle(ped) ? PedVehicle(ped) : NULL;
-    if (myVeh && VehDriver(myVeh) == ped && VehClass(myVeh) != VCLASS_TRAIN) {
+    // Sans numero de joueur (hote parti, pas encore connecte) : rien a reclamer. Avant, la voiture etait prise au nom
+    // de -1 (range 255) puis "reprise" a chaque image, 30 fois par seconde (invite de JD, 30/09, apres la chute de l'hote).
+    if (myVeh && g_localId >= 0 && VehDriver(myVeh) == ped && VehClass(myVeh) != VCLASS_TRAIN) {
         NetVehicle *e = FindByPtr(myVeh);
         // Deux joueurs au volant de la meme voiture en meme temps (chacun est monte dans sa copie avant de voir
         // l'autre) : sans regle, chacun reprenait la voiture 30 fois par seconde et elle tremblait. Le plus petit
