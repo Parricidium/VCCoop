@@ -1298,7 +1298,8 @@ void Gfx9DeviceCreated(IDirect3DDevice9 *dev, UINT width, UINT height, bool msaa
     if (g_cfg.sunShadows || g_cfg.modernWater || g_cfg.dynLights) CreateShaders();   // au lancement (pas au milieu d'une image de jeu)
 }
 static void ReleasePostResources();
-void Gfx9BeforeReset() { RtBeforeReset(); SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
+void UiRelease();
+void Gfx9BeforeReset() { UiRelease(); RtBeforeReset(); SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
 void Gfx9AfterReset(UINT width, UINT height, bool msaa) { g_width = width; g_height = height; g_msaa = msaa; }
 
 void Gfx9BeginScene()
