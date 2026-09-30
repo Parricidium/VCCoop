@@ -97,6 +97,7 @@ static ULONG WrapRelease(void *self)
     if (h->ref == 0) return 0;   // surface en sommeil relachee une fois de trop
     ULONG r = --h->ref;
     if (r == 0) {
+        if (h->kind == KIND_VB || h->kind == KIND_IB || h->kind == KIND_TEXTURE) RtForgetResource(h->real);
         if (h->kind != KIND_SURFACE) g_wrap.erase(h->real);
         h->real->Release();
     }
@@ -235,7 +236,7 @@ public:
         return hr;
     }
     STDM LockRect(UINT l, D3DLOCKED_RECT *r, const RECT *rc, DWORD f) { return Fail(m_obj->LockRect(l, r, rc, f), "Texture LockRect", l, f, 0, 0); }
-    STDM UnlockRect(UINT l) { return m_obj->UnlockRect(l); }
+    STDM UnlockRect(UINT l) { RtForgetResource(m_obj); return m_obj->UnlockRect(l); }
     STDM AddDirtyRect(const RECT *r) { return m_obj->AddDirtyRect(r); }
 };
 
@@ -339,6 +340,7 @@ public:
     STDM Unlock()
     {
         if (m_mirror.locked) { memcpy(m_mirror.locked, m_mirror.data.data() + m_mirror.offset, m_mirror.size); m_mirror.locked = NULL; }
+        else RtForgetResource(m_obj);   // tampon statique reecrit : ses maillages traces sont perimes
         return m_obj->Unlock();
     }
     STDM GetDesc(D3DVERTEXBUFFER_DESC *d) { return m_obj->GetDesc(d); }
@@ -371,6 +373,7 @@ public:
     STDM Unlock()
     {
         if (m_mirror.locked) { memcpy(m_mirror.locked, m_mirror.data.data() + m_mirror.offset, m_mirror.size); m_mirror.locked = NULL; }
+        else RtForgetResource(m_obj);
         return m_obj->Unlock();
     }
     STDM GetDesc(D3DINDEXBUFFER_DESC *d) { return m_obj->GetDesc(d); }

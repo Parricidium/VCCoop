@@ -289,6 +289,41 @@ float4 PsMask(float2 vpos : VPOS) : COLOR {
   return float4(lerp(1, col, k), 1);
 }
 
+// ---- ray tracing (Rendu=12) : visibilite du soleil tracee par vcrt64.exe (x), avec sa profondeur (y, m).
+// Image tracee plus petite que l'ecran et bruitee (quelques rayons par pixel) : filtre 4x4 pondere par la distance et
+// par l'ecart de profondeur (pas de melange a travers les bords des objets).
+sampler2D sRT : register(s4);
+float4 gRT : register(c191);   // largeur, hauteur de l'image tracee, 1/largeur, 1/hauteur
+float4 PsRTMask(float2 vpos : VPOS) : COLOR {
+  float2 uv = (vpos + 0.5) * gScreen.zw;
+  float d = tex2Dlod(sDepth, float4(uv, 0, 0)).r;
+  if (d >= 0.999) return 1;
+  float z = d * gProj.z;
+  float2 st = uv * gRT.xy - 0.5;
+  float2 base = floor(st);
+  float2 f = st - base;
+  float sum = 0, wsum = 0, nearLit = 1, nearErr = 1e9;
+  [unroll] for (int y = -1; y <= 2; y++) {
+    [unroll] for (int x = -1; x <= 2; x++) {
+      float4 s = tex2Dlod(sRT, float4((base + float2(x, y) + 0.5) * gRT.zw, 0, 0));
+      float2 o = float2(x, y) - f;
+      float err = abs(s.y - z) / (z * 0.02 + 0.05);
+      float w = exp(-dot(o, o) * 0.9) * exp(-err * err) * (s.y > 0 ? 1 : 0);
+      sum += s.x * w; wsum += w;
+      if (s.y > 0 && err < nearErr) { nearErr = err; nearLit = s.x; }
+    }
+  }
+  float lit = wsum > 0.02 ? sum / wsum : nearLit;
+  float3 P = WorldAt(uv, d);
+  float dist = length(gCam.xyz - P);
+  float k = gSun.w;
+  k *= 1 - saturate((dist - gFog.x) / max(gFog.y - gFog.x, 1));   // brouillard du jeu
+  k *= 1 - saturate((dist - gFog.w) / max(gFog.z - gFog.w, 1));   // fin des ombres
+  if (gAtlas.w > 0.5) return float4(lit, lit, lit, 1);           // OmbresDebug=1 : masque brut
+  float3 col = lerp(gShadowCol.rgb, 1, lit);
+  return float4(lerp(1, col, k), 1);
+}
+
 // ---- lumieres dynamiques : l'image est multipliee par (1 + lumiere recue)
 float4 gLightPos[48] : register(c30);    // position + portee
 float4 gLightCol[48] : register(c78);    // couleur + genre (1 : phare, en cone)
@@ -810,7 +845,7 @@ static IUnknown *CompileShader(const char *entry, const char *target, bool noUv)
 // ======================================================================= Ressources
 enum { CASCADES = 4 };
 static IDirect3DVertexShader9 *g_vsLight[2], *g_vsView[2], *g_vsQuad;   // [0] avec uv, [1] sans
-static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater;
+static IDirect3DPixelShader9 *g_psDepth[2], *g_psMask, *g_psLights, *g_psWater, *g_psRTMask;
 static IDirect3DVertexShader9 *g_vsWater, *g_vsSpot[2];
 static IDirect3DTexture9 *g_lightAtlas;
 static IDirect3DSurface9 *g_lightAtlasSurf, *g_lightAtlasDs;
@@ -852,6 +887,7 @@ static bool CreateShaders()
     }
     g_vsQuad = (IDirect3DVertexShader9 *)CompileShader("VsQuad", "vs_3_0", false);
     g_psMask = (IDirect3DPixelShader9 *)CompileShader("PsMask", "ps_3_0", false);
+    if (g_cfg.renderer == 12) g_psRTMask = (IDirect3DPixelShader9 *)CompileShader("PsRTMask", "ps_3_0", false);
     g_psLights = (IDirect3DPixelShader9 *)CompileShader("PsLights", "ps_3_0", false);
     for (int v = 0; v < 2; v++) g_vsSpot[v] = (IDirect3DVertexShader9 *)CompileShader("VsSpot", "vs_3_0", v == 1);
     for (int v = 0; v < 8; v++) g_vsRefl[v] = (IDirect3DVertexShader9 *)CompileReflShader(v);
@@ -1177,10 +1213,11 @@ void Gfx9DeviceCreated(IDirect3DDevice9 *dev, UINT width, UINT height, bool msaa
     Log("rendu : Direct3D 9 actif (%ux%u%s)", width, height, msaa ? ", anticrenelage" : "");
     FpuGuard fpu;
     g_debugMask = GetPrivateProfileIntA("VCCoop", "OmbresDebug", 0, IniPath());
+    if (g_cfg.renderer == 12) RtStart();   // ray tracing : vcrt64.exe (Direct3D 12 + DXR, 64 bits)
     if (g_cfg.sunShadows || g_cfg.modernWater || g_cfg.dynLights) CreateShaders();   // au lancement (pas au milieu d'une image de jeu)
 }
 static void ReleasePostResources();
-void Gfx9BeforeReset() { SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
+void Gfx9BeforeReset() { RtBeforeReset(); SafeRelease(g_captureBefore); ReleaseRecs(); SafeRelease(g_backBuffer); ReleaseResources(); g_resourcesFailed = false; ReleasePostResources(); g_postResFailed = false; }
 void Gfx9AfterReset(UINT width, UINT height, bool msaa) { g_width = width; g_height = height; g_msaa = msaa; }
 
 void Gfx9BeginScene()
@@ -1909,11 +1946,34 @@ static void Apply()
     // Etats communs a nos passes.
     SetCommonStates();
 
+    // 0. Ray tracing (Rendu=12) : visibilite du soleil tracee par vcrt64.exe (memes dessins, memes matrices), a la
+    // place des cascades. Sans reponse (carte sans DXR, programme arrete) : cascades.
+    bool rtShadow = false;
+    if (shadows && g_cfg.renderer == 12 && g_cfg.rtShadows && g_psRTMask && RtReady()) {
+        static std::vector<RtDraw> draws;
+        draws.clear();
+        for (const Rec &r : g_recs) {
+            if ((int)r.viewIdx != g_mainIdx || !r.caster) continue;
+            RtDraw d;
+            d.vb = r.vb; d.ib = r.ib; d.tex = r.tex;
+            d.vbData = r.replayVb ? g_cpuVb.data() : NULL;
+            d.ibData = r.replayIb ? (const WORD *)g_cpuIb.data() : NULL;
+            d.stride = r.stride; d.fvf = r.fvf; d.d = r.d; d.world = r.world;
+            d.alphaRef = r.alphaRef; d.alphaTest = r.alphaTest; d.vehicle = r.vehicle; d.dynamic = r.dynamic;
+            draws.push_back(d);
+        }
+        float sun4[4] = { g_sun.x, g_sun.y, g_sun.z, g_sunK };
+        UINT tw = g_width * g_cfg.rtScale / 100, th = g_height * g_cfg.rtScale / 100;
+        rtShadow = RtTrace(draws.data(), (int)draws.size(), g_mainView, g_mainProj, sun4, g_moon ? 0.012f : 0.02f, 700.0f, tw, th) && RtResult();
+        static bool logged;
+        if (rtShadow && !logged) { logged = true; Log("rendu : ombres tracees (ray tracing) a la place des cascades"); }
+    }
+
     // 1. Cascades.
     static const float splits[CASCADES] = { 12.0f, 35.0f, 90.0f, 220.0f };
     CascadeInfo casc[CASCADES] = {};
     int casters = 0;
-    if (shadows) {
+    if (shadows && !rtShadow) {
     g_dev->SetRenderTarget(0, g_atlasSurf);
     g_dev->SetDepthStencilSurface(g_atlasDs);
     g_dev->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, 0xFFFFFFFF, 1.0f, 0);
@@ -2022,8 +2082,25 @@ static void Apply()
     g_dev->SetFVF(D3DFVF_XYZW);
     static const float tri[12] = { -1, -1, 0.5f, 1, -1, 3, 0.5f, 1, 3, -1, 0.5f, 1 };
     if (shadows && g_debugMask != 2 && g_debugMask != 3) {
-        g_dev->SetPixelShader(g_psMask);
-        g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+        if (rtShadow) {
+            float rs[4]; RtResultSize(&rs[0], &rs[1]); rs[2] = 1.0f / rs[0]; rs[3] = 1.0f / rs[1];
+            g_dev->SetPixelShaderConstantF(191, rs, 1);
+            float fogRt[4] = { fogStart, farClip, 600.0f, 480.0f };   // ombres tracees jusqu'a 600 m
+            g_dev->SetPixelShaderConstantF(26, fogRt, 1);
+            g_dev->SetTexture(4, RtResult());
+            g_dev->SetSamplerState(4, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(4, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+            g_dev->SetSamplerState(4, D3DSAMP_MIPFILTER, D3DTEXF_NONE);
+            g_dev->SetSamplerState(4, D3DSAMP_ADDRESSU, D3DTADDRESS_CLAMP);
+            g_dev->SetSamplerState(4, D3DSAMP_ADDRESSV, D3DTADDRESS_CLAMP);
+            g_dev->SetPixelShader(g_psRTMask);
+            g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+            g_dev->SetTexture(4, NULL);
+            g_dev->SetPixelShaderConstantF(26, c26, 1);
+        } else {
+            g_dev->SetPixelShader(g_psMask);
+            g_dev->DrawPrimitiveUP(D3DPT_TRIANGLELIST, 1, tri, 16);
+        }
     }
 
     // 3b. Occlusion ambiante : calculee dans g_ao (rotations en grille 4x4), puis floutee en multipliant l'image.
@@ -2756,7 +2833,7 @@ static void Sampler(int s, IDirect3DBaseTexture9 *t, bool linear)
 static void SaveCapture(IDirect3DSurface9 *from, const char *tag);
 static bool PostWanted()
 {
-    return g_cfg.renderer == 9 && GameState() == GS_PLAYING && (g_cfg.smaa || g_cfg.bloom || g_cfg.grade || g_cfg.sharpen > 0);
+    return ModernRenderer() && GameState() == GS_PLAYING && (g_cfg.smaa || g_cfg.bloom || g_cfg.grade || g_cfg.sharpen > 0);
 }
 
 static void PostProcess()

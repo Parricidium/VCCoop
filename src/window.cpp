@@ -235,7 +235,7 @@ static HRESULT WINAPI h_CreateDevice(void *d3d, UINT adapter, UINT type, HWND fo
 
 static void *WINAPI h_Direct3DCreate8(UINT sdk)
 {
-    void *d3d = g_cfg.renderer == 9 ? BridgeCreate8(sdk) : NULL;   // Rendu=9 : notre pont vers Direct3D 9
+    void *d3d = ModernRenderer() ? BridgeCreate8(sdk) : NULL;   // Rendu=9 (ou 12) : notre pont vers Direct3D 9
     if (!d3d) d3d = o_Direct3DCreate8(sdk);
     // Chaque objet peut avoir sa propre vtable (le jeu en cree deux) : on les accroche toutes.
     if (d3d) {

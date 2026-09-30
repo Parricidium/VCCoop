@@ -90,7 +90,7 @@ static void SaveIni()
     wsprintfA(dd, "%d", g_cfg.msaa);
     WritePrivateProfileStringA("VCCoop", "Anticrenelage", dd, ini);
     WritePrivateProfileStringA("VCCoop", "OmbresSoleil", g_cfg.sunShadows ? "1" : "0", ini);
-    WritePrivateProfileStringA("VCCoop", "Rendu", g_cfg.renderer == 9 ? "9" : "8", ini);
+    WritePrivateProfileStringA("VCCoop", "Rendu", g_cfg.renderer == 12 ? "12" : g_cfg.renderer == 9 ? "9" : "8", ini);
     WritePrivateProfileStringA("VCCoop", "EauModerne", g_cfg.modernWater ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "RefletsEau", g_cfg.waterReflections ? "1" : "0", ini);
     WritePrivateProfileStringA("VCCoop", "LumieresDynamiques", g_cfg.dynLights ? "1" : "0", ini);
@@ -233,7 +233,7 @@ static const wchar_t *CoopText(const char *key)
         return Put(24, buf);
     }
     if (!strcmp(key, "VCC_RD")) {
-        wsprintfA(buf, "%s : %s%s", fr ? "Rendu moderne" : "Modern renderer", g_cfg.renderer == 9 ? yes : no,
+        wsprintfA(buf, "%s : %s%s", fr ? "Rendu" : "Renderer", g_cfg.renderer == 12 ? "Ray tracing" : g_cfg.renderer == 9 ? "Direct3D 9" : "Direct3D 8",
                   fr ? " (apres relance)" : " (after restart)");
         return Put(25, buf);
     }
@@ -405,7 +405,10 @@ static void OnCoopAction(int action)
     case ACT_MSAA: g_cfg.msaa = g_cfg.msaa >= 8 ? 0 : g_cfg.msaa < 2 ? 2 : g_cfg.msaa * 2; SaveIni(); break;
     case ACT_ANISO: g_cfg.aniso = !g_cfg.aniso; SaveIni(); break;
     case ACT_SHADOWS: g_cfg.sunShadows = !g_cfg.sunShadows; SaveIni(); break;
-    case ACT_RENDERER: g_cfg.renderer = g_cfg.renderer == 9 ? 8 : 9; SaveIni(); break;
+    case ACT_RENDERER:   // ray tracing -> Direct3D 9 -> Direct3D 8 -> ray tracing (si vcrt64.exe est la)
+        g_cfg.renderer = g_cfg.renderer == 12 ? 9 : g_cfg.renderer == 9 ? 8 : RtHelperPresent() ? 12 : 9;
+        SaveIni();
+        break;
     case ACT_WATER:   // non -> oui -> oui + reflets -> non
         if (!g_cfg.modernWater) { g_cfg.modernWater = true; g_cfg.waterReflections = false; }
         else if (!g_cfg.waterReflections) g_cfg.waterReflections = true;
@@ -523,14 +526,14 @@ static void BuildCoopPage()
     } else if (g_sub == SUB_VIDEO) {
         items[n++] = { ACT_DRAWDIST, "VCC_DD" }; items[n++] = { ACT_MSAA, "VCC_AA" }; items[n++] = { ACT_ANISO, "VCC_AF" };
         items[n++] = { ACT_SHADOWS, "VCC_SH" };
-        if (g_cfg.renderer == 9) {
-            items[n++] = { ACT_SHADOWQ, "VCC_SQ" };
+        if (ModernRenderer()) {
+            if (g_cfg.renderer != 12) items[n++] = { ACT_SHADOWQ, "VCC_SQ" };   // (ray tracing : pas de cascades)
             items[n++] = { ACT_WATER, "VCC_WA" };    // reflets compris
             items[n++] = { ACT_LIGHTS, "VCC_LI" };   // ombres des lumieres comprises
         }
         items[n++] = { ACT_FPS, "VCC_FP" };
         items[n++] = { ACT_RENDERER, "VCC_RD" };
-        if (g_cfg.renderer == 9) { items[n++] = { ACT_POSTPAGE, "VCC_PP" }; items[n++] = { ACT_AMBPAGE, "VCC_AM" }; }
+        if (ModernRenderer()) { items[n++] = { ACT_POSTPAGE, "VCC_PP" }; items[n++] = { ACT_AMBPAGE, "VCC_AM" }; }
     } else if (g_sub == SUB_POST) {
         items[n++] = { ACT_SMAA, "VCC_SM" }; items[n++] = { ACT_BLOOM, "VCC_BL" };
         items[n++] = { ACT_GRADE, "VCC_GR" }; items[n++] = { ACT_SHARPEN, "VCC_NT" };
