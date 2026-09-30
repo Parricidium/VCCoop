@@ -2149,8 +2149,8 @@ static void Apply()
             if (rtAO) ao = false;   // (occlusion d'ecran remplacee)
         }
         static unsigned logged;
-        if ((rtShadow | rtAO | g_rtReflOn | g_rtGIOn) && logged != rtFeat) {
-            logged = rtFeat;
+        if ((rtShadow | rtAO | g_rtReflOn | g_rtGIOn) && logged != (rtFeat & ~16u)) {   // (lampes : vont et viennent, pas au journal)
+            logged = rtFeat & ~16u;
             Log("rendu : ray tracing actif : ombres %d, occlusion %d, reflets %d, lumiere indirecte %d, lampes %d", rtShadow, rtAO, g_rtReflOn, g_rtGIOn, g_rtLampsOn);
         }
     }

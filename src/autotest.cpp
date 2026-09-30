@@ -42,6 +42,10 @@
 #include <math.h>
 #include <string.h>
 
+#pragma optimize("", off)
+static int StackEater(int depth) { volatile char pad[4096]; pad[0] = (char)depth; return StackEater(depth + 1) + pad[0]; }   // (Autotest=debordement)
+#pragma optimize("", on)
+
 using namespace game;
 int WantedLevel(void *ped);   // coop.cpp
 
@@ -702,6 +706,12 @@ void AutotestFrame()
             for (int s = 0; s < 10; s++) n += wsprintfA(w + n, " %d", WeaponTypeInSlot(me, s));
             Log("autotest : de retour en %.1f %.1f %.1f, armes%s, argent %d", Pos(me).x, Pos(me).y, Pos(me).z, w, *(int *)(0x94AD28 + 0xA0));
         }
+        return;
+    }
+    // Autotest=debordement : recursion sans fin sur le fil du jeu (verifie que le journal de plantage s'ecrit quand la
+    // pile est pleine : crash.cpp l'ecrit depuis un autre fil).
+    if (_stricmp(g_cfg.autotest, "debordement") == 0) {
+        if (frame - controlSince == 60) { Log("autotest : debordement de pile provoque"); volatile int r = StackEater(0); (void)r; }
         return;
     }
     if (_stricmp(g_cfg.autotest, "midi") == 0) {   // horloge a 12 h (ombres du soleil), puis on regarde
