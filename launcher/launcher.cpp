@@ -554,7 +554,7 @@ static void StartUpdate()
 }
 
 // ---------------------------------------------------------------- boutons
-enum { B_HOST, B_JOIN, B_PLAY, B_EXE, B_BUY, B_THEME, B_CLOSE, B_MIN, B_LOGS, B_COUNT };
+enum { B_HOST, B_JOIN, B_PLAY, B_EXE, B_BUY, B_THEME, B_CLOSE, B_MIN, B_LOGS, B_GITHUB, B_COUNT };
 struct Button { RectF r; float hover; bool visible, enabled; };
 static Button g_btn[B_COUNT];
 static int g_hot = -1, g_pressed = -1;
@@ -572,6 +572,7 @@ static void Layout()
     g_btn[B_MIN].r = RectF(904, 76, 28, 28);
     g_btn[B_THEME].r = RectF(62, 100, 26, 26);   // coin du panneau, a gauche du logo
     g_btn[B_LOGS].r = RectF(368, 100, 26, 26);   // coin oppose : page des journaux
+    g_btn[B_GITHUB].r = RectF(180, 201, 96, 22);  // sous le logo : la page GitHub de JD
 }
 
 static void UpdateButtons()
@@ -592,6 +593,7 @@ static void UpdateButtons()
     g_btn[B_CLOSE].enabled = g_btn[B_MIN].enabled = g_btn[B_BUY].enabled = g_btn[B_THEME].enabled = true;
     g_btn[B_LOGS].visible = menu && !g_gameDir.empty();
     g_btn[B_LOGS].enabled = true;
+    g_btn[B_GITHUB].enabled = true;
 }
 
 // ---------------------------------------------------------------- dessin
@@ -1407,8 +1409,8 @@ static void DrawUI(Graphics &g)
     } else {
         DrawTabs(g);
         DrawOptions(g);
-        Text(g, status, RectF(60, 212, 336, 22), 13, FontStyleBold, sc);
-        if (prog != -1.0f) DrawBar(g, RectF(96, 238, 264, 5), prog);
+        Text(g, status, RectF(60, 226, 336, 22), 13, FontStyleBold, sc);
+        if (prog != -1.0f) DrawBar(g, RectF(96, 250, 264, 5), prog);
         DrawField(g, 0, T(L"PSEUDO", L"NICKNAME"));
         DrawField(g, 1, T(L"ADRESSE DE L'H\u00D4TE", L"HOST ADDRESS"));
         extern bool LobbyMeReady();
@@ -1435,6 +1437,25 @@ static void DrawUI(Graphics &g)
     Text(g, T(L"Mod non officiel et non commercial.", L"Unofficial, non-commercial mod."), RectF(56, 510, 344, 14), 10, FontStyleRegular, lg);
     Text(g, T(L"Non affili\u00E9 \u00E0 Rockstar Games ni \u00E0 Take-Two.", L"Not affiliated with Rockstar Games or Take-Two."), RectF(56, 523, 344, 14), 10, FontStyleRegular, lg);
     Text(g, T(L"N\u00E9cessite une copie l\u00E9gale de GTA: Vice City.", L"Requires a legal copy of GTA: Vice City."), RectF(56, 536, 344, 14), 10, FontStyleRegular, lg);
+    // GitHub : pastille sombre sous le logo, chat d'octocat en silhouette, vers la page de JD
+    {
+        Button &b = g_btn[B_GITHUB];
+        GraphicsPath p;
+        RoundRect(p, b.r, b.r.Height / 2);
+        SolidBrush fill(Mix(TH(pill), kPink, b.hover));
+        g.FillPath(&fill, &p);
+        SolidBrush white(Color(255, 255, 255, 255));
+        float cx = b.r.X + 15, cy = b.r.Y + b.r.Height / 2 + 0.5f;
+        GraphicsPath cat;   // tete ronde, deux oreilles, cou
+        cat.AddEllipse(cx - 5.2f, cy - 4.6f, 10.4f, 8.6f);
+        PointF earL[] = { PointF(cx - 5.0f, cy - 1.5f), PointF(cx - 4.6f, cy - 7.0f), PointF(cx - 1.4f, cy - 4.2f) };
+        PointF earR[] = { PointF(cx + 5.0f, cy - 1.5f), PointF(cx + 4.6f, cy - 7.0f), PointF(cx + 1.4f, cy - 4.2f) };
+        cat.AddPolygon(earL, 3);
+        cat.AddPolygon(earR, 3);
+        cat.AddRectangle(RectF(cx - 1.8f, cy + 3.0f, 3.6f, 3.6f));
+        g.FillPath(&white, &cat);
+        Text(g, L"GitHub", RectF(b.r.X + 25, b.r.Y, b.r.Width - 31, b.r.Height), 12, FontStyleBold, Color(255, 255, 255, 255), StringAlignmentNear);
+    }
     // Acheter le jeu : pastille sombre avec un panier, vers la boutique Rockstar
     {
         Button &b = g_btn[B_BUY];
@@ -3198,6 +3219,7 @@ static void OnButton(int id)
     case B_MIN: ShowWindow(g_wnd, SW_MINIMIZE); break;
     case B_THEME: g_dark = !g_dark; WritePrivateProfileStringW(L"Lanceur", L"Theme", g_dark ? L"sombre" : L"clair", g_iniLauncher.c_str()); break;
     case B_BUY: ShellExecuteW(g_wnd, L"open", kStoreUrl, NULL, NULL, SW_SHOWNORMAL); break;
+    case B_GITHUB: ShellExecuteW(g_wnd, L"open", L"https://github.com/Parricidium", NULL, NULL, SW_SHOWNORMAL); break;
     case B_LOGS: g_tab = g_tab == TAB_LOGS ? -1 : TAB_LOGS; g_optHot = -1; if (g_tab == TAB_LOGS) LogsScan(); break;
     }
 }
