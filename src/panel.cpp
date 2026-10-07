@@ -67,7 +67,7 @@ static bool LocalAdmin() { return g_cfg.host || g_localId < 0 || IsAdmin(g_local
 // Actions demandees par un clic (au dessin) et faites dans la logique du jeu (PanelFrame) : on ne cree pas de vehicule
 // en plein rendu.
 enum { A_NONE, A_GOTO, A_BRING, A_KICK, A_TOGGLE_ADMIN, A_SPAWN, A_HEAL, A_WEAPONS, A_MONEY, A_REPAIR, A_FLIP, A_WANTED,
-       A_NOPOLICE, A_TIME, A_WEATHER, A_OPTION };
+       A_NOPOLICE, A_TIME, A_WEATHER, A_OPTION, A_CHEAT };
 struct Action { int kind, a; };
 static Action g_actions[8];
 static int g_actionCount;
@@ -260,6 +260,8 @@ static void GiveWeaponsPack(void *me)
     }
 }
 
+static void TypeCheat(int i);
+
 static void RunAction(const Action &ac)
 {
     void *me = FindPlayerPed();
@@ -272,6 +274,7 @@ static void RunAction(const Action &ac)
     case A_KICK: if (admin && ac.a > 0) AdminRequest(ADM_KICK, ac.a, 0); break;
     case A_TOGGLE_ADMIN: ToggleAdmin(ac.a); break;
     case A_SPAWN: if (admin) SpawnVehicle(ac.a); break;
+    case A_CHEAT: if (PlayerFree()) TypeCheat(ac.a); break;
     case A_HEAL:
         if (!admin) break;
         if (Health(me) < 100.0f) Health(me) = 100.0f;
@@ -436,7 +439,7 @@ bool PanelWndProc(UINT msg, WPARAM wp, LPARAM lp)
         if (down && wp == VK_ESCAPE) g_help = false;
         return msg == WM_KEYDOWN || msg == WM_CHAR;
     }
-    if (msg == WM_KEYDOWN && !repeat && wp == (WPARAM)g_chatKey && GameHasFocus()) {
+    if (msg == WM_KEYDOWN && !repeat && g_chatKey && wp == (WPARAM)g_chatKey && GameHasFocus()) {
         g_typing = true;
         g_skipChar = true;
         g_input[0] = 0;
@@ -764,6 +767,132 @@ static void DrawHostTab(float x0, float y0, float x1, float y1)
     }
 }
 
+// Codes de triche (onglet TRICHES) : les 58 codes PC du 1.0, lus dans l'exe (CPad::AddToPCCheatString 0x4ABD20 les
+// compare, chiffres, au tampon des touches tapees CPad::KeyBoardCheatString 0xA10942). Un clic tape le code pour le
+// joueur : chaque lettre passe par AddToPCCheatString, comme au clavier (le tchat sur T coupait les codes qui en ont).
+struct CheatEntry { const char *code; int cat; const char *fr, *en; };
+static const CheatEntry g_cheats[] = {
+    { "THUGSTOOLS", 0, "Armes, lot 1 (batte, pistolet, Uzi...)", "Weapons, set 1 (bat, pistol, Uzi...)" },
+    { "PROFESSIONALTOOLS", 0, "Armes, lot 2", "Weapons, set 2" },
+    { "NUTTERTOOLS", 0, "Armes, lot 3 (minigun...)", "Weapons, set 3 (minigun...)" },
+    { "ASPIRINE", 0, "Sant\xE9" " au maximum", "Full health" },
+    { "PRECIOUSPROTECTION", 0, "Gilet pare-balles", "Full armour" },
+    { "ICANTTAKEITANYMORE", 0, "Tommy se suicide", "Tommy commits suicide" },
+    { "YOUWONTTAKEMEALIVE", 1, "+2 \xE9" "toiles de recherche", "+2 wanted stars" },
+    { "LEAVEMEALONE", 1, "Plus aucune \xE9" "toile", "Clear wanted level" },
+    { "APLEASANTDAY", 2, "Beau temps", "Sunny weather" },
+    { "ALOVELYDAY", 2, "Grand soleil", "Extra sunny weather" },
+    { "ABITDRIEG", 2, "Temps nuageux", "Cloudy weather" },
+    { "CATSANDDOGS", 2, "Pluie", "Rain" },
+    { "CANTSEEATHING", 2, "Brouillard", "Fog" },
+    { "LIFEISPASSINGMEBY", 2, "L'horloge tourne plus vite", "Faster clock" },
+    { "ONSPEED", 2, "Jeu acc\xE9" "l\xE9" "r\xE9", "Faster gameplay" },
+    { "BOOOOOORING", 2, "Jeu au ralenti", "Slow motion" },
+    { "PANZER", 3, "Char Rhino", "Rhino tank" },
+    { "TRAVELINSTYLE", 3, "Bloodring Banger", "Bloodring Banger" },
+    { "GETTHEREQUICKLY", 3, "Bloodring Banger (autre)", "Bloodring Banger (other)" },
+    { "THELASTRIDE", 3, "Corbillard (Romero's Hearse)", "Romero's Hearse" },
+    { "ROCKANDROLLCAR", 3, "Limousine Love Fist", "Love Fist limousine" },
+    { "RUBBISHCAR", 3, "Benne \xE0" " ordures (Trashmaster)", "Trashmaster" },
+    { "GETTHEREFAST", 3, "Sabre Turbo", "Sabre Turbo" },
+    { "BETTERTHANWALKING", 3, "Voiturette de golf (Caddy)", "Golf caddy" },
+    { "GETTHEREVERYFASTINDEED", 3, "Hotring Racer", "Hotring Racer" },
+    { "GETTHEREAMAZINGLYFAST", 3, "Hotring Racer (autre)", "Hotring Racer (other)" },
+    { "GRIPISEVERYTHING", 4, "Meilleure tenue de route", "Better handling" },
+    { "WHEELSAREALLINEED", 4, "On ne voit que les roues des voitures", "Only car wheels are visible" },
+    { "COMEFLYWITHME", 4, "Les voitures volent (gravit\xE9" " faible)", "Cars fly (low gravity)" },
+    { "SEAWAYS", 4, "Les voitures roulent sur l'eau", "Cars drive on water" },
+    { "AIRSHIP", 4, "Les bateaux volent", "Boats fly" },
+    { "LOADSOFLITTLETHINGS", 4, "Grosses roues", "Big wheels" },
+    { "BIGBANG", 4, "Les voitures autour explosent", "Nearby cars blow up" },
+    { "GREENLIGHT", 4, "Feux toujours au vert", "Green traffic lights" },
+    { "MIAMITRAFFIC", 4, "Conducteurs agressifs", "Aggressive drivers" },
+    { "AHAIRDRESSERSCAR", 4, "Voitures roses", "Pink traffic" },
+    { "IWANTITPAINTEDBLACK", 4, "Voitures noires", "Black traffic" },
+    { "FIGHTFIGHTFIGHT", 5, "\xC9" "meute : les passants se battent", "Riot: pedestrians fight" },
+    { "NOBODYLIKESME", 5, "Tout le monde attaque Tommy", "Everyone attacks Tommy" },
+    { "OURGODGIVENRIGHTTOBEARARMS", 5, "Passants arm\xE9" "s", "Armed pedestrians" },
+    { "CHICKSWITHGUNS", 5, "Filles en bikini arm\xE9" "es", "Armed bikini girls" },
+    { "FANNYMAGNET", 5, "Les femmes suivent Tommy", "Women follow Tommy" },
+    { "HOPINGIRL", 5, "Les passantes montent dans la voiture", "Women get into your car" },
+    { "CHASESTAT", 5, "Affiche l'attention des m\xE9" "dias", "Shows media attention" },
+    { "STILLLIKEDRESSINGUP", 6, "Tenue au hasard", "Random outfit" },
+    { "LOOKLIKELANCE", 6, "Lance Vance", "Lance Vance" },
+    { "MYSONISALAWYER", 6, "Ken Rosenberg", "Ken Rosenberg" },
+    { "ILOOKLIKEHILARY", 6, "Hilary King", "Hilary King" },
+    { "ROCKANDROLLMAN", 6, "Jezz Torrent (Love Fist)", "Jezz Torrent (Love Fist)" },
+    { "WELOVEOURDICK", 6, "Dick (Love Fist)", "Dick (Love Fist)" },
+    { "ONEARMEDBANDIT", 6, "Phil Cassidy", "Phil Cassidy" },
+    { "IDONTHAVETHEMONEYSONNY", 6, "Sonny Forelli", "Sonny Forelli" },
+    { "FOXYLITTLETHING", 6, "Mercedes", "Mercedes" },
+    { "IWANTBIGTITS", 6, "Candy Suxxx", "Candy Suxxx" },
+    { "CHEATSHAVEBEENCRACKED", 6, "Ricardo Diaz", "Ricardo Diaz" },
+    { "CERTAINDEATH", 6, "Tommy fume une cigarette", "Tommy smokes a cigarette" },
+    { "DEEPFRIEDMARSBARS", 6, "Tommy ob\xE8" "se", "Fat Tommy" },
+    { "PROGRAMMER", 6, "Tommy tout maigre", "Skinny Tommy" },
+};
+static int g_cheatCat, g_cheatFlash = -1;
+static uint32_t g_cheatFlashAt;
+
+static void TypeCheat(int i)
+{
+    if (i < 0 || i >= (int)(sizeof(g_cheats) / sizeof(g_cheats[0]))) return;
+    for (const char *c = g_cheats[i].code; *c; c++) ((void(__thiscall *)(void *, char))0x4ABD20)((void *)0x7DBCB0, *c);   // CPad::AddToPCCheatString, Pads[0] (ret 4)
+    Log("triches : %s", g_cheats[i].code);
+}
+
+static void DrawCheatsTab(float x0, float y0, float x1, float y1)
+{
+    static const char *catFr[] = { "ARMES", "POLICE", "M\xC9" "T\xC9" "O", "V\xC9" "HICULES", "CONDUITE", "PASSANTS", "TENUES" }, *catEn[] = { "WEAPONS", "POLICE", "WEATHER", "VEHICLES", "DRIVING", "PEOPLE", "OUTFITS" };
+    const int ncat = 7, n = (int)(sizeof(g_cheats) / sizeof(g_cheats[0]));
+    float bw = (x1 - x0 - g_u * (ncat + 1)) / ncat, bh = g_u * 4.0f, y = y0 + g_u;
+    for (int c = 0; c < ncat; c++) {
+        float bx = x0 + g_u + c * (bw + g_u);
+        if (Button(bx, y, bx + bw, y + bh, French() ? catFr[c] : catEn[c], g_cheatCat == c, true, 0.45f)) { g_cheatCat = c; g_scroll = 0; }
+    }
+    y += bh + g_u * 1.2f;
+    bool blocked = !PlayerFree();
+    TextA(x0 + g_u, y, 0.45f, blocked ? 0xFF8080FF : C_DIM, AL_LEFT, blocked ? Tr("Pas pendant une cin\xE9matique.", "Not during a cutscene.")
+          : Tr("Clic : le code est tap\xE9 pour vous. M\xE9t\xE9o : celle de l'h\xF4te s'impose aux invit\xE9s ; vitesse du jeu : seulement chez vous.",
+               "Click: the code is typed for you. Weather: the host's wins for guests; game speed: only on your side."));
+    y += LineH(0.45f) + g_u;
+    int idx[64], m = 0;
+    for (int i = 0; i < n; i++) if (g_cheats[i].cat == g_cheatCat) idx[m++] = i;
+    const int cols = 2;
+    float cw = (x1 - x0 - g_u * (cols + 1)) / cols, ch = g_u * 5.4f;
+    int rows = (int)((y1 - y - g_u) / (ch + g_u * 0.7f));
+    if (rows < 1) rows = 1;
+    int maxScroll = (m + cols - 1) / cols - rows;
+    if (maxScroll < 0) maxScroll = 0;
+    if (g_scroll > maxScroll) g_scroll = maxScroll;
+    if (g_scroll < 0) g_scroll = 0;
+    bool fr = French();
+    for (int r = 0; r < rows; r++)
+        for (int c = 0; c < cols; c++) {
+            int k = (g_scroll + r) * cols + c;
+            if (k >= m) break;
+            const CheatEntry &e = g_cheats[idx[k]];
+            float bx = x0 + g_u + c * (cw + g_u), by = y + r * (ch + g_u * 0.7f);
+            bool hot = !blocked && Inside(bx, by, bx + cw, by + ch);
+            bool flash = g_cheatFlash == idx[k] && GetTickCount() - g_cheatFlashAt < 1500;
+            if (g_modern) {
+                if (flash) UiRectH(bx, by, bx + cw, by + ch, g_u * 1.0f, K_PINK, K_ORANGE);
+                else UiRect(bx, by, bx + cw, by + ch, g_u * 1.0f, hot ? 0xFFFFFF2C : 0xFFFFFF14, hot ? 0xFFFFFF1E : 0xFFFFFF0A, hot ? K_PINK : 0xFFFFFF20, hot ? 1.8f : 1.1f);
+            } else {
+                Rect(bx, by, bx + cw, by + ch, flash ? C_BTN_ON : hot ? C_BTN_HOT : C_BTN);
+                if (hot) Frame(bx, by, bx + cw, by + ch, 1.0f + g_u * 0.12f, C_LINE);
+            }
+            TextA(bx + g_u * 1.2f, by + g_u * 0.55f, 0.5f, blocked ? 0xFFFFFF60 : C_TEXT, AL_LEFT, e.code);
+            TextA(bx + g_u * 1.2f, by + ch - LineH(0.42f) - g_u * 0.55f, 0.42f, flash ? C_TEXT : C_DIM, AL_LEFT, fr ? e.fr : e.en);
+            if (hot && g_click) { g_click = false; g_cheatFlash = idx[k]; g_cheatFlashAt = GetTickCount(); Queue(A_CHEAT, idx[k]); }
+        }
+    if (maxScroll > 0) {
+        char s[32];
+        _snprintf(s, sizeof(s), "%d / %d", g_scroll + 1, maxScroll + 1);
+        TextA(x1 - g_u * 6, y1 - LineH(0.45f) - g_u * 0.3f, 0.45f, C_DIM, AL_CENTER, s);
+    }
+}
+
 // Ray tracing (Rendu=12) : reglages appliques tout de suite (vcrt64.exe les recoit a l'image suivante) et enregistres
 // dans vccoop.ini (memes cles que l'onglet RAY TRACING du lanceur). Deux colonnes : libelle, [-] valeur.
 static int g_testClickRow = -1;   // TestMenuJeu=4 : clic simule sur la valeur de cette ligne
@@ -920,6 +1049,7 @@ static const char *KeyLabel(int vk)
     char *s = b[k++ & 3];
     if (vk >= VK_F1 && vk <= VK_F12) wsprintfA(s, "F%d", vk - VK_F1 + 1);
     else if (vk == VK_TAB) lstrcpyA(s, "Tab");
+    else if (!vk) lstrcpyA(s, "-");
     else { s[0] = (char)vk; s[1] = 0; }
     return s;
 }
@@ -1076,7 +1206,8 @@ void PanelDraw()
         bool admin = LocalAdmin();
         struct T { const char *fr, *en; int id; bool show; } tabs[] = {
             { "JOUEURS", "PLAYERS", 0, true }, { "V\xC9HICULES", "VEHICLES", 1, admin }, { "OUTILS", "TOOLS", 2, admin },
-            { "MONDE", "WORLD", 3, admin }, { "H\xD4TE", "HOST", 4, g_cfg.host }, { "RAY TRACING", "RAY TRACING", 5, g_cfg.renderer == 12 } };
+            { "MONDE", "WORLD", 3, admin }, { "H\xD4TE", "HOST", 4, g_cfg.host }, { "RAY TRACING", "RAY TRACING", 5, g_cfg.renderer == 12 },
+            { "TRICHES", "CHEATS", 6, true } };
         int shown = 0;
         for (auto &t : tabs) shown += t.show;
         bool tabOk = false;
@@ -1099,9 +1230,11 @@ void PanelDraw()
         case 3: DrawWorldTab(x0, cy0, x1, cy1); break;
         case 4: DrawHostTab(x0, cy0, x1, cy1); break;
         case 5: DrawRtTab(x0, cy0, x1, cy1); break;
+        case 6: DrawCheatsTab(x0, cy0, x1, cy1); break;
         }
         char hint[128];
-        _snprintf(hint, sizeof(hint), French() ? "\xC9" "chap ou F10 : fermer     %c : tchat" : "Esc or F10: close     %c: chat", g_chatKey);
+        if (g_chatKey) _snprintf(hint, sizeof(hint), French() ? "\xC9" "chap ou F10 : fermer     %s : tchat" : "Esc or F10: close     %s: chat", KeyLabel(g_chatKey));
+        else lstrcpyA(hint, French() ? "\xC9" "chap ou F10 : fermer" : "Esc or F10: close");
         TextA((x0 + x1) * 0.5f, y1 - g_u * 2.8f, 0.45f, C_DIM, AL_CENTER, hint);
         g_click = false;
     }
@@ -1209,6 +1342,14 @@ static void TestPanel(bool inGame)
         else if (step == 3 && t > 30000) { step = 4; g_help = false; g_open = true; g_tab = 1; Log("test menu : vehicules"); }
         return;
     }
+    if (mode == 6) {   // TestMenuJeu=6 : onglet TRICHES ; sante a 30 puis clic sur ASPIRINE, puis THUGSTOOLS
+        void *me = FindPlayerPed();
+        if (step == 0 && t > 3000) { step = 1; g_open = true; g_tab = 6; g_cheatCat = 0; g_mx = ScreenW() * 0.35f; g_my = ScreenH() * 0.45f; if (me) Health(me) = 30.0f; Log("test menu : triches, sante %.0f", me ? Health(me) : -1.0f); }
+        else if (step == 1 && t > 6000) { step = 2; Queue(A_CHEAT, 3); g_cheatFlash = 3; g_cheatFlashAt = GetTickCount(); }
+        else if (step == 2 && t > 7000) { step = 3; Log("test menu : apres ASPIRINE, sante %.0f", me ? Health(me) : -1.0f); Queue(A_CHEAT, 0); }
+        else if (step == 3 && t > 8000) { step = 4; Log("test menu : apres THUGSTOOLS, arme du 3e emplacement %d", me ? WeaponTypeInSlot(me, 3) : -1); }
+        return;
+    }
     if (mode == 3) {   // TestMenuJeu=3 : onglet RAY TRACING ouvert, sols en miroirs au bout de 10 s (reglage en direct)
         if (step == 0 && t > 3000) { step = 1; g_open = true; g_mx = ScreenW() * 0.9f; g_my = ScreenH() * 0.95f; g_tab = 5; Log("test menu : ray tracing"); }
         else if (step == 1 && t > 10000) { step = 2; g_cfg.rtGloss = 2; g_cfg.rtReflK = 150; MenuSaveIni(); Log("test menu : sols en miroirs"); }
@@ -1248,8 +1389,10 @@ void PanelFrame(bool inGame)
 }
 
 // ======================================================================= Installation
+// "Aucune" (none, non, off, 0) : touche desactivee (ToucheTchat=Aucune : le T reste au jeu, pour les codes de triche).
 static int ParseKey(const char *k, int def)
 {
+    if (!_stricmp(k, "aucune") || !_stricmp(k, "none") || !_stricmp(k, "non") || !_stricmp(k, "off") || !strcmp(k, "0")) return 0;
     if ((k[0] == 'F' || k[0] == 'f') && k[1] >= '1' && k[1] <= '9') return VK_F1 + atoi(k + 1) - 1;
     if (k[0] && !k[1]) return (k[0] >= 'a' && k[0] <= 'z') ? k[0] - 32 : k[0];
     return def;
