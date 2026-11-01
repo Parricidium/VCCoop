@@ -66,9 +66,25 @@ static void __fastcall h_DriveBy(void *veh, void *)
     o_DriveBy(veh);
 }
 
+// Menu Audio, materiel audio 3D : DMAudio.Get3DProviderName (0x5F9C50) rend NULL quand l'index du menu
+// (m_nPrefsAudio3DProviderIndex, menu +0x26) depasse le nombre de pilotes de ce PC (gta_vc.set d'une autre
+// machine, carte son changee). L'affichage de l'ecran (0x49EE4A) passe ce NULL a AsciiToUnicode : plantage
+// C0000005 en 0x55251A des qu'on ouvre les reglages audio. On rend une chaine vide a la place.
+typedef const char *(__thiscall *ProviderName_t)(void *self, uint8_t id);
+static const char *__fastcall h_ProviderName(void *self, void *, uint8_t id)
+{
+    const char *s = ((ProviderName_t)0x5F9C50)(self, id);
+    return s ? s : "";
+}
+
 void InstallGamePatches()
 {
     GuardSectorList();
+    static const uint8_t providerCall1[] = { 0xE8, 0x01, 0xAE, 0x15, 0x00 }, providerCall2[] = { 0xE8, 0xCD, 0xFD, 0x15, 0x00 };
+    if (Expect(0x49EE4A, "nom du pilote audio 3D (affichage)", providerCall1, sizeof(providerCall1)))
+        PatchCall(0x49EE4A, (void *)h_ProviderName, sizeof(providerCall1));
+    if (Expect(0x499E7E, "nom du pilote audio 3D (choix)", providerCall2, sizeof(providerCall2)))
+        PatchCall(0x499E7E, (void *)h_ProviderName, sizeof(providerCall2));
     static const uint8_t driveByPro[] = { 0x53, 0x56, 0x55, 0x89, 0xCD, 0x83, 0xEC, 0x08 };
     o_DriveBy = (DriveBy_t)MakeDetour(0x5C91E0, driveByPro, sizeof(driveByPro), (void *)h_DriveBy);
     if (!o_DriveBy) Log("garde-fou du tir en roulant : DoDriveByShootings introuvable");
