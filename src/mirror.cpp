@@ -583,6 +583,7 @@ static void HostSyncNewcomers(bool inGame)
 void MirrorMissionEnd()
 {
     g_missionRunning = false;
+    QuickSaveOnMissionEnd(!g_hostQuiet && g_hostMission != 0);
     if (g_hostQuiet) {
         g_hostQuiet = false;
         g_timerCount = 0;

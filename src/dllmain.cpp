@@ -125,7 +125,20 @@ static void LoadConfig()
         else if (k[0] && !k[1]) g_cfg.fpsKey = (unsigned char)k[0];
         else g_cfg.fpsKey = VK_F6;
     }
-    g_cfg.camSensitivity = GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;
+    g_cfg.noCheats = GetPrivateProfileIntA("VCCoop", "TrichesInterdites", 0, ini) != 0;
+    g_cfg.autoSave =GetPrivateProfileIntA("VCCoop", "SauvegardeAuto", 1, ini) != 0;
+    g_cfg.autoSaveSlot = GetPrivateProfileIntA("VCCoop", "SauvegardeAutoEmplacement", 8, ini);
+    if (g_cfg.autoSaveSlot < 1 || g_cfg.autoSaveSlot > 8) g_cfg.autoSaveSlot = 8;
+    {
+        char k[16];
+        GetPrivateProfileStringA("VCCoop", "ToucheSauvegarde", "F5", k, sizeof(k), ini);
+        CharUpperA(k);
+        if (!strcmp(k, "AUCUNE") || !strcmp(k, "NONE") || !strcmp(k, "0")) g_cfg.saveKey = 0;
+        else if (k[0] == 'F' && k[1] >= '1' && k[1] <= '9') g_cfg.saveKey = VK_F1 + atoi(k + 1) - 1;
+        else if (k[0] && !k[1]) g_cfg.saveKey = (unsigned char)k[0];
+        else g_cfg.saveKey = VK_F5;
+    }
+    g_cfg.camSensitivity =GetPrivateProfileIntA("VCCoop", "SensibiliteCamera", 100, ini) / 100.0f;
     g_cfg.showNames = GetPrivateProfileIntA("VCCoop", "AfficherPseudos", 1, ini) != 0;
     g_cfg.sharedMods = GetPrivateProfileIntA("VCCoop", "ModsPartages", 1, ini) != 0;
     GetPrivateProfileStringA("VCCoop", "Tenue", "", g_cfg.skin, sizeof(g_cfg.skin), ini);

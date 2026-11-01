@@ -1051,6 +1051,40 @@ void AutotestFrame()
         }
         return;
     }
+    if (_stricmp(g_cfg.autotest, "triche") == 0) {
+        // Sante a 30 puis ASPIRINE tape comme au clavier : 100 si les codes marchent, 30 si l'hote les interdit
+        static int step;
+        static uint32_t at;
+        void *me = FindPlayerPed();
+        if (step == 0 && frame - controlSince > 450 && me) {
+            Health(me) = 30.0f;
+            for (const char *c = "ASPIRINE"; *c; c++) ((void(__thiscall *)(void *, char))0x4ABD20)((void *)0x7DBCB0, *c);
+            step = 1; at = frame;
+            Log("autotest : ASPIRINE tape (triches interdites %d)", g_cfg.noCheats);
+        }
+        else if (step == 1 && frame - at > 60 && me) { Log("autotest : sante apres ASPIRINE %.0f", Health(me)); step = 2; }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "menuaudio") == 0) {
+        // Pilote audio 3D hors limites (gta_vc.set d'un autre PC), puis le menu Audio (ecran 3) : patches.cpp
+        static int step;
+        static uint32_t at;
+        if (step == 0 && frame - controlSince > 300) {
+            *(int8_t *)(0x869630 + 0x26) = 0x30;
+            MenuActive() = 1;
+            MenuRequestPage(3);
+            step = 1; at = frame;
+            Log("autotest : menu audio ouvert avec le pilote 3D %d", *(int8_t *)(0x869630 + 0x26));
+        }
+        else if (step == 1 && frame - at > 300) { Log("autotest : menu audio affiche sans plantage (ecran %d)", MenuCurrentPage()); MenuActive() = 0; step = 2; }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "sauveauto") == 0) {
+        // Comme une mission de l'histoire reussie : la sauvegarde automatique doit suivre (quicksave.cpp)
+        static bool fired;
+        if (!fired && frame - controlSince > 300) { fired = true; Log("autotest : mission reussie simulee"); QuickSaveTestTrigger(); }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "sauvecharge") == 0) {
         // Comme a une planque : ACTIVATE_SAVE_MENU (m_bSaveMenuActive, menu +0x3B) ouvre le menu de sauvegarde
         // (ecran 15), emplacement 1, "Oui" (16), le jeu sauvegarde (17), "OK" (18) ; puis on recharge.
