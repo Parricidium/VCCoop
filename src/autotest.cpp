@@ -1051,6 +1051,26 @@ void AutotestFrame()
         }
         return;
     }
+    if (_stricmp(g_cfg.autotest, "menuaudio") == 0) {
+        // Pilote audio 3D hors limites (gta_vc.set d'un autre PC), puis le menu Audio (ecran 3) : patches.cpp
+        static int step;
+        static uint32_t at;
+        if (step == 0 && frame - controlSince > 300) {
+            *(int8_t *)(0x869630 + 0x26) = 0x30;
+            MenuActive() = 1;
+            MenuRequestPage(3);
+            step = 1; at = frame;
+            Log("autotest : menu audio ouvert avec le pilote 3D %d", *(int8_t *)(0x869630 + 0x26));
+        }
+        else if (step == 1 && frame - at > 300) { Log("autotest : menu audio affiche sans plantage (ecran %d)", MenuCurrentPage()); MenuActive() = 0; step = 2; }
+        return;
+    }
+    if (_stricmp(g_cfg.autotest, "sauveauto") == 0) {
+        // Comme une mission de l'histoire reussie : la sauvegarde automatique doit suivre (quicksave.cpp)
+        static bool fired;
+        if (!fired && frame - controlSince > 300) { fired = true; Log("autotest : mission reussie simulee"); QuickSaveTestTrigger(); }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "sauvecharge") == 0) {
         // Comme a une planque : ACTIVATE_SAVE_MENU (m_bSaveMenuActive, menu +0x3B) ouvre le menu de sauvegarde
         // (ecran 15), emplacement 1, "Oui" (16), le jeu sauvegarde (17), "OK" (18) ; puis on recharge.

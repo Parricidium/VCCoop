@@ -1401,6 +1401,7 @@ void CoopFrame()
     MenuFrame();
     ModsFrame();
     SaveShareFrame();
+    QuickSaveFrame();
     AutotestFrame();
     NetPoll();
     // En coop, le menu Pause n'arrete pas le monde (sinon toute la partie des invites se fige derriere le menu

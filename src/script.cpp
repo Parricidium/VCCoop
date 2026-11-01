@@ -318,8 +318,10 @@ static char __fastcall h_ProcessOneCommand(void *script)
             else if (t == 1) n = *(int32_t *)(ScriptSpace() + at + 1);
             else if (t == 2) n = *(int32_t *)(ScriptSpace() + *(uint16_t *)(ScriptSpace() + at + 1));
             MirrorMissionStart(n);
+            QuickSaveOnMissionStart();
             Log("script : l'hote lance la mission %d (%.8s)", n, (char *)script + 8);
         }
+        QuickSaveOnCommand(script, op);
         if (MirrorBefore(script, ip, op)) {
             char r = RunOriginal(script, op);
             MirrorAfter(script);

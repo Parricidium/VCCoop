@@ -78,6 +78,9 @@ struct Config {
     bool showNames;
     bool sharedMods;    // ModsPartages=1 : VCCoop\mods\ charge par le jeu et distribue aux invites (mods.cpp)
     bool keepWeapons;   // GarderArmes=1 : un invite mort ou arrete garde armes et argent
+    bool autoSave;      // SauvegardeAuto=1 (hote) : sauvegarde apres chaque mission de l'histoire reussie (quicksave.cpp)
+    int autoSaveSlot;   // SauvegardeAutoEmplacement=8 : son emplacement (1..8)
+    int saveKey;        // ToucheSauvegarde=F5 (hote) : ouvre le menu de sauvegarde hors mission ; 0 = sans touche
     bool respawnAtHost; // ReapparitionHote=1 : il reapparait pres de l'hote (0 par defaut : a l'hopital)     // AfficherPseudos=1 : pseudo au-dessus de la tete des autres joueurs
     char skin[24];      // Tenue=... : tenue choisie avec F7 (vide : celle du jeu)
     int logOpcodes;
@@ -108,6 +111,13 @@ void InstallCrashLog();
 void StartWatchdog();
 void WatchAddress(uintptr_t addr);   // diagnostic : point d'arret materiel en ecriture
 void WatchdogFrame();
+
+// quicksave.cpp : sauvegarde automatique et sauvegarde rapide (hote)
+void QuickSaveOnCommand(void *script, uint16_t op);
+void QuickSaveOnMissionStart();
+void QuickSaveOnMissionEnd(bool storyMission);
+void QuickSaveFrame();
+void QuickSaveTestTrigger();   // autotest "sauveauto"
 
 // script.cpp
 void InstallScriptHooks();
