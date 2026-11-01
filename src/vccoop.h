@@ -78,6 +78,7 @@ struct Config {
     bool showNames;
     bool sharedMods;    // ModsPartages=1 : VCCoop\mods\ charge par le jeu et distribue aux invites (mods.cpp)
     bool keepWeapons;   // GarderArmes=1 : un invite mort ou arrete garde armes et argent
+    bool noCheats;      // TrichesInterdites=1 (hote) : les codes de triche (clavier et onglet TRICHES) ne marchent chez personne
     bool autoSave;      // SauvegardeAuto=1 (hote) : sauvegarde apres chaque mission de l'histoire reussie (quicksave.cpp)
     int autoSaveSlot;   // SauvegardeAutoEmplacement=8 : son emplacement (1..8)
     int saveKey;        // ToucheSauvegarde=F5 (hote) : ouvre le menu de sauvegarde hors mission ; 0 = sans touche

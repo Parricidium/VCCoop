@@ -327,6 +327,7 @@ static void RunAction(const Action &ac)
             g_cfg.popDensity = steps[i % 6];
             break;
         }
+        case 7: g_cfg.noCheats = !g_cfg.noCheats; WritePrivateProfileStringA("VCCoop", "TrichesInterdites", g_cfg.noCheats ? "1" : "0", IniPath()); break;
         }
         MenuSaveIni();
         break;
@@ -758,8 +759,9 @@ static void DrawHostTab(float x0, float y0, float x1, float y1)
         { "\xC9toiles de police communes", "Shared wanted level", g_cfg.shareWanted ? yes : no, g_cfg.shareWanted },
         { "R\xE9" "apparition pr\xE8s de l'h\xF4te", "Respawn next to the host", g_cfg.respawnAtHost ? yes : no, g_cfg.respawnAtHost },
         { "Densit\xE9 de population", "Population density", dens, false },
+        { "Codes de triche interdits", "Cheat codes disabled", g_cfg.noCheats ? yes : no, g_cfg.noCheats },
     };
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < (int)(sizeof(o) / sizeof(o[0])); i++) {
         Rect(x0 + g_u * 0.5f, y, x1 - g_u * 0.5f, y + bh, C_PANEL);
         TextA(x0 + g_u * 1.5f, y + bh * 0.5f - LineH(0.55f) * 0.5f, 0.55f, C_TEXT, AL_LEFT, fr ? o[i].fr : o[i].en);
         if (Button(x0 + lw, y + g_u * 0.4f, x1 - g_u * 1.2f, y + bh - g_u * 0.4f, o[i].value, o[i].on)) Queue(A_OPTION, i);
@@ -851,6 +853,10 @@ static void DrawCheatsTab(float x0, float y0, float x1, float y1)
         if (Button(bx, y, bx + bw, y + bh, French() ? catFr[c] : catEn[c], g_cheatCat == c, true, 0.45f)) { g_cheatCat = c; g_scroll = 0; }
     }
     y += bh + g_u * 1.2f;
+    if (g_cfg.noCheats) {
+        TextA(x0 + g_u, y, 0.45f, 0xFF8080FF, AL_LEFT, Tr("Codes de triche interdits par l'h\xF4te.", "Cheat codes are disabled by the host."));
+        return;
+    }
     bool blocked = !PlayerFree();
     TextA(x0 + g_u, y, 0.45f, blocked ? 0xFF8080FF : C_DIM, AL_LEFT, blocked ? Tr("Pas pendant une cin\xE9matique.", "Not during a cutscene.")
           : Tr("Clic : le code est tap\xE9 pour vous. M\xE9t\xE9o : celle de l'h\xF4te s'impose aux invit\xE9s ; vitesse du jeu : seulement chez vous.",

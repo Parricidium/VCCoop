@@ -77,9 +77,22 @@ static const char *__fastcall h_ProviderName(void *self, void *, uint8_t id)
     return s ? s : "";
 }
 
+// TrichesInterdites (reglage de l'hote, recu par les invites) : chaque touche tapee passe par
+// CPad::AddToPCCheatString (0x4ABD20) qui compare le tampon aux codes ; on ne l'appelle plus du tout.
+typedef void(__thiscall *AddCheat_t)(void *pad, char c);
+static AddCheat_t o_AddCheat;
+static void __fastcall h_AddCheat(void *pad, void *, char c)
+{
+    if (g_cfg.noCheats) return;
+    o_AddCheat(pad, c);
+}
+
 void InstallGamePatches()
 {
     GuardSectorList();
+    static const uint8_t addCheatPro[] = { 0x53, 0x56, 0x57, 0x55, 0x83, 0xEC, 0x10 };
+    o_AddCheat = (AddCheat_t)MakeDetour(0x4ABD20, addCheatPro, sizeof(addCheatPro), (void *)h_AddCheat);
+    if (!o_AddCheat) Log("codes de triche interdits : CPad::AddToPCCheatString introuvable");
     static const uint8_t providerCall1[] = { 0xE8, 0x01, 0xAE, 0x15, 0x00 }, providerCall2[] = { 0xE8, 0xCD, 0xFD, 0x15, 0x00 };
     if (Expect(0x49EE4A, "nom du pilote audio 3D (affichage)", providerCall1, sizeof(providerCall1)))
         PatchCall(0x49EE4A, (void *)h_ProviderName, sizeof(providerCall1));

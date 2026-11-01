@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 
-enum { MAX_PLAYERS = 4, NET_VERSION = 20 };
+enum { MAX_PLAYERS = 4, NET_VERSION = 21 };
 
 enum MsgType : uint8_t {
     MSG_HELLO = 1,   // invite -> hote : je veux entrer (nom)
@@ -82,6 +82,7 @@ struct MsgWorld {
     uint8_t friendlyFire;    // les joueurs peuvent se blesser entre eux (reglage TirAmi de l'hote)
     uint8_t zonePop;         // ZonePopulation de l'hote (%) : tout le monde calcule la meme zone de l'hote
     uint16_t popDensity;     // DensitePopulation de l'hote (%) : meme densite partout
+    uint8_t noCheats;        // TrichesInterdites de l'hote : les codes de triche ne marchent chez personne
 };
 // Vehicule reseau : identifiant = (numero du joueur qui l'a cree << 24) | compteur.
 struct MsgVehicle {

@@ -1051,6 +1051,20 @@ void AutotestFrame()
         }
         return;
     }
+    if (_stricmp(g_cfg.autotest, "triche") == 0) {
+        // Sante a 30 puis ASPIRINE tape comme au clavier : 100 si les codes marchent, 30 si l'hote les interdit
+        static int step;
+        static uint32_t at;
+        void *me = FindPlayerPed();
+        if (step == 0 && frame - controlSince > 450 && me) {
+            Health(me) = 30.0f;
+            for (const char *c = "ASPIRINE"; *c; c++) ((void(__thiscall *)(void *, char))0x4ABD20)((void *)0x7DBCB0, *c);
+            step = 1; at = frame;
+            Log("autotest : ASPIRINE tape (triches interdites %d)", g_cfg.noCheats);
+        }
+        else if (step == 1 && frame - at > 60 && me) { Log("autotest : sante apres ASPIRINE %.0f", Health(me)); step = 2; }
+        return;
+    }
     if (_stricmp(g_cfg.autotest, "menuaudio") == 0) {
         // Pilote audio 3D hors limites (gta_vc.set d'un autre PC), puis le menu Audio (ecran 3) : patches.cpp
         static int step;
